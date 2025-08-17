@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/lie_odyssey_cppTargets.cmake")
+
+set(LIE_ODYSSEY_INCLUDE_DIRS "@PACKAGE_INCLUDE_INSTALL_DIR@/lie_odyssey")
+
+find_dependency(Eigen3 REQUIRED)
