@@ -26,6 +26,8 @@ set(CMAKE_BUILD_TYPE Release)
 include(3rdparty/find_dependencies.cmake)
 
 # Add Lie++ dependency
+include(FetchContent)
+
 FetchContent_Declare(
     LiePlusPlus
     GIT_REPOSITORY  https://github.com/aau-cns/Lie-plusplus.git
@@ -33,20 +35,27 @@ FetchContent_Declare(
     GIT_SHALLOW     TRUE
     GIT_PROGRESS    TRUE
 )
+FetchContent_MakeAvailable(LiePlusPlus)
 list(APPEND external LiePlusPlus) 
 list(APPEND include_dirs ${LIEPLUSPLUS_INCLUDE_DIR})
 list(APPEND libs LiePlusPlus Eigen3::Eigen)
 
 # To-Do: Not INTERFACE
-add_library(lie_odyssey_cpp INTERFACE)
-target_include_directories(lie_odyssey_cpp INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
+# add_library(lie_odyssey_cpp INTERFACE)
+# target_include_directories(lie_odyssey_cpp INTERFACE
+#     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#     $<INSTALL_INTERFACE:include>
+# )
+# target_link_libraries(lie_odyssey_cpp INTERFACE Eigen3::Eigen LiePlusPlus)
+# target_compile_features(lie_odyssey_cpp INTERFACE cxx_std_17)
 
-target_link_libraries(lie_odyssey_cpp INTERFACE Eigen3::Eigen LiePlusPlus)
-
-target_compile_features(lie_odyssey_cpp INTERFACE cxx_std_17)
+# Executable
+add_executable(${PROJECT_NAME}_exec
+              src/main.cpp 
+              )
+# add_dependencies(${PROJECT_NAME}_exec ${catkin_EXPORTED_TARGETS})
+# target_include_directories(${PROJECT_NAME}_exec ${LIEPLUSPLUS_INCLUDE_DIR})
+target_link_libraries(${PROJECT_NAME}_exec LiePlusPlus Eigen3::Eigen)
 
 # Set the include directory variable
 set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
@@ -61,16 +70,16 @@ endif()
 install(DIRECTORY include/ DESTINATION include)
 
 # Export the INTERFACE target
-install(TARGETS lie_odyssey_cpp
-    EXPORT lie_odyssey_cppTargets
-)
+# install(TARGETS lie_odyssey_cpp
+#     EXPORT lie_odyssey_cppTargets
+# )
 
 # Export info
-install(EXPORT lie_odyssey_cppTargets
-    FILE lie_odyssey_cppTargets.cmake
-    NAMESPACE lie_odyssey::
-    DESTINATION lib/cmake/lie_odyssey
-)
+# install(EXPORT lie_odyssey_cppTargets
+#     FILE lie_odyssey_cppTargets.cmake
+#     NAMESPACE lie_odyssey::
+#     DESTINATION lib/cmake/lie_odyssey
+# )
 
 # Package configuration
 include(CMakePackageConfigHelpers)
@@ -102,7 +111,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
       IMMEDIATE @ONLY
     )
 
-    add_custom_target(uninstall
+    add_custom_target(lie_odyssey_uninstall
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
     )
 endif()
