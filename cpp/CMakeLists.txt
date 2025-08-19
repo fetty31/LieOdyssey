@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Setup build options
 option(USE_CCACHE "Build using Ccache if found on the path" ON)
 option(USE_SYSTEM_EIGEN3 "Use system pre-installed Eigen" ON)
+option(ENABLE_TEST "Build LieOdyssey test" OFF)
 
 # ccache setup
 if(USE_CCACHE)
@@ -55,7 +56,17 @@ add_executable(${PROJECT_NAME}_exec
               )
 # add_dependencies(${PROJECT_NAME}_exec ${catkin_EXPORTED_TARGETS})
 # target_include_directories(${PROJECT_NAME}_exec ${LIEPLUSPLUS_INCLUDE_DIR})
-target_link_libraries(${PROJECT_NAME}_exec LiePlusPlus Eigen3::Eigen)
+
+# Add Eigen
+target_link_libraries(${PROJECT_NAME}_exec PRIVATE Eigen3::Eigen)
+
+# Add Lie++ include directories
+target_include_directories(${PROJECT_NAME}_exec PRIVATE
+    ${LiePlusPlus_SOURCE_DIR}/include
+)
+
+# Link LiePlusPlus if needed
+target_link_libraries(${PROJECT_NAME}_exec PRIVATE LiePlusPlus)
 
 # Set the include directory variable
 set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)

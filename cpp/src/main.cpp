@@ -1,4 +1,5 @@
-#include <groups/SEn.hpp>
+#include <iostream>
+#include <groups/SEn3.hpp>
 
 int main(int argc, char **argv)
 {
@@ -25,7 +26,7 @@ int main(int argc, char **argv)
     std::cout << Z.asMatrix() << std::endl;
 
     // print Rotational component of Z as quaternion, position and velocity
-    std::cout << Z.q() << '\n' << Z.p() << '\n'<< Z.v() << '\n' std::endl;
+    std::cout << Z.q() << '\n' << Z.p() << '\n'<< Z.v() << '\n' << std::endl;
 
     // get Adjoint matrix of SE23
     Matrix9d AdZ = Z.Adjoint();
