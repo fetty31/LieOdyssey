@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "lie_odyssey/liepp_groups.hpp"
+#include <backends/liepp_groups.hpp>
 
 using namespace lie_odyssey;
 

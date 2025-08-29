@@ -23,6 +23,9 @@ endif()
 # Set build type 
 set(CMAKE_BUILD_TYPE Release)
 
+# Set the include directory variable
+set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
+
 # Add Eigen3 dependency
 include(3rdparty/find_dependencies.cmake)
 
@@ -41,6 +44,9 @@ list(APPEND external LiePlusPlus)
 list(APPEND include_dirs ${LIEPLUSPLUS_INCLUDE_DIR})
 list(APPEND libs LiePlusPlus Eigen3::Eigen)
 
+# Add manif dependency
+find_package(manif REQUIRED)
+
 # To-Do: Not INTERFACE
 # add_library(lie_odyssey_cpp INTERFACE)
 # target_include_directories(lie_odyssey_cpp INTERFACE
@@ -50,26 +56,35 @@ list(APPEND libs LiePlusPlus Eigen3::Eigen)
 # target_link_libraries(lie_odyssey_cpp INTERFACE Eigen3::Eigen LiePlusPlus)
 # target_compile_features(lie_odyssey_cpp INTERFACE cxx_std_17)
 
-# Executable
+# --------- Executable main ---------
 add_executable(${PROJECT_NAME}_exec
               src/main.cpp 
               )
-# add_dependencies(${PROJECT_NAME}_exec ${catkin_EXPORTED_TARGETS})
-# target_include_directories(${PROJECT_NAME}_exec ${LIEPLUSPLUS_INCLUDE_DIR})
-
 # Add Eigen
 target_link_libraries(${PROJECT_NAME}_exec PRIVATE Eigen3::Eigen)
-
 # Add Lie++ include directories
 target_include_directories(${PROJECT_NAME}_exec PRIVATE
     ${LiePlusPlus_SOURCE_DIR}/include
 )
-
 # Link LiePlusPlus if needed
 target_link_libraries(${PROJECT_NAME}_exec PRIVATE LiePlusPlus)
 
-# Set the include directory variable
-set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
+# --------- Executable imu preprocessor ---------
+add_executable(${PROJECT_NAME}_imu_pre_exec
+              src/imu_preprocessor.cpp 
+              )
+# Add Eigen
+target_link_libraries(${PROJECT_NAME}_imu_pre_exec PRIVATE Eigen3::Eigen)
+# Add LieOdyssey include directories
+target_include_directories(${PROJECT_NAME}_imu_pre_exec PRIVATE
+    ${LIE_ODYSSEY_INCLUDE_DIRS}
+)
+# Add Manif include directories
+target_include_directories(${PROJECT_NAME}_imu_pre_exec PRIVATE
+    ${manif_INCLUDE_DIRS}
+)
+
+
 
 # (optional) Build tests
 if(ENABLE_TEST)

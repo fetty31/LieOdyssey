@@ -216,7 +216,7 @@ struct SEn3LiePP {
 template <typename _Scalar = double>
 struct Gal3LiePP {
   using Scalar = _Scalar;
-  using Native = group::Gal<Scalar>;
+  using Native = group::Gal3<Scalar>;
   using Tangent = Eigen::Matrix<Scalar, 6, 1>;
   using MatrixType = Eigen::Matrix<Scalar, 6, 6>;
   using AdjointMatrix = Eigen::Matrix<Scalar, 6, 6>;
