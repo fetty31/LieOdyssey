@@ -13,20 +13,30 @@
 //  - lie_odyssey::SE3LiePP<Scalar>
 //  - lie_odyssey::SE23LiePP<Scalar>
 //  - lie_odyssey::SEn3LiePP<Scalar, N>
+//  - lie_odyssey::Gal3LiePP<Scalar>
+//  - lie_odyssey::Gal3TGLiePP<Scalar>
 //
 // Common interface provided by all wrappers:
-//   using Scalar, Tangent, AdjointMatrix, MatrixType, Native;
+//   using Native, Tangent, MatrixType, TMatrixType;
 //   static Wrapper Exp(const Tangent&);
 //   static Tangent Log(const Wrapper&);
 //   Wrapper operator*(const Wrapper&) const;
 //   Wrapper Inverse() const;
-//   AdjointMatrix Adjoint() const;
+//   TMatrixType Adjoint() const;
+//   TMatrixType invAdjoint() const;
+//   TMatrixType adjoint(const Tangent&) const;
 //   MatrixType asMatrix() const;
+//   TMatrixType leftJacobian(const Tangent&) const;
+//   TMatrixType invLeftJacobian(const Tangent&) const;
+//   TMatrixType rightJacobian(const Tangent&) const;
+//   TMatrixType invRightJacobian(const Tangent&) const;
 //
 // Convenience accessors where available (forwarded to Lie++):
 //   - SO3: q() [quaternion], R() [rotation matrix]
 //   - SE3: q(), R(), p()
 //   - SE23: q(), R(), v(), p()
+//   - Gal3: q(), R(), v(), p(), t()
+//   - Gal3TG: G() [lie group], g() [lie algebra]
 //
 // Notes:
 //  - Lie++ (per README examples) uses static `Group::exp(tau)` and
@@ -51,40 +61,66 @@
 
 namespace lie_odyssey {
 
+// ------------------------------- Base ---------------------------------
+
+template <typename Group>
+class BaseLiePP {
+
+  public:
+    using Native         = Group;
+    using Tangent        = Native::VectorType;    // Lie Algebra Tangent space 
+    using MatrixType     = Native::MatrixType;    // Lie Group matrix type
+    using TMatrixType    = Native::TMatrixType;   // Transformation matrix type
+
+    Native g_;
+
+    BaseLiePP() : g_() {}
+    explicit BaseLiePP(const Native& gg) : g_(gg) {}
+
+    Native native() { return g_; }
+
+    // Exponential / Logarithm (Lie++ style: static Exp/Log)
+    static BaseLiePP Exp(const Tangent& u) { return BaseLiePP(Native::exp(u)); }
+    static Tangent  Log(const BaseLiePP& X) { return Native::log(X.g_); }
+
+    // Right Plus/Minus operators
+    void plus(Tangent& u){ g_ *= Exp(u).native(); }                       // right plus X' = X ⊕ u
+    Tangent minus(BaseLiePP& X){ return Log( X.Inverse().native()*g_ ); } // right minus t = Y ⊖ X
+
+    // Group ops
+    BaseLiePP operator*(const BaseLiePP& other) const { return BaseLiePP(g_ * other.g_); }
+    BaseLiePP Inverse() const { return BaseLiePP(g_.inverse()); }
+
+    // Adjoint 
+    TMatrixType Adjoint() const { return g_.Adjoint(); }
+    TMatrixType invAdjoint() const { return g_.invAdjoint(); }
+    TMatrixType adjoint(const Tangent& u) const { return Native::adjoint(u); }
+
+    // Matrix representation
+    MatrixType asMatrix() const { return g_.asMatrix(); }
+
+    // Jacobians (w.r.t perturbation)
+    TMatrixType leftJacobian(const Tangent& u) const { return Native::leftJacobian(u); }
+    TMatrixType invLeftJacobian(const Tangent& u) const { return Native::invLeftJacobian(u); }
+    TMatrixType rightJacobian(const Tangent& u) const { return Native::rightJacobian(u); }
+    TMatrixType invRightJacobian(const Tangent& u) const { return Native::invRightJacobian(u); }
+
+};
+
 // ------------------------------- SO(3) ---------------------------------
 
-template <typename _Scalar = double>
-struct SO3LiePP {
-  using Scalar         = _Scalar;
-  using Native         = group::SO3<Scalar>;
-  using Tangent        = Eigen::Matrix<Scalar, 3, 1>;
-  using MatrixType     = Eigen::Matrix<Scalar, 3, 3>;
-  using AdjointMatrix  = Eigen::Matrix<Scalar, 3, 3>;
+template <typename Scalar = double>
+class SO3LiePP : public BaseLiePP<group::SO3<Scalar>> {
+  
+  using Base = BaseLiePP<group::SO3<Scalar>>;
 
-  Native g;
-
-  SO3LiePP() : g() {}
-  explicit SO3LiePP(const Native& gg) : g(gg) {}
-
-  // Exponential / Logarithm (Lie++ style: static Exp/Log)
-  static SO3LiePP Exp(const Tangent& w) { return SO3LiePP(Native::exp(w)); }
-  static Tangent  Log(const SO3LiePP& X) { return Native::log(X.g); }
-
-  // Group ops
-  SO3LiePP operator*(const SO3LiePP& other) const { return SO3LiePP(g * other.g); }
-  SO3LiePP Inverse() const { return SO3LiePP(g.inverse()); }
-
-  // Adjoint (member in Lie++)
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-
-  // Matrix representation
-  MatrixType asMatrix() const { return g.asMatrix(); }
+  public:
+    SO3LiePP() : Base() { }
+    explicit SO3LiePP(const Base::Native& gg) : Base(gg) { }
 
   // Convenience accessors (forward to Lie++)
-  // Rotation matrix
-  MatrixType R() const { return g.asMatrix(); }
-  // Quaternion (Eigen::Quaternion<Scalar>)
-  auto q() const { return g.q(); }
+  auto R() const { return this->g_.asMatrix(); }
+  auto q() const { return this->g_.q(); }
 };
 
 // ------------------------------- SE(3) ---------------------------------
@@ -92,74 +128,41 @@ struct SO3LiePP {
 // In Lie++: SE(3) is SEn3<Scalar, 1>. We expose a dedicated wrapper for
 // ergonomic typedefs and SE(3)-specific accessors.
 
-template <typename _Scalar = double>
-struct SE3LiePP {
-  using Scalar         = _Scalar;
-  using Native         = group::SEn3<Scalar, 1>;
-  using Tangent        = Eigen::Matrix<Scalar, 6, 1>;
-  using MatrixType     = Eigen::Matrix<Scalar, 4, 4>;
-  using AdjointMatrix  = Eigen::Matrix<Scalar, 6, 6>;
+template <typename Scalar = double>
+class SE3LiePP : public BaseLiePP<group::SEn3<Scalar, 1>> {
+  
+  using Base = BaseLiePP<group::SEn3<Scalar, 1>>;
 
-  Native g;
+  public:
+    SE3LiePP() : Base() { }
+    explicit SE3LiePP(const Base::Native& gg) : Base(gg) { }
 
-  SE3LiePP() : g() {}
-  explicit SE3LiePP(const Native& gg) : g(gg) {}
-  // Construct from rotation + position if desired
-  SE3LiePP(const typename SO3LiePP<Scalar>::Native& R,
-           const Eigen::Matrix<Scalar, 3, 1>& p)
-      : g(typename SO3LiePP<Scalar>::Native(R), std::array<Eigen::Matrix<Scalar,3,1>,1>{p}) {}
-
-  static SE3LiePP Exp(const Tangent& xi) { return SE3LiePP(Native::exp(xi)); }
-  static Tangent   Log(const SE3LiePP& X) { return Native::log(X.g); }
-
-  SE3LiePP operator*(const SE3LiePP& other) const { return SE3LiePP(g * other.g); }
-  SE3LiePP Inverse() const { return SE3LiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType    asMatrix() const { return g.asMatrix(); }
-
-  // Convenience accessors (forward to Lie++):
-  auto q() const { return g.q(); }                                    // quaternion
-  auto R() const { return g.R(); }                                    // rotation matrix (if available; else asMatrix().template block<3,3>(0,0))
-  Eigen::Matrix<Scalar,3,1> p() const { return g.p(); }               // position
+    // Convenience accessors (forward to Lie++):
+    auto q() const { return this->g_.q(); }               // quaternion
+    auto R() const { return this->g_.R(); }               // rotation matrix
+    auto p() const { return this->g_.p(); }               // position
 };
+
 
 // ------------------------------ SE₂(3) ---------------------------------
 //
 // In Lie++: SE₂(3) is SEn3<Scalar, 2>. We expose a dedicated wrapper because
 // velocity `v()` is available in addition to pose.
 
-template <typename _Scalar = double>
-struct SE23LiePP {
-  using Scalar         = _Scalar;
-  using Native         = group::SEn3<Scalar, 2>;
-  using Tangent        = Eigen::Matrix<Scalar, 9, 1>;
-  using MatrixType     = Eigen::Matrix<Scalar, 5, 5>;
-  using AdjointMatrix  = Eigen::Matrix<Scalar, 9, 9>;
+template <typename Scalar = double>
+class SE23LiePP : public BaseLiePP<group::SEn3<Scalar, 2>> {
+  
+  using Base = BaseLiePP<group::SEn3<Scalar, 2>>;
 
-  Native g;
+  public:
+    SE23LiePP() : Base() { }
+    explicit SE23LiePP(const Base::Native& gg) : Base(gg) { }
 
-  SE23LiePP() : g() {}
-  explicit SE23LiePP(const Native& gg) : g(gg) {}
-  SE23LiePP(const typename SO3LiePP<Scalar>::Native& R,
-            const Eigen::Matrix<Scalar, 3, 1>& v,
-            const Eigen::Matrix<Scalar, 3, 1>& p)
-      : g(typename SO3LiePP<Scalar>::Native(R), std::array<Eigen::Matrix<Scalar,3,1>,2>{v, p}) {}
-
-  static SE23LiePP Exp(const Tangent& xi) { return SE23LiePP(Native::exp(xi)); }
-  static Tangent    Log(const SE23LiePP& X) { return Native::log(X.g); }
-
-  SE23LiePP operator*(const SE23LiePP& other) const { return SE23LiePP(g * other.g); }
-  SE23LiePP Inverse() const { return SE23LiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType    asMatrix() const { return g.asMatrix(); }
-
-  // Accessors present in README example for SE2(3)
-  auto q() const { return g.q(); }                                    // quaternion
-  auto R() const { return g.R(); }                                    // rotation matrix (if provided)
-  Eigen::Matrix<Scalar,3,1> v() const { return g.v(); }               // velocity
-  Eigen::Matrix<Scalar,3,1> p() const { return g.p(); }               // position
+    // Convenience accessors (forward to Lie++):
+    auto q() const { return this->g_.q(); }   // quaternion
+    auto R() const { return this->g_.R(); }   // rotation matrix 
+    auto v() const { return this->g_.v(); }   // velocity
+    auto p() const { return this->g_.p(); }   // position
 };
 
 // ------------------------------ SEn(3) ---------------------------------
@@ -172,118 +175,64 @@ struct SE23LiePP {
 // Accessors beyond the first (e.g., v(), p()) are not standardized here;
 // you can reach the native `g` to call the specific methods if needed.
 
-template <typename _Scalar, int N>
-struct SEn3LiePP {
-  static_assert(N >= 1, "SEn3LiePP requires N >= 1");
+template <typename Scalar, int N>
+class SEn3LiePP : public BaseLiePP<group::SEn3<Scalar, N>> {
+  
+  using Base = BaseLiePP<group::SEn3<Scalar, N>>;
 
-  using Scalar         = _Scalar;
-  using Native         = group::SEn3<Scalar, N>;
-  using Tangent        = Eigen::Matrix<Scalar, 3 * (N + 1), 1>; // 3 for so(3) + 3*N translational
-  using MatrixType     = Eigen::Matrix<Scalar, (N + 2), (N + 2)>;
-  using AdjointMatrix  = Eigen::Matrix<Scalar, 3 * (N + 1), 3 * (N + 1)>;
+  public:
+    SEn3LiePP() : Base() { }
+    explicit SEn3LiePP(const Base::Native& gg) : Base(gg) { }
 
-  Native g;
-
-  SEn3LiePP() : g() {}
-  explicit SEn3LiePP(const Native& gg) : g(gg) {}
-
-  static SEn3LiePP Exp(const Tangent& xi) { return SEn3LiePP(Native::exp(xi)); }
-  static Tangent    Log(const SEn3LiePP& X) { return Native::log(X.g); }
-
-  SEn3LiePP operator*(const SEn3LiePP& other) const { return SEn3LiePP(g * other.g); }
-  SEn3LiePP Inverse() const { return SEn3LiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType    asMatrix() const { return g.asMatrix(); }
-
-  // Common accessors likely available in Lie++:
-  auto q() const { return g.q(); }   // quaternion
-  auto R() const { return g.R(); }   // rotation matrix (if implemented)
-  // For N >= 1, p() usually exists; for N >= 2, v() usually exists:
-  // Expose them conditionally with if constexpr.
-  template <int M = N>
-  auto p() const -> std::enable_if_t<(M >= 1), Eigen::Matrix<Scalar,3,1>> {
-    return g.p();
-  }
-  template <int M = N>
-  auto v() const -> std::enable_if_t<(M >= 2), Eigen::Matrix<Scalar,3,1>> {
-    return g.v();
-  }
+    // Convenience accessors (forward to Lie++):
+    auto q() const { return this->g_.q(); }   // quaternion
+    auto R() const { return this->g_.R(); }   // rotation matrix
+    // For N >= 1, p() exists; for N >= 2, v() exists:
+    // Expose them conditionally with if constexpr.
+    template <int M = N>
+    auto p() const -> std::enable_if_t<(M >= 1), Eigen::Matrix<Scalar,3,1>> {
+      return this->g_.p();
+    }
+    template <int M = N>
+    auto v() const -> std::enable_if_t<(M >= 2), Eigen::Matrix<Scalar,3,1>> {
+      return this->g_.v();
+    }
 };
 
 // ------------------------------- Gal(3) ---------------------------------
 
-template <typename _Scalar = double>
-struct Gal3LiePP {
-  using Scalar = _Scalar;
-  using Native = group::Gal3<Scalar>;
-  using Tangent = Eigen::Matrix<Scalar, 6, 1>;
-  using MatrixType = Eigen::Matrix<Scalar, 6, 6>;
-  using AdjointMatrix = Eigen::Matrix<Scalar, 6, 6>;
+template <typename Scalar = double>
+class Gal3LiePP : public BaseLiePP<group::Gal3<Scalar>> {
+  
+  using Base = BaseLiePP<group::Gal3<Scalar>>;
 
-  Native g;
+  public:
+    Gal3LiePP() : Base() { }
+    explicit Gal3LiePP(const Base::Native& gg) : Base(gg) { }
 
-  Gal3LiePP() : g() {}
-  explicit Gal3LiePP(const Native& gg) : g(gg) {}
-
-  static Gal3LiePP Exp(const Tangent& xi) { return Gal3LiePP(Native::exp(xi)); }
-  static Tangent Log(const Gal3LiePP& X) { return Native::log(X.g); }
-
-  Gal3LiePP operator*(const Gal3LiePP& other) const { return Gal3LiePP(g * other.g); }
-  Gal3LiePP Inverse() const { return Gal3LiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType asMatrix() const { return g.asMatrix(); }
+    // Convenience accessors (forward to Lie++):
+    auto q() const { return this->g_.q(); }   // quaternion
+    auto R() const { return this->g_.R(); }   // rotation matrix 
+    auto v() const { return this->g_.v(); }   // velocity
+    auto p() const { return this->g_.p(); }   // position
+    auto t() const { return this->g_.s(); }   // scalar (time)
 };
 
 // ------------------------------- TG ---------------------------------
 
-template <typename _Scalar = double>
-struct TGLiePP {
-  using Scalar = _Scalar;
-  using Native = group::TG<Scalar>;
-  using Tangent = Eigen::Matrix<Scalar, 9, 1>;
-  using MatrixType = Eigen::Matrix<Scalar, 6, 6>;
-  using AdjointMatrix = Eigen::Matrix<Scalar, 9, 9>;
+template <typename Scalar = double>
+class Gal3TGLiePP : public BaseLiePP<group::Gal3TG<Scalar>> {
+  
+  using Base = BaseLiePP<group::Gal3TG<Scalar>>;
 
-  Native g;
+  public:
+    Gal3TGLiePP() : Base() { }
+    explicit Gal3TGLiePP(const Base::Native& gg) : Base(gg) { }
 
-  TGLiePP() : g() {}
-  explicit TGLiePP(const Native& gg) : g(gg) {}
-
-  static TGLiePP Exp(const Tangent& xi) { return TGLiePP(Native::exp(xi)); }
-  static Tangent Log(const TGLiePP& X) { return Native::log(X.g); }
-
-  TGLiePP operator*(const TGLiePP& other) const { return TGLiePP(g * other.g); }
-  TGLiePP Inverse() const { return TGLiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType asMatrix() const { return g.asMatrix(); }
-};
-
-// ------------------------------- SDB ---------------------------------
-
-template <typename _Scalar = double>
-struct SDBLiePP {
-  using Scalar = _Scalar;
-  using Native = group::SDB<Scalar>;
-  using Tangent = Eigen::Matrix<Scalar, 9, 1>;
-  using MatrixType = Eigen::Matrix<Scalar, 6, 6>;
-  using AdjointMatrix = Eigen::Matrix<Scalar, 9, 9>;
-
-  Native g;
-
-  SDBLiePP() : g() {}
-  explicit SDBLiePP(const Native& gg) : g(gg) {}
-
-  static SDBLiePP Exp(const Tangent& xi) { return SDBLiePP(Native::exp(xi)); }
-  static Tangent Log(const SDBLiePP& X) { return Native::log(X.g); }
-
-  SDBLiePP operator*(const SDBLiePP& other) const { return SDBLiePP(g * other.g); }
-  SDBLiePP Inverse() const { return SDBLiePP(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.Adjoint(); }
-  MatrixType asMatrix() const { return g.asMatrix(); }
+    // Convenience accessors (forward to Lie++):
+    auto G() const { return Gal3LiePP<Scalar>(this->g_.G()); }   // get Lie Group element
+    auto g() const { return this->g_.g(); }                      // get Lie Algebra element
+   
 };
 
 } // namespace lie_odyssey

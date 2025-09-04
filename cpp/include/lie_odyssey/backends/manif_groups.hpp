@@ -36,6 +36,52 @@
 
 namespace lie_odyssey {
 
+// ------------------------------- Base ---------------------------------
+
+template <typename Group>
+class BaseManif {
+
+  public:
+    using Native         = Group;
+    using Tangent        = Native::Tangent;       // Lie Algebra Tangent space 
+    using MatrixType     = Native::LieGroup;      // Lie Group matrix type
+    using TMatrixType    = Native::Jacobian;      // Transformation matrix type
+
+    Native g_;
+
+    BaseManif() : g_() {}
+    explicit BaseManif(const Native& gg) : g_(gg) {}
+
+    Native native() { return g_; }
+
+    // Exponential / Logarithm (Lie++ style: static Exp/Log)
+    static BaseManif Exp(const Tangent& u) { return BaseManif(Native::exp(u)); }
+    static Tangent  Log(const BaseManif& X) { return Native::log(X.g_); }
+
+    // Right Plus/Minus operators
+    void plus(Tangent& u){ g_ *= Exp(u).native(); }                       // right plus X' = X ⊕ u
+    Tangent minus(BaseManif& X){ return Log( X.Inverse().native()*g_ ); } // right minus t = Y ⊖ X
+
+    // Group ops
+    BaseManif operator*(const BaseManif& other) const { return BaseManif(g_ * other.g_); }
+    BaseManif Inverse() const { return BaseManif(g_.inverse()); }
+
+    // Adjoint 
+    TMatrixType Adjoint() const { return g_.Adjoint(); }
+    TMatrixType invAdjoint() const { return g_.invAdjoint(); }
+    TMatrixType adjoint(const Tangent& u) const { return Native::adjoint(u); }
+
+    // Matrix representation
+    MatrixType asMatrix() const { return g_.asMatrix(); }
+
+    // Jacobians (w.r.t perturbation)
+    TMatrixType leftJacobian(const Tangent& u) const { return Native::leftJacobian(u); }
+    TMatrixType invLeftJacobian(const Tangent& u) const { return Native::invLeftJacobian(u); }
+    TMatrixType rightJacobian(const Tangent& u) const { return Native::rightJacobian(u); }
+    TMatrixType invRightJacobian(const Tangent& u) const { return Native::invRightJacobian(u); }
+
+};
+
 // ------------------------------- SO(3) ---------------------------------
 
 template <typename _Scalar = double>
