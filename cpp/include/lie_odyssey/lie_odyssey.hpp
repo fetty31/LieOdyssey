@@ -1,12 +1,13 @@
-#pragma once
-#include "config.hpp"
+#ifndef __LIEODYSSEY_HPP__
+#define __LIEODYSSEY_HPP__
 
-#if LIE_BACKEND == LIE_BACKEND_LIEPP
-  #include "backends/liepp_groups.hpp"
-#elif LIE_BACKEND == LIE_BACKEND_MANIF
-  #include "backends/manif_groups.hpp"
-#elif LIE_BACKEND == LIE_BACKEND_SOPHUS
-  #include "backends/sophus_groups.hpp"
+#if LIE_BACKEND_LIEPP
+  #include "lie_odyssey/backends/liepp_groups.hpp"
+#endif
+
+#if LIE_BACKEND_MANIF
+  #include "lie_odyssey/backends/manif_groups.hpp"
+  #include "lie_odyssey/core/imu_preprocessor.hpp"
 #endif
 
 namespace lie_odyssey {
@@ -36,3 +37,5 @@ private:
 };
 
 } // namespace lie_odyssey
+
+#endif

@@ -2,15 +2,15 @@
 
 > An odyssey through inertial navigation on Lie groups.  
 
-`LieOdyssey` is a lightweight, research-friendly toolkit for IMU preintegration in Inertial Navigation Systems (INS), built on the mathematical foundation of Lie Algebra.  
+`LieOdyssey` is a lightweight, research-friendly toolkit for IMU preintegration in Inertial Navigation Systems (INS), built on the mathematical foundation of Lie Theory.  
 
 It provides efficient preintegration routines on the most common Lie Groups, enabling robust navigation and state estimation in robotics, drones and autonomous systems.  
 
 ---
 
 ## ✨ Features  
-- Preintegration on any Group available in [Sophus](https://github.com/strasdat/Sophus), [Lie++](https://github.com/aau-cns/Lie-plusplus) or [ManIf](https://github.com/artivis/manif).
-- Lie algebra tools — exponential / logarithm maps, Jacobians, and retractions.  
+- Preintegration on any Group available in [Lie++](https://github.com/aau-cns/Lie-plusplus) or [ManIf](https://github.com/artivis/manif).
+- Lie algebra tools — exponential / logarithm maps, Jacobians, Adjoints, etc.  
 - Ready-to-deploy filters for SLAM/INS estimation.
 - Lightweight & modular — easy to plug into factor graphs (e.g., GTSAM, Ceres).  
 
@@ -30,7 +30,7 @@ mkdir build && cd build
 cmake -DENABLE_TEST=ON .. # build test (optional)
 make install
 ```
-> By default the library Lie++ will be the one retrieved and built. If you would want to use ManIf or Sophus you should make sure they're installed in your system and modify [this flag](cpp/include/lie_odyssey/config.hpp).
+> By default both _Lie++_ and _Manif_ will be the retrieved and installed when building _LieOdyssey_. If you would want to install only one of them, the explicit build flags `-DINSTALL_{MANIF/LIEPP}=ON` are available.
 
 If you want to use `LieOdyssey` within ROS, ensure you have cloned the repo inside a ROS workspace and build via default:
 ```sh

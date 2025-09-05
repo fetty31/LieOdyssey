@@ -1,3 +1,6 @@
+#ifndef __LIEODYSSEY_IMU_PREPROCESSOR_HPP__
+#define __LIEODYSSEY_IMU_PREPROCESSOR_HPP__
+
 // imu_preintegrator_sgal_manif.hpp
 // IMU preintegration on SGal(3) using Manif analytic Jacobians.
 // Requires Manif (https://github.com/artivis/manif) and Eigen.
@@ -8,8 +11,6 @@
 //  - We keep covariance on the 10-D tangent space.
 //  - Bias Jacobians map small bias corrections (δbg, δba) -> correction in tangent,
 //    then are pulled through the group's right-plus Jacobian (J_xi) and composition Jacobian (J_x).
-
-#pragma once
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -199,3 +200,5 @@ class ImuPreintegratorSGal {
 }; // class ImuPreintegratorSGal
 
 } // namespace lie_odyssey
+
+#endif

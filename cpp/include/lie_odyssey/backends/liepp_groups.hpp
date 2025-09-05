@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __LIEODYSSEY_LIEPLUSPLUS_HPP__
+#define __LIEODYSSEY_LIEPLUSPLUS_HPP__
 // liepp_groups.hpp
 //
 // Thin, zero-cost adapters for Lie++ groups to a unified API used by
@@ -22,6 +23,7 @@
 //   static Tangent Log(const Wrapper&);
 //   Wrapper operator*(const Wrapper&) const;
 //   Wrapper Inverse() const;
+//   Native native();
 //   TMatrixType Adjoint() const;
 //   TMatrixType invAdjoint() const;
 //   TMatrixType adjoint(const Tangent&) const;
@@ -41,8 +43,6 @@
 // Notes:
 //  - Lie++ (per README examples) uses static `Group::exp(tau)` and
 //    static `Group::log(group)`. Adjoint is a **member**: `X.Adjoint()`.
-//  - Header paths (groups/SEn.hpp, groups/SO3.hpp) follow the README usage.
-//  - If you use only SEn3, you can include <groups/SEn.hpp> alone.
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -63,6 +63,8 @@ namespace lie_odyssey {
 
 // ------------------------------- Base ---------------------------------
 
+// Template parameter: Group = the lie++ group type (e.g. group::SO3,
+// group::SE3, group::SE23, group::Gal3, group::Gal3TG or other group::Group types).
 template <typename Group>
 class BaseLiePP {
 
@@ -84,7 +86,7 @@ class BaseLiePP {
     static Tangent  Log(const BaseLiePP& X) { return Native::log(X.g_); }
 
     // Right Plus/Minus operators
-    void plus(Tangent& u){ g_ *= Exp(u).native(); }                       // right plus X' = X ⊕ u
+    void plus(Tangent& u){ g_ *= Native::exp(u); }                       // right plus X' = X ⊕ u
     Tangent minus(BaseLiePP& X){ return Log( X.Inverse().native()*g_ ); } // right minus t = Y ⊖ X
 
     // Group ops
@@ -236,3 +238,5 @@ class Gal3TGLiePP : public BaseLiePP<group::Gal3TG<Scalar>> {
 };
 
 } // namespace lie_odyssey
+
+#endif

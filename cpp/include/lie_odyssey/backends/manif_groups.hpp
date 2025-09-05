@@ -1,51 +1,83 @@
-#pragma once
+#ifndef __LIEODYSSEY_MANIF_HPP__
+#define __LIEODYSSEY_MANIF_HPP__
 // manif_groups.hpp
 //
-// Thin, zero-cost adapters for Manif groups to a unified API used by
-// lie_odyssey::LieGroup<T>. This file **does not** implement algorithms; it just
-// normalizes naming & signatures across backends.
+// Thin, zero-cost adapters for manif (https://github.com/artivis/manif)
+// to a unified API used by lie_odyssey::LieGroup<T>. This file **does not**
+// implement algorithms; it just normalizes naming & signatures across backends.
 //
-// Depends on Manif (https://github.com/artivis/manif)
+// Depends on manif (https://github.com/artivis/manif)
 // and Eigen3.
 //
 // Exposes:
 //  - lie_odyssey::SO3Manif<Scalar>
-//  - lie_odyssey::SE3Manif<Scalar>
-//  - lie_odyssey::SE2Manif<Scalar>
-//  - lie_odyssey::RnManif<Scalar,N>
-//  - lie_odyssey::SGal3Manif<Scalar> (Special Galilean group, if supported)
+//  - lie_odyssey::SE3<Scalar>
+//  - lie_odyssey::SE23Manif<Scalar>
+//  - lie_odyssey::Gal3Manif<Scalar>
 //
 // Common interface provided by all wrappers:
-//   using Scalar, Tangent, AdjointMatrix, MatrixType, Native;
+//   using Native, Tangent, MatrixType, TMatrixType;
 //   static Wrapper Exp(const Tangent&);
 //   static Tangent Log(const Wrapper&);
 //   Wrapper operator*(const Wrapper&) const;
 //   Wrapper Inverse() const;
-//   AdjointMatrix Adjoint() const;
+//   Native native();
+//   TMatrixType Adjoint() const;
+//   TMatrixType invAdjoint() const;
+//   TMatrixType adjoint(const Tangent&) const;
 //   MatrixType asMatrix() const;
+//   TMatrixType leftJacobian(const Tangent&) const;
+//   TMatrixType invLeftJacobian(const Tangent&) const;
+//   TMatrixType rightJacobian(const Tangent&) const;
+//   TMatrixType invRightJacobian(const Tangent&) const;
 //
 // Convenience accessors where available (forwarded to Manif):
 //   - SO3: q() [quaternion], R() [rotation matrix]
 //   - SE3: q(), R(), p()
-//   - SE2: R(), t()
-//   - SGal: R(), v(), p()
+//   - SE23: q(), R(), v(), p()
+//   - Gal3: q(), R(), v(), p(), t()
+//
+//
+// Relies on the public, documented manif API (see the repository README / docs).
+// The manif README documents the following (relevant) member names:
+//   - Inverse:          X.inverse()
+//   - Composition:      X * Y  (operator*), X.compose(Y)
+//   - Exponential:      w.exp()     (where w is a tangent / local vector object)
+//   - Logarithm:        X.log()     (returns tangent object / local vector)
+//   - Adjoint (manifold): X.adj()
+//   - Tangent adjoint:  w.smallAdj()
+//   - Plus / Minus:     X + w  (right plus), X.minus(Y), X.plus(w), X.rplus(w)
+//   - Hat (wedge):      w.hat()
+//   - Action on vector: X.act(v)
+//
+// Because manif prefers Cartesian tangent vectors, the tangent types are
+// regular Eigen vectors (as exposed by manif). This adapter uses the native
+// manif types where possible.
+//
+// Notes:
+//  - If a particular convenience accessor name (e.g., quat(), translation(),
+//    rotation(), velocity(), t()) differs in your installed manif version,
+//    edit the one line forwarding that accessor accordingly.
 
 #include <Eigen/Core>
-#include <Eigen/Geometry>
-#include <manif/manif.h>
 
 namespace lie_odyssey {
 
 // ------------------------------- Base ---------------------------------
 
+// Template parameter: Native = the manif group type (e.g. manif::SO3d,
+// manif::SE3d, manif::SE23d, manif::SGal3d, or other manif::Group types).
 template <typename Group>
 class BaseManif {
-
-  public:
-    using Native         = Group;
-    using Tangent        = Native::Tangent;       // Lie Algebra Tangent space 
-    using MatrixType     = Native::LieGroup;      // Lie Group matrix type
-    using TMatrixType    = Native::Jacobian;      // Transformation matrix type
+public:
+  /*Note: 
+      manif exposes tangent objects via X.log() and w.exp(); use decltype to
+      obtain the tangent type without assuming a precise typedef name.
+  */  
+    using Native      = Group;
+    using Tangent     = typename Group::Tangent;                        // Lie Algebra Tangent space 
+    using MatrixType  = decltype(std::declval<Native>().transform());   // Lie Group matrix type
+    using TMatrixType = typename Group::Jacobian;                       // Transformation matrix type
 
     Native g_;
 
@@ -54,193 +86,124 @@ class BaseManif {
 
     Native native() { return g_; }
 
-    // Exponential / Logarithm (Lie++ style: static Exp/Log)
-    static BaseManif Exp(const Tangent& u) { return BaseManif(Native::exp(u)); }
-    static Tangent  Log(const BaseManif& X) { return Native::log(X.g_); }
+    // Exponential / Logarithm
+    // manif documents tangent.exp() (w.exp()) and X.log().
+    static BaseManif Exp(const Tangent& u) { return BaseManif(u.exp()); }
+    static Tangent Log(const BaseManif& X) { return X.g_.log(); }
 
-    // Right Plus/Minus operators
-    void plus(Tangent& u){ g_ *= Exp(u).native(); }                       // right plus X' = X ⊕ u
-    Tangent minus(BaseManif& X){ return Log( X.Inverse().native()*g_ ); } // right minus t = Y ⊖ X
+    // Right Plus/Minus operators (manif documents both operator overloads
+    // and named methods like plus(), rplus(), minus(), rminus()).
+    // We'll forward to the documented member functions where possible.
+    void plus(const Tangent& u) { g_ *= u.exp(); }
+
+    Tangent minus(const BaseManif& X) const {
+        // Right minus: documented X - Y or X.rminus(Y) returns tangent.
+        // Compute: Log( X^{-1} * this ) or as documented: this->minus(X) semantics.
+        // We implement right-minusing: this ⊖ X = Log( X^{-1} ∘ this )
+        Native invX = X.g_.inverse();
+        Native relative = invX * g_;
+        return relative.log(); 
+    }
 
     // Group ops
     BaseManif operator*(const BaseManif& other) const { return BaseManif(g_ * other.g_); }
     BaseManif Inverse() const { return BaseManif(g_.inverse()); }
 
-    // Adjoint 
-    TMatrixType Adjoint() const { return g_.Adjoint(); }
-    TMatrixType invAdjoint() const { return g_.invAdjoint(); }
-    TMatrixType adjoint(const Tangent& u) const { return Native::adjoint(u); }
+    // Adjoint
+    // manif documents X.adj() as manifold adjoint
+    TMatrixType Adjoint() const { return g_.adj(); }
+    // manif may not directly document invAdj(), but adj() is invertible; we call
+    // inverse on the matrix returned by adj() if available.
+    TMatrixType invAdjoint() const { 
+        auto A = g_.adj();
+        // attempt to use .inverse() on the returned adjoint type; if it is an Eigen
+        // matrix-like type this will compile. If not available, user can call
+        // native().adj().inverse() or compute differently.
+        return A.inverse();
+    }
+    // Tangent adjoint (tangent.smallAdj())
+    TMatrixType adjoint(const Tangent& u) const { return u.smallAdj(); }
 
     // Matrix representation
-    MatrixType asMatrix() const { return g_.asMatrix(); }
+    MatrixType asMatrix() const { return g_.transform(); }
 
     // Jacobians (w.r.t perturbation)
-    TMatrixType leftJacobian(const Tangent& u) const { return Native::leftJacobian(u); }
-    TMatrixType invLeftJacobian(const Tangent& u) const { return Native::invLeftJacobian(u); }
-    TMatrixType rightJacobian(const Tangent& u) const { return Native::rightJacobian(u); }
-    TMatrixType invRightJacobian(const Tangent& u) const { return Native::invRightJacobian(u); }
-
+    TMatrixType leftJacobian(const Tangent& u) const { return u.ljac(); }
+    TMatrixType invLeftJacobian(const Tangent& u) const { return u.ljacinv(); }
+    TMatrixType rightJacobian(const Tangent& u) const { return u.rjac(); }
+    TMatrixType invRightJacobian(const Tangent& u) const { return u.rjacinv(); }
 };
 
 // ------------------------------- SO(3) ---------------------------------
 
-template <typename _Scalar = double>
-struct SO3Manif {
-  using Scalar        = _Scalar;
-  using Native        = manif::SO3<Scalar>;
-  using Tangent       = manif::SO3Tangent<Scalar>;
-  using MatrixType    = Eigen::Matrix<Scalar,3,3>;
-  using AdjointMatrix = Eigen::Matrix<Scalar,3,3>;
+template <typename Scalar = double>
+class SO3Manif : public BaseManif<manif::SO3<Scalar>> {
+    using Base = BaseManif<manif::SO3<Scalar>>;
+  public:
+    SO3Manif() : Base() { }
+    explicit SO3Manif(const Base::Native& gg) : Base(gg) { }
 
-  Native g;
-
-  SO3Manif() : g(Native::Identity()) {}
-  explicit SO3Manif(const Native& gg) : g(gg) {}
-
-  static SO3Manif Exp(const Tangent& tau) { return SO3Manif(Native::exp(tau)); }
-  static Tangent  Log(const SO3Manif& X) { return X.g.log(); }
-
-  SO3Manif operator*(const SO3Manif& other) const { return SO3Manif(g * other.g); }
-  SO3Manif Inverse() const { return SO3Manif(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.adj(); }
-  MatrixType asMatrix() const { return g.rotation(); }
-
-  // Convenience
-  MatrixType R() const { return g.rotation(); }
-  Eigen::Quaternion<Scalar> q() const { return g.quat(); }
+    // Convenience accessors (forward to Manif)
+    auto q() const { return this->g_.quat(); }      // quaternion
+    auto R() const { return this->g_.rotation(); }  // rotation matrix
 };
 
 // ------------------------------- SE(3) ---------------------------------
 
-template <typename _Scalar = double>
-struct SE3Manif {
-  using Scalar        = _Scalar;
-  using Native        = manif::SE3<Scalar>;
-  using Tangent       = manif::SE3Tangent<Scalar>;
-  using MatrixType    = Eigen::Matrix<Scalar,4,4>;
-  using AdjointMatrix = Eigen::Matrix<Scalar,6,6>;
+template <typename Scalar = double>
+class SE3Manif : public BaseManif<manif::SE3<Scalar>> {
+    using Base = BaseManif<manif::SE3<Scalar>>;
+  public:
+    SE3Manif() : Base() { }
+    explicit SE3Manif(const Base::Native& gg) : Base(gg) { }
 
-  Native g;
-
-  SE3Manif() : g(Native::Identity()) {}
-  explicit SE3Manif(const Native& gg) : g(gg) {}
-  SE3Manif(const Eigen::Quaternion<Scalar>& q, const Eigen::Matrix<Scalar,3,1>& p)
-      : g(q, p) {}
-
-  static SE3Manif Exp(const Tangent& xi) { return SE3Manif(Native::exp(xi)); }
-  static Tangent  Log(const SE3Manif& X) { return X.g.log(); }
-
-  SE3Manif operator*(const SE3Manif& other) const { return SE3Manif(g * other.g); }
-  SE3Manif Inverse() const { return SE3Manif(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.adj(); }
-  MatrixType    asMatrix() const { return g.transform(); }
-
-  // Convenience
-  Eigen::Quaternion<Scalar> q() const { return g.quat(); }
-  Eigen::Matrix<Scalar,3,3> R() const { return g.rotation(); }
-  Eigen::Matrix<Scalar,3,1> p() const { return g.translation(); }
+    // Convenience accessors (forward to Manif)
+    auto q() const { return this->g_.quat(); }           // quaternion
+    auto R() const { return this->g_.rotation(); }       // rotation matrix
+    auto p() const { return this->g_.translation(); }    // position / translation
 };
 
-// ------------------------------- SE(2) ---------------------------------
+// ------------------------------ SE_2(3) ---------------------------------
 
-template <typename _Scalar = double>
-struct SE2Manif {
-  using Scalar        = _Scalar;
-  using Native        = manif::SE2<Scalar>;
-  using Tangent       = manif::SE2Tangent<Scalar>;
-  using MatrixType    = Eigen::Matrix<Scalar,3,3>;
-  using AdjointMatrix = Eigen::Matrix<Scalar,3,3>;
+template <typename Scalar = double>
+class SE23Manif : public BaseManif<manif::SE23<Scalar>> {
+    using Base = BaseManif<manif::SE23<Scalar>>;
+  public:
+    SE23Manif() : Base() { }
+    explicit SE23Manif(const Base::Native& gg) : Base(gg) { }
 
-  Native g;
-
-  SE2Manif() : g(Native::Identity()) {}
-  explicit SE2Manif(const Native& gg) : g(gg) {}
-  SE2Manif(const Eigen::Rotation2D<Scalar>& R, const Eigen::Matrix<Scalar,2,1>& t)
-      : g(R, t) {}
-
-  static SE2Manif Exp(const Tangent& xi) { return SE2Manif(Native::exp(xi)); }
-  static Tangent  Log(const SE2Manif& X) { return X.g.log(); }
-
-  SE2Manif operator*(const SE2Manif& other) const { return SE2Manif(g * other.g); }
-  SE2Manif Inverse() const { return SE2Manif(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.adj(); }
-  MatrixType    asMatrix() const { return g.transform(); }
-
-  // Convenience
-  Eigen::Matrix<Scalar,2,2> R() const { return g.rotation(); }
-  Eigen::Matrix<Scalar,2,1> t() const { return g.translation(); }
+    // Convenience accessors (forward to Manif)
+    auto q() const { return this->g_.quat(); }
+    auto R() const { return this->g_.rotation(); }
+    auto v() const { return this->g_.linearVelocity(); }      
+    auto p() const { return this->g_.translation(); }
 };
 
-// ------------------------------- R^n ---------------------------------
-// Manif also defines Euclidean R^n (as Rn) which behaves like a Lie group.
+// ------------------------------ SGal(3) / Gal(3) -------------------------
 
-template <typename _Scalar, int N>
-struct RnManif {
-  using Scalar        = _Scalar;
-  using Native        = manif::Rn<Scalar,N>;
-  using Tangent       = manif::RnTangent<Scalar,N>;
-  using MatrixType    = Eigen::Matrix<Scalar,N,1>;
-  using AdjointMatrix = Eigen::Matrix<Scalar,N,N>; // Identity always
+template <typename Scalar = double>
+class Gal3Manif : public BaseManif<manif::SGal3<Scalar>> {
+    using Base = BaseManif<manif::SGal3<Scalar>>;
+  public:
+    Gal3Manif() : Base() { }
+    explicit Gal3Manif(const Base::Native& gg) : Base(gg) { }
 
-  Native g;
-
-  RnManif() : g(Native::Identity()) {}
-  explicit RnManif(const Native& gg) : g(gg) {}
-  explicit RnManif(const Eigen::Matrix<Scalar,N,1>& v) : g(v) {}
-
-  static RnManif Exp(const Tangent& v) { return RnManif(Native::exp(v)); }
-  static Tangent Log(const RnManif& X) { return X.g.log(); }
-
-  RnManif operator+(const RnManif& other) const { return RnManif(g + other.g); }
-  RnManif operator-(const RnManif& other) const { return RnManif(g - other.g); }
-
-  // Group identity (translation group)
-  RnManif operator*(const RnManif& other) const { return RnManif(g + other.g); }
-  RnManif Inverse() const { return RnManif(-g); }
-
-  AdjointMatrix Adjoint() const { return AdjointMatrix::Identity(); }
-  MatrixType asMatrix() const { return g.vector(); }
-
-  Eigen::Matrix<Scalar,N,1> v() const { return g.vector(); }
+    auto q() const { return this->g_.quat(); }
+    auto R() const { return this->g_.rotation(); }
+    auto v() const { return this->g_.linearVelocity(); } 
+    auto p() const { return this->g_.translation(); }   
+    auto t() const { return this->g_.t(); }  // time accessor
 };
 
-// ------------------------------- SGal(3) ---------------------------------
+// ------------------------------- Bundle / Composite ---------------------
 //
-// Special Galilean group (rotation, translation, velocity, and time).
-// Provided directly by Manif as manif::SGal3<Scalar> with matching Tangent type.
-
-template <typename _Scalar = double>
-struct SGal3Manif {
-  using Scalar         = _Scalar;
-  using Native         = manif::SGal3<Scalar>;
-  using Tangent        = manif::SGal3Tangent<Scalar>;
-  using MatrixType     = typename Native::Transformation;  // typically 5x5
-  using AdjointMatrix  = Eigen::Matrix<Scalar,
-                            manif::SGal3<Scalar>::Dim,
-                            manif::SGal3<Scalar>::Dim>;
-
-  Native g;
-
-  SGal3Manif() : g(Native::Identity()) {}
-  explicit SGal3Manif(const Native& gg) : g(gg) {}
-
-  static SGal3Manif Exp(const Tangent& xi) { return SGal3Manif(Native::Exp(xi)); }
-  static Tangent  Log(const SGal3Manif& X) { return Native::Log(X.g); }
-
-  SGal3Manif operator*(const SGal3Manif& other) const { return SGal3Manif(g * other.g); }
-  SGal3Manif Inverse() const { return SGal3Manif(g.inverse()); }
-
-  AdjointMatrix Adjoint() const { return g.adj(); }
-  MatrixType    asMatrix() const { return g.transform(); }
-
-  // Convenience accessors:
-  Eigen::Matrix<Scalar,3,3> R() const { return g.rotation(); }
-  Eigen::Matrix<Scalar,3,1> v() const { return g.velocity(); }
-  Eigen::Matrix<Scalar,3,1> p() const { return g.translation(); }
-  Scalar time() const { return g.time(); }
-};
+// manif supports Bundle<> (composite manifold). Users wanting a wrapper for
+// Bundle should instantiate BaseManif<manif::Bundle<...>> directly. We don't
+// create a dedicated convenience wrapper here because the fields are user-
+// defined (the bundle template params).
+//
+// -----------------------------------------------------------------------
 
 } // namespace lie_odyssey
+
+#endif
