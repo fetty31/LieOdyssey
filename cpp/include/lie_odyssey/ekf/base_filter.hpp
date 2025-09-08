@@ -1,0 +1,4 @@
+#ifndef __LIEODYSSEY_EKF_BASE_FILTER_HPP__
+#define __LIEODYSSEY_EKF_BASE_FILTER_HPP__
+
+#endif

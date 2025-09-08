@@ -1,5 +1,5 @@
-#ifndef __LIEODYSSEY_MANIF_HPP__
-#define __LIEODYSSEY_MANIF_HPP__
+#ifndef __LIEODYSSEY_BACKENDS_MANIF_HPP__
+#define __LIEODYSSEY_BACKENDS_MANIF_HPP__
 // manif_groups.hpp
 //
 // Thin, zero-cost adapters for manif (https://github.com/artivis/manif)
@@ -16,20 +16,20 @@
 //  - lie_odyssey::Gal3Manif<Scalar>
 //
 // Common interface provided by all wrappers:
-//   using Native, Tangent, MatrixType, TMatrixType;
+//   using Native, Tangent, MatrixType, Jacobian;
 //   static Wrapper Exp(const Tangent&);
 //   static Tangent Log(const Wrapper&);
 //   Wrapper operator*(const Wrapper&) const;
 //   Wrapper Inverse() const;
 //   Native native();
-//   TMatrixType Adjoint() const;
-//   TMatrixType invAdjoint() const;
-//   TMatrixType adjoint(const Tangent&) const;
+//   Jacobian Adjoint() const;
+//   Jacobian invAdjoint() const;
+//   Jacobian adjoint(const Tangent&) const;
 //   MatrixType asMatrix() const;
-//   TMatrixType leftJacobian(const Tangent&) const;
-//   TMatrixType invLeftJacobian(const Tangent&) const;
-//   TMatrixType rightJacobian(const Tangent&) const;
-//   TMatrixType invRightJacobian(const Tangent&) const;
+//   Jacobian leftJacobian(const Tangent&) const;
+//   Jacobian invLeftJacobian(const Tangent&) const;
+//   Jacobian rightJacobian(const Tangent&) const;
+//   Jacobian invRightJacobian(const Tangent&) const;
 //
 // Convenience accessors where available (forwarded to Manif):
 //   - SO3: q() [quaternion], R() [rotation matrix]
@@ -61,13 +61,19 @@
 
 #include <Eigen/Core>
 
+#include <manif/manif.h>
+#include <manif/SO3.h>
+#include <manif/SE3.h>
+#include <manif/SE_2_3.h>
+#include <manif/SGal3.h>
+
 namespace lie_odyssey {
 
 // ------------------------------- Base ---------------------------------
 
 // Template parameter: Native = the manif group type (e.g. manif::SO3d,
 // manif::SE3d, manif::SE23d, manif::SGal3d, or other manif::Group types).
-template <typename Group>
+template<typename Derived, typename Group>
 class BaseManif {
 public:
   /*Note: 
@@ -77,44 +83,53 @@ public:
     using Native      = Group;
     using Tangent     = typename Group::Tangent;                        // Lie Algebra Tangent space 
     using MatrixType  = decltype(std::declval<Native>().transform());   // Lie Group matrix type
-    using TMatrixType = typename Group::Jacobian;                       // Transformation matrix type
+    using Jacobian    = typename Group::Jacobian;                       // Transformation matrix type
 
     Native g_;
 
-    BaseManif() : g_() {}
+    BaseManif() : g_() { setIdentity(); }
     explicit BaseManif(const Native& gg) : g_(gg) {}
 
     Native native() { return g_; }
 
+    // Identity utils
+    void setIdentity() { this->g_.setIdentity(); }
+    static Derived Identity() 
+    { 
+      Native g; g.setIdentity();
+      return Derived(g);
+    }
+
     // Exponential / Logarithm
     // manif documents tangent.exp() (w.exp()) and X.log().
-    static BaseManif Exp(const Tangent& u) { return BaseManif(u.exp()); }
-    static Tangent Log(const BaseManif& X) { return X.g_.log(); }
+    static Derived Exp(const Tangent& u) { return Derived(u.exp()); }
+    Tangent Log() { return this->g_.log(); }
 
     // Right Plus/Minus operators (manif documents both operator overloads
     // and named methods like plus(), rplus(), minus(), rminus()).
     // We'll forward to the documented member functions where possible.
-    void plus(const Tangent& u) { g_ *= u.exp(); }
+    void plus(const Tangent& u) { g_ *= u.exp(); } // right plus X' = X ⊕ u
 
-    Tangent minus(const BaseManif& X) const {
+    Tangent minus(const Derived& X) const {
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // Compute: Log( X^{-1} * this ) or as documented: this->minus(X) semantics.
         // We implement right-minusing: this ⊖ X = Log( X^{-1} ∘ this )
+        const Derived& self = static_cast<const Derived&>(*this);
         Native invX = X.g_.inverse();
-        Native relative = invX * g_;
+        Native relative = invX * self.g_;
         return relative.log(); 
     }
 
     // Group ops
-    BaseManif operator*(const BaseManif& other) const { return BaseManif(g_ * other.g_); }
-    BaseManif Inverse() const { return BaseManif(g_.inverse()); }
+    Derived operator*(const Derived& other) const { return Derived(g_ * other.g_); }
+    Derived Inverse() const { return Derived(g_.inverse()); }
 
     // Adjoint
     // manif documents X.adj() as manifold adjoint
-    TMatrixType Adjoint() const { return g_.adj(); }
+    Jacobian Adjoint() const { return g_.adj(); }
     // manif may not directly document invAdj(), but adj() is invertible; we call
     // inverse on the matrix returned by adj() if available.
-    TMatrixType invAdjoint() const { 
+    Jacobian invAdjoint() const { 
         auto A = g_.adj();
         // attempt to use .inverse() on the returned adjoint type; if it is an Eigen
         // matrix-like type this will compile. If not available, user can call
@@ -122,26 +137,27 @@ public:
         return A.inverse();
     }
     // Tangent adjoint (tangent.smallAdj())
-    TMatrixType adjoint(const Tangent& u) const { return u.smallAdj(); }
+    Jacobian adjoint(const Tangent& u) const { return u.smallAdj(); }
 
     // Matrix representation
     MatrixType asMatrix() const { return g_.transform(); }
 
     // Jacobians (w.r.t perturbation)
-    TMatrixType leftJacobian(const Tangent& u) const { return u.ljac(); }
-    TMatrixType invLeftJacobian(const Tangent& u) const { return u.ljacinv(); }
-    TMatrixType rightJacobian(const Tangent& u) const { return u.rjac(); }
-    TMatrixType invRightJacobian(const Tangent& u) const { return u.rjacinv(); }
+    Jacobian leftJacobian(const Tangent& u) const { return u.ljac(); }
+    Jacobian invLeftJacobian(const Tangent& u) const { return u.ljacinv(); }
+    Jacobian rightJacobian(const Tangent& u) const { return u.rjac(); }
+    Jacobian invRightJacobian(const Tangent& u) const { return u.rjacinv(); }
 };
 
 // ------------------------------- SO(3) ---------------------------------
 
 template <typename Scalar = double>
-class SO3Manif : public BaseManif<manif::SO3<Scalar>> {
-    using Base = BaseManif<manif::SO3<Scalar>>;
+class SO3Manif : public BaseManif<SO3Manif<Scalar>, manif::SO3<Scalar>> {
+    using Base = BaseManif<SO3Manif<Scalar>, manif::SO3<Scalar>>;
   public:
     SO3Manif() : Base() { }
-    explicit SO3Manif(const Base::Native& gg) : Base(gg) { }
+    explicit SO3Manif(const Base& b) : Base(b) { }
+    explicit SO3Manif(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Manif)
     auto q() const { return this->g_.quat(); }      // quaternion
@@ -151,11 +167,12 @@ class SO3Manif : public BaseManif<manif::SO3<Scalar>> {
 // ------------------------------- SE(3) ---------------------------------
 
 template <typename Scalar = double>
-class SE3Manif : public BaseManif<manif::SE3<Scalar>> {
-    using Base = BaseManif<manif::SE3<Scalar>>;
+class SE3Manif : public BaseManif<SE3Manif<Scalar>, manif::SE3<Scalar>> { 
+    using Base = BaseManif<SE3Manif<Scalar>, manif::SE3<Scalar>>;
   public:
     SE3Manif() : Base() { }
-    explicit SE3Manif(const Base::Native& gg) : Base(gg) { }
+    explicit SE3Manif(const Base& b) : Base(b) { }
+    explicit SE3Manif(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Manif)
     auto q() const { return this->g_.quat(); }           // quaternion
@@ -166,11 +183,12 @@ class SE3Manif : public BaseManif<manif::SE3<Scalar>> {
 // ------------------------------ SE_2(3) ---------------------------------
 
 template <typename Scalar = double>
-class SE23Manif : public BaseManif<manif::SE23<Scalar>> {
-    using Base = BaseManif<manif::SE23<Scalar>>;
+class SE23Manif : public BaseManif<SE23Manif<Scalar>, manif::SE_2_3<Scalar>> {
+    using Base = BaseManif<SE23Manif<Scalar>, manif::SE_2_3<Scalar>>;
   public:
     SE23Manif() : Base() { }
-    explicit SE23Manif(const Base::Native& gg) : Base(gg) { }
+    explicit SE23Manif(const Base& b) : Base(b) { }
+    explicit SE23Manif(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Manif)
     auto q() const { return this->g_.quat(); }
@@ -182,11 +200,12 @@ class SE23Manif : public BaseManif<manif::SE23<Scalar>> {
 // ------------------------------ SGal(3) / Gal(3) -------------------------
 
 template <typename Scalar = double>
-class Gal3Manif : public BaseManif<manif::SGal3<Scalar>> {
-    using Base = BaseManif<manif::SGal3<Scalar>>;
+class Gal3Manif : public BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>> {
+    using Base = BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>>;
   public:
     Gal3Manif() : Base() { }
-    explicit Gal3Manif(const Base::Native& gg) : Base(gg) { }
+    explicit Gal3Manif(const Base& b) : Base(b) { }
+    explicit Gal3Manif(const typename Base::Native& gg) : Base(gg) { }
 
     auto q() const { return this->g_.quat(); }
     auto R() const { return this->g_.rotation(); }

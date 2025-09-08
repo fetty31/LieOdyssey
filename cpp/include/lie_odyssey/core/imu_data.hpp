@@ -1,4 +1,4 @@
-#ifndef __LIEODYSSEY_IMU_DATA_HPP__
-#define __LIEODYSSEY_IMU_DATA_HPP__
+#ifndef __LIEODYSSEY_CORE_IMU_DATA_HPP__
+#define __LIEODYSSEY_CORE_IMU_DATA_HPP__
 
 #endif

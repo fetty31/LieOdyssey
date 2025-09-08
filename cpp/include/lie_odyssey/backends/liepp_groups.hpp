@@ -1,5 +1,5 @@
-#ifndef __LIEODYSSEY_LIEPLUSPLUS_HPP__
-#define __LIEODYSSEY_LIEPLUSPLUS_HPP__
+#ifndef __LIEODYSSEY_BACKENDS_LIEPLUSPLUS_HPP__
+#define __LIEODYSSEY_BACKENDS_LIEPLUSPLUS_HPP__
 // liepp_groups.hpp
 //
 // Thin, zero-cost adapters for Lie++ groups to a unified API used by
@@ -18,20 +18,20 @@
 //  - lie_odyssey::Gal3TGLiePP<Scalar>
 //
 // Common interface provided by all wrappers:
-//   using Native, Tangent, MatrixType, TMatrixType;
+//   using Native, Tangent, MatrixType, Jacobian;
 //   static Wrapper Exp(const Tangent&);
 //   static Tangent Log(const Wrapper&);
 //   Wrapper operator*(const Wrapper&) const;
 //   Wrapper Inverse() const;
 //   Native native();
-//   TMatrixType Adjoint() const;
-//   TMatrixType invAdjoint() const;
-//   TMatrixType adjoint(const Tangent&) const;
+//   Jacobian Adjoint() const;
+//   Jacobian invAdjoint() const;
+//   Jacobian adjoint(const Tangent&) const;
 //   MatrixType asMatrix() const;
-//   TMatrixType leftJacobian(const Tangent&) const;
-//   TMatrixType invLeftJacobian(const Tangent&) const;
-//   TMatrixType rightJacobian(const Tangent&) const;
-//   TMatrixType invRightJacobian(const Tangent&) const;
+//   Jacobian leftJacobian(const Tangent&) const;
+//   Jacobian invLeftJacobian(const Tangent&) const;
+//   Jacobian rightJacobian(const Tangent&) const;
+//   Jacobian invRightJacobian(const Tangent&) const;
 //
 // Convenience accessors where available (forwarded to Lie++):
 //   - SO3: q() [quaternion], R() [rotation matrix]
@@ -49,11 +49,11 @@
 
 // Lie++ includes
 // SEn3 (covers SE3 for N=1, SE23 for N=2, ...):
-#include <groups/SEn.hpp>
+#include <groups/SEn3.hpp>
 // SO3 (separate base group):
 #include <groups/SO3.hpp>
 // Gal (separate base group):
-#include <groups/Gal.hpp>
+#include <groups/Gal3.hpp>
 // TG (separate base group):
 #include <groups/TG.hpp>
 // SDB (separate base group):
@@ -65,14 +65,14 @@ namespace lie_odyssey {
 
 // Template parameter: Group = the lie++ group type (e.g. group::SO3,
 // group::SE3, group::SE23, group::Gal3, group::Gal3TG or other group::Group types).
-template <typename Group>
+template<typename Derived, typename Group>
 class BaseLiePP {
 
   public:
     using Native         = Group;
-    using Tangent        = Native::VectorType;    // Lie Algebra Tangent space 
-    using MatrixType     = Native::MatrixType;    // Lie Group matrix type
-    using TMatrixType    = Native::TMatrixType;   // Transformation matrix type
+    using Tangent        = typename Native::VectorType;    // Lie Algebra Tangent space 
+    using MatrixType     = typename Native::MatrixType;    // Lie Group matrix type
+    using Jacobian       = typename Native::TMatrixType;   // Transformation matrix type
 
     Native g_;
 
@@ -81,44 +81,55 @@ class BaseLiePP {
 
     Native native() { return g_; }
 
+    // Identity utils
+    void setIdentity() { this->g_ = Native(); }
+    Derived Identity() 
+    { 
+      return Derived();
+    }
+
     // Exponential / Logarithm (Lie++ style: static Exp/Log)
-    static BaseLiePP Exp(const Tangent& u) { return BaseLiePP(Native::exp(u)); }
-    static Tangent  Log(const BaseLiePP& X) { return Native::log(X.g_); }
+    static Derived Exp(const Tangent& u) { return Derived(Native::exp(u)); }
+    Tangent Log() { return Native::log(g_); }
 
     // Right Plus/Minus operators
-    void plus(Tangent& u){ g_ *= Native::exp(u); }                       // right plus X' = X ⊕ u
-    Tangent minus(BaseLiePP& X){ return Log( X.Inverse().native()*g_ ); } // right minus t = Y ⊖ X
+    void plus(Tangent& u){ g_ *= Native::exp(u); } // right plus X' = X ⊕ u
+    Tangent minus(Derived& X)
+    { 
+      const Derived& self = static_cast<const Derived&>(*this);
+      return Log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
+    }
 
     // Group ops
-    BaseLiePP operator*(const BaseLiePP& other) const { return BaseLiePP(g_ * other.g_); }
-    BaseLiePP Inverse() const { return BaseLiePP(g_.inverse()); }
+    Derived operator*(const Derived& other) const { return Derived(g_ * other.g_); }
+    Derived Inverse() const { return Derived(g_.inverse()); }
 
     // Adjoint 
-    TMatrixType Adjoint() const { return g_.Adjoint(); }
-    TMatrixType invAdjoint() const { return g_.invAdjoint(); }
-    TMatrixType adjoint(const Tangent& u) const { return Native::adjoint(u); }
+    Jacobian Adjoint() const { return g_.Adjoint(); }
+    Jacobian invAdjoint() const { return g_.invAdjoint(); }
+    Jacobian adjoint(const Tangent& u) const { return Native::adjoint(u); }
 
     // Matrix representation
     MatrixType asMatrix() const { return g_.asMatrix(); }
 
     // Jacobians (w.r.t perturbation)
-    TMatrixType leftJacobian(const Tangent& u) const { return Native::leftJacobian(u); }
-    TMatrixType invLeftJacobian(const Tangent& u) const { return Native::invLeftJacobian(u); }
-    TMatrixType rightJacobian(const Tangent& u) const { return Native::rightJacobian(u); }
-    TMatrixType invRightJacobian(const Tangent& u) const { return Native::invRightJacobian(u); }
+    Jacobian leftJacobian(const Tangent& u) const { return Native::leftJacobian(u); }
+    Jacobian invLeftJacobian(const Tangent& u) const { return Native::invLeftJacobian(u); }
+    Jacobian rightJacobian(const Tangent& u) const { return Native::rightJacobian(u); }
+    Jacobian invRightJacobian(const Tangent& u) const { return Native::invRightJacobian(u); }
 
 };
 
 // ------------------------------- SO(3) ---------------------------------
 
 template <typename Scalar = double>
-class SO3LiePP : public BaseLiePP<group::SO3<Scalar>> {
+class SO3LiePP : public BaseLiePP<SO3LiePP<Scalar>, group::SO3<Scalar>> {
   
-  using Base = BaseLiePP<group::SO3<Scalar>>;
+  using Base = BaseLiePP<SO3LiePP<Scalar>, group::SO3<Scalar>>;
 
   public:
     SO3LiePP() : Base() { }
-    explicit SO3LiePP(const Base::Native& gg) : Base(gg) { }
+    explicit SO3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
   // Convenience accessors (forward to Lie++)
   auto R() const { return this->g_.asMatrix(); }
@@ -131,13 +142,13 @@ class SO3LiePP : public BaseLiePP<group::SO3<Scalar>> {
 // ergonomic typedefs and SE(3)-specific accessors.
 
 template <typename Scalar = double>
-class SE3LiePP : public BaseLiePP<group::SEn3<Scalar, 1>> {
+class SE3LiePP : public BaseLiePP<SE3LiePP<Scalar>, group::SEn3<Scalar, 1>> {
   
-  using Base = BaseLiePP<group::SEn3<Scalar, 1>>;
+  using Base = BaseLiePP<SE3LiePP<Scalar>, group::SEn3<Scalar, 1>>;
 
   public:
     SE3LiePP() : Base() { }
-    explicit SE3LiePP(const Base::Native& gg) : Base(gg) { }
+    explicit SE3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Lie++):
     auto q() const { return this->g_.q(); }               // quaternion
@@ -152,13 +163,13 @@ class SE3LiePP : public BaseLiePP<group::SEn3<Scalar, 1>> {
 // velocity `v()` is available in addition to pose.
 
 template <typename Scalar = double>
-class SE23LiePP : public BaseLiePP<group::SEn3<Scalar, 2>> {
+class SE23LiePP : public BaseLiePP<SE23LiePP<Scalar>, group::SEn3<Scalar, 2>> {
   
-  using Base = BaseLiePP<group::SEn3<Scalar, 2>>;
+  using Base = BaseLiePP<SE23LiePP<Scalar>, group::SEn3<Scalar, 2>>;
 
   public:
     SE23LiePP() : Base() { }
-    explicit SE23LiePP(const Base::Native& gg) : Base(gg) { }
+    explicit SE23LiePP(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Lie++):
     auto q() const { return this->g_.q(); }   // quaternion
@@ -178,13 +189,13 @@ class SE23LiePP : public BaseLiePP<group::SEn3<Scalar, 2>> {
 // you can reach the native `g` to call the specific methods if needed.
 
 template <typename Scalar, int N>
-class SEn3LiePP : public BaseLiePP<group::SEn3<Scalar, N>> {
+class SEn3LiePP : public BaseLiePP<SEn3LiePP<Scalar, N>, group::SEn3<Scalar, N>> {
   
-  using Base = BaseLiePP<group::SEn3<Scalar, N>>;
+  using Base = BaseLiePP<SEn3LiePP<Scalar, N>, group::SEn3<Scalar, N>>;
 
   public:
     SEn3LiePP() : Base() { }
-    explicit SEn3LiePP(const Base::Native& gg) : Base(gg) { }
+    explicit SEn3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Lie++):
     auto q() const { return this->g_.q(); }   // quaternion
@@ -204,13 +215,13 @@ class SEn3LiePP : public BaseLiePP<group::SEn3<Scalar, N>> {
 // ------------------------------- Gal(3) ---------------------------------
 
 template <typename Scalar = double>
-class Gal3LiePP : public BaseLiePP<group::Gal3<Scalar>> {
+class Gal3LiePP : public BaseLiePP<Gal3LiePP<Scalar>, group::Gal3<Scalar>> {
   
-  using Base = BaseLiePP<group::Gal3<Scalar>>;
+  using Base = BaseLiePP<Gal3LiePP<Scalar>, group::Gal3<Scalar>>;
 
   public:
     Gal3LiePP() : Base() { }
-    explicit Gal3LiePP(const Base::Native& gg) : Base(gg) { }
+    explicit Gal3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Lie++):
     auto q() const { return this->g_.q(); }   // quaternion
@@ -223,13 +234,13 @@ class Gal3LiePP : public BaseLiePP<group::Gal3<Scalar>> {
 // ------------------------------- TG ---------------------------------
 
 template <typename Scalar = double>
-class Gal3TGLiePP : public BaseLiePP<group::Gal3TG<Scalar>> {
+class Gal3TGLiePP : public BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>> {
   
-  using Base = BaseLiePP<group::Gal3TG<Scalar>>;
+  using Base = BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>>;
 
   public:
     Gal3TGLiePP() : Base() { }
-    explicit Gal3TGLiePP(const Base::Native& gg) : Base(gg) { }
+    explicit Gal3TGLiePP(const typename Base::Native& gg) : Base(gg) { }
 
     // Convenience accessors (forward to Lie++):
     auto G() const { return Gal3LiePP<Scalar>(this->g_.G()); }   // get Lie Group element

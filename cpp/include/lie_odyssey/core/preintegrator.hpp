@@ -1,5 +1,5 @@
-#ifndef __LIEODYSSEY_IMU_PREPROCESSOR_HPP__
-#define __LIEODYSSEY_IMU_PREPROCESSOR_HPP__
+#ifndef __LIEODYSSEY_CORE_PREINTEGRATOR_HPP__
+#define __LIEODYSSEY_CORE_PREINTEGRATOR_HPP__
 
 // imu_preintegrator_sgal_manif.hpp
 // IMU preintegration on SGal(3) using Manif analytic Jacobians.
@@ -12,18 +12,19 @@
 //  - Bias Jacobians map small bias corrections (δbg, δba) -> correction in tangent,
 //    then are pulled through the group's right-plus Jacobian (J_xi) and composition Jacobian (J_x).
 
-#include <Eigen/Core>
-#include <Eigen/Geometry>
-#include <manif/manif.h>
+#include "lie_odyssey/core/groups.hpp"
 
 namespace lie_odyssey {
+
 template <typename Scalar = double>
 class ImuPreintegratorSGal {
 
  public:
-    using Group   = manif::SGal3<Scalar>;
-    using Tangent = typename Group::Tangent;      // 10x1
-    using Jacob10 = typename Group::Jacobian;     // 10x10
+    // using Group   = Gal3Manif<Scalar>;
+    using Group   = LieGroup<Gal3Manif<Scalar>>;
+    using Tangent = typename Group::Tangent;            // 10x1
+    using Jacob10 = typename Group::Jacobian;           // 10x10
+    // using GroupMatrix = typename Group::MatrixType;     // 5x5
     using Vec3    = Eigen::Matrix<Scalar,3,1>;
     using Vec10   = Eigen::Matrix<Scalar,10,1>;
     using Mat3    = Eigen::Matrix<Scalar,3,3>;
@@ -52,7 +53,7 @@ class ImuPreintegratorSGal {
 
     ImuPreintegratorSGal(const Mat3& covg = Mat3::Identity() * Scalar(1e-5),
                         const Mat3& cova = Mat3::Identity() * Scalar(1e-3))
-        : dX(Group::Identity()),
+        : dX(),
             J_bg(Eigen::Matrix<Scalar,10,3>::Zero()),
             J_ba(Eigen::Matrix<Scalar,10,3>::Zero()),
             cov(Mat10::Zero()),
@@ -61,8 +62,9 @@ class ImuPreintegratorSGal {
             sum_dt(Scalar(0))
     {}
 
-    void reset() {
-        dX = Group::Identity();
+    void reset() 
+    {
+        dX.setIdentity();
         J_bg.setZero();
         J_ba.setZero();
         cov.setZero();
@@ -108,7 +110,7 @@ class ImuPreintegratorSGal {
 
         // rho: approximate displacement contribution over this small step
         // use current preintegrated delta-velocity (in SGal, .v() returns velocity component)
-        Vec3 cur_dv = dX.linearVelocity(); 
+        Vec3 cur_dv = dX.impl().v(); 
         tangent.template segment<3>(0) = cur_dv * dt + Scalar(0.5) * acc_unbiased * dt * dt;
 
         Tangent xi = tangent;
@@ -117,15 +119,16 @@ class ImuPreintegratorSGal {
         // Compose: dX_new = dX ⊕ exp(xi)  i.e. right-plus: dX.plus(xi, J_dX, J_xi)
         Jacob10 J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX
         Jacob10 J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi
-        Group dX_new = dX.plus(xi, J_dX, J_xi);
+        typename Group::Impl::Native manif_dX = dX.impl().native();
+        Group dX_new = Group(manif_dX.plus(xi, J_dX, J_xi));
 
         // --- compute ∂xi/∂b_g and ∂xi/∂b_a (10x3 each) ---
         // measurement noise / bias enters xi linearly:
         // xi.blocks:
-        //  rho = cur_dv*dt + 0.5 * acc_unbiased * dt^2   => ∂rho/∂ba = -0.5*dt^2 * I, ∂rho/∂bg = 0
-        //  nu  = acc_unbiased * dt                       => ∂nu/∂ba  = -dt * I,      ∂nu/∂bg = 0
-        //  theta = omega_unbiased * dt                   => ∂theta/∂bg = -dt * I,   ∂theta/∂ba = 0
-        //  s = dt                                        => zeros
+        //  rho = cur_dv*dt + 0.5 * (acc_biased - ba) * dt^2   => ∂rho/∂ba = -0.5*dt^2 * I, ∂rho/∂bg = 0
+        //  nu  = (acc_biased - ba) * dt                       => ∂nu/∂ba  = -dt * I,      ∂nu/∂bg = 0
+        //  theta = (omega_biased - bg) * dt                   => ∂theta/∂bg = -dt * I,   ∂theta/∂ba = 0
+        //  s = dt                                             => zeros
         Eigen::Matrix<Scalar,10,3> dxi_dbg = Eigen::Matrix<Scalar,10,3>::Zero();
         Eigen::Matrix<Scalar,10,3> dxi_dba = Eigen::Matrix<Scalar,10,3>::Zero();
 
@@ -175,8 +178,9 @@ class ImuPreintegratorSGal {
         sum_dt += dt;
     }
 
-    // Apply bias correction: given small bias deltas (delta_bg, delta_ba) return corrected dX
-    Group getCorrectedDelta(const Vec3& delta_bg, const Vec3& delta_ba) const {
+    // Apply bias correction: given small bias deltas (delta_bg, delta_ba)
+    void correctDelta(const Vec3& delta_bg, const Vec3& delta_ba)
+    {
         // correction in tangent: corr = J_bg * delta_bg + J_ba * delta_ba (10x1)
         Vec10 corr = Vec10::Zero();
         corr.template head<3>()  = J_bg.template block<3,3>(0,0) * delta_bg + J_ba.template block<3,3>(0,0) * delta_ba;
@@ -187,15 +191,20 @@ class ImuPreintegratorSGal {
         // apply correction on right: dX_corr = dX ⊕ Exp(corr)
 
         Tangent corrT = corr;
-        Group out = dX.plus(corrT);
-        return out;
+        dX.plus(corrT);
     }
 
-    // Accessors to components (forward to Manif group)
-    Eigen::Matrix<Scalar,3,3> rotationMatrix() const { return dX.rotation(); }
-    Vec3 velocity() const { return dX.linearVelocity(); }
-    Vec3 position() const { return dX.translation(); }
-    Scalar time() const { return dX.t(); }
+    // Apply bias correction: given small bias deltas (delta_bg, delta_ba) return corrected dX
+    Group getCorrectedDelta(const Vec3& delta_bg, const Vec3& delta_ba) {
+        correctDelta(delta_bg, delta_ba);
+        return dX;
+    }
+
+    // Accessors to components (forward to LieOdyssey group)
+    Eigen::Matrix<Scalar,3,3> rotationMatrix() const { return dX.impl().R(); }
+    Vec3 velocity() const { return dX.impl().v(); }
+    Vec3 position() const { return dX.impl().p(); }
+    Scalar time() const { return dX.impl().t(); }
 
 }; // class ImuPreintegratorSGal
 

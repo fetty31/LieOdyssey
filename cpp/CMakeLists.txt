@@ -10,11 +10,11 @@ option(USE_CCACHE "Build using Ccache if found on the path" ON)
 option(ENABLE_TEST "Build LieOdyssey test" OFF)
 
 option(USE_SYSTEM_EIGEN3 "Use system pre-installed Eigen" ON)
-option(USE_SYSTEM_MANIF "Use system pre-installed Manif" ON)
-option(USE_SYSTEM_LIEPP "Use system pre-installed Lie++" ON)
-option(USE_EIGEN3 "Install Eigen" ON)
-option(USE_MANIF "Install Manif lib" ON)
-option(USE_LIEPP "Install Lie++ lib" ON)
+option(USE_SYSTEM_MANIF "Use system pre-installed Manif" OFF)
+option(USE_SYSTEM_LIEPLUSPLUS "Use system pre-installed Lie++" OFF)
+option(USE_EIGEN3 "Install Eigen (mandatory)" ON)
+option(USE_MANIF "Install Manif lib (optional)" ON)
+option(USE_LIEPLUSPLUS "Install Lie++ lib (optional)" ON)
 
 # ccache setup
 if(USE_CCACHE)
@@ -36,49 +36,41 @@ set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
 include(3rdparty/find_dependencies.cmake)
 
 # LieOdyssey lib
-add_library(${PROJECT_NAME} SHARED
-            src/core/imu_preprocessor.cpp
-            )
-target_include_directories(${PROJECT_NAME} PUBLIC
+add_library(${PROJECT_NAME} INTERFACE )
+target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE Eigen3::Eigen)
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 
 # Add Lie++ dependency
-if(USE_LIEPP)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE LIE_BACKEND_LIEPP)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${LIEPLUSPLUS_INCLUDE_DIR})
-  target_link_libraries(${PROJECT_NAME} PRIVATE LiePlusPlus)
+if(USE_LIEPLUSPLUS)
+  message(STATUS "Adding library LiePlusPlus")
+  target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_LIEPLUSPLUS)
+  target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
+  # target_include_directories(${PROJECT_NAME} INTERFACE ${LiePlusPlus_SOURCE_DIR}/include)
+  target_link_libraries(${PROJECT_NAME} INTERFACE LiePlusPlus)
 endif()
 
 # Add manif dependency
 if(USE_MANIF)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE LIE_BACKEND_MANIF)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${MANIF_INCLUDE_DIR})
-  target_link_libraries(${PROJECT_NAME} PRIVATE manif)
+  message(STATUS "Adding library Manif")
+  target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_MANIF)
+  target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
+  target_link_libraries(${PROJECT_NAME} INTERFACE manif)
 endif()
-
-
-
-
-
-
 
 
 # --------- Executable main ---------
 add_executable(${PROJECT_NAME}_exec
               src/main.cpp 
               )
-# Add Eigen
-target_link_libraries(${PROJECT_NAME}_exec PRIVATE Eigen3::Eigen)
-# Add Lie++ include directories
-target_include_directories(${PROJECT_NAME}_exec PRIVATE
-    ${LiePlusPlus_SOURCE_DIR}/include
-)
-# Link LiePlusPlus if needed
-target_link_libraries(${PROJECT_NAME}_exec PRIVATE LiePlusPlus)
+# target_include_directories(${PROJECT_NAME}_exec INTERFACE
+#     ${LIE_ODYSSEY_INCLUDE_DIRS}
+# )
+target_link_libraries(${PROJECT_NAME}_exec PRIVATE ${PROJECT_NAME})
+
 
 
 
@@ -98,14 +90,14 @@ if(ENABLE_TEST)
 endif()
 
 # Install headers
-install(DIRECTORY include/ DESTINATION include)
+# install(DIRECTORY include/ DESTINATION include)
 
 # Export the INTERFACE target
 # install(TARGETS ${PROJECT_NAME}
 #     EXPORT ${PROJECT_NAME}Targets
 # )
 
-# Export info
+# # Export info
 # install(EXPORT ${PROJECT_NAME}Targets
 #     FILE ${PROJECT_NAME}Targets.cmake
 #     NAMESPACE lie_odyssey::

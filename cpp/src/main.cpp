@@ -1,36 +1,46 @@
 #include <iostream>
+#include <vector>
 
-#include <groups/SEn3.hpp>
+#include "lie_odyssey/lie_odyssey.hpp"
+
+using namespace lie_odyssey;
 
 int main(int argc, char **argv)
 {
-    using SO3d = group::SO3<double>;
-    using SE23d = group::SEn3<double, 2>;
-    using Vector3d = Eigen::Matrix<double, 3, 1>;
-    using Vector9d = Eigen::Matrix<double, 9, 1>;
-    using Matrix9d = Eigen::Matrix<double, 9, 9>;
+    using Vec3 = Eigen::Vector3d;
+    using Mat3 = Eigen::Matrix3d;
 
-    // Define random extended pose X via exponential map
-    Vector9d x = Vector9d::Random();
-    SE23d X = SE23d::exp(x);
+    // Noise covariances (spectral densities)
+    Mat3 cov_g = Mat3::Identity() * 1e-5; // gyro
+    Mat3 cov_a = Mat3::Identity() * 1e-3; // accel
 
-    // Define Extended pose Y with identity rotation, and given velocity and position
-    Vector3d p = Vector3d(1, 2, 3);
-    Vector3d v = Vector3d(0.1, 0.1, 0.3);
-    SO3d R = SO3d();
-    SE23d Y = SE23d(R, {v, p});
+    ImuPreintegratorSGal<double> pre(cov_g, cov_a);
 
-    // Get extended pose composition Z = XY
-    SE23d Z = X*Y;
+    // Nominal biases
+    Vec3 bg_nom(0.01, -0.02, 0.005);
+    Vec3 ba_nom(0.1, -0.05, 0.02);
 
-    // print Z as matrix
-    std::cout << Z.asMatrix() << std::endl;
+    // Simulate IMU data: 200 Hz, 1 second
+    double dt = 0.005;
+    int N = 200;
+    std::vector<Vec3> gyro_samples(N, Vec3(0,0,0.1)); // rotation around z
+    std::vector<Vec3> acc_samples(N, Vec3(0,0,-9.81)); // gravity
 
-    // print Rotational component of Z as quaternion, position and velocity
-    std::cout << Z.q() << '\n' << Z.p() << '\n'<< Z.v() << '\n' << std::endl;
+    for(int k=0; k<N; ++k)
+        pre.integrate(gyro_samples[k], acc_samples[k], bg_nom, ba_nom, dt);
 
-    // get Adjoint matrix of SE23
-    Matrix9d AdZ = Z.Adjoint();
+    std::cout << "Preintegrated Δt: " << pre.sum_dt << " s\n";
+    std::cout << "ΔR =\n" << pre.rotationMatrix() << "\n";
+    std::cout << "Δv = " << pre.velocity().transpose() << "\n";
+    std::cout << "Δp = " << pre.position().transpose() << "\n";
+
+    // Small bias correction example
+    Vec3 delta_bg(0.001, 0.001, 0.001);
+    Vec3 delta_ba(-0.01, -0.01, -0.01);
+    auto dX_corr = pre.getCorrectedDelta(delta_bg, delta_ba);
+
+    std::cout << "Corrected Δv = " << dX_corr.impl().v().transpose() << "\n";
+    std::cout << "Corrected Δp = " << dX_corr.impl().p().transpose() << "\n";
 
     return 0;
 }
