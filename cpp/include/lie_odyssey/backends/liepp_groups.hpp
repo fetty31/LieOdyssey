@@ -73,6 +73,7 @@ class BaseLiePP {
     using Tangent        = typename Native::VectorType;    // Lie Algebra Tangent space 
     using MatrixType     = typename Native::MatrixType;    // Lie Group matrix type
     using Jacobian       = typename Native::TMatrixType;   // Transformation matrix type
+    // using DoF            = Jacobian.rows();
 
     Native g_;
 

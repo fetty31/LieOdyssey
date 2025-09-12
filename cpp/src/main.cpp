@@ -14,7 +14,7 @@ int main(int argc, char **argv)
     Mat3 cov_g = Mat3::Identity() * 1e-5; // gyro
     Mat3 cov_a = Mat3::Identity() * 1e-3; // accel
 
-    ImuPreintegratorSGal<double> pre(cov_g, cov_a);
+    Preintegrator<LieGroup<Gal3Manif<double>>> pre(cov_g, cov_a);
 
     // Nominal biases
     Vec3 bg_nom(0.01, -0.02, 0.005);
@@ -29,10 +29,12 @@ int main(int argc, char **argv)
     for(int k=0; k<N; ++k)
         pre.integrate(gyro_samples[k], acc_samples[k], bg_nom, ba_nom, dt);
 
-    std::cout << "Preintegrated Δt: " << pre.sum_dt << " s\n";
-    std::cout << "ΔR =\n" << pre.rotationMatrix() << "\n";
-    std::cout << "Δv = " << pre.velocity().transpose() << "\n";
-    std::cout << "Δp = " << pre.position().transpose() << "\n";
+    auto state = pre.getState();
+
+    std::cout << "Preintegrated Δt: " << pre.getTotalTime() << " s\n";
+    std::cout << "ΔR =\n" << state.impl().R << "\n";
+    std::cout << "Δv = " << state.impl().v.transpose() << "\n";
+    std::cout << "Δp = " << state.impl().p.transpose() << "\n";
 
     // Small bias correction example
     Vec3 delta_bg(0.001, 0.001, 0.001);

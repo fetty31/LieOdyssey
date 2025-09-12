@@ -30,7 +30,7 @@ mkdir build && cd build
 cmake -DENABLE_TEST=ON .. # build test (optional)
 make install
 ```
-> By default both _Lie++_ and _Manif_ will be the retrieved and installed when building _LieOdyssey_. If you would want to install only one of them, the explicit build flags `-DINSTALL_{MANIF/LIEPP}=ON` are available.
+> By default both _Lie++_ and _Manif_ will be the retrieved and installed when building _LieOdyssey_. If you would want to install only one of them, the explicit build flags `-DUSE_{MANIF/LIEPLUSPLUS}=ON/OFF` are available.
 
 If you want to use `LieOdyssey` within ROS, ensure you have cloned the repo inside a ROS workspace and build via default:
 ```sh
