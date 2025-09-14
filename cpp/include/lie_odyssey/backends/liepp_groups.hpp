@@ -128,6 +128,8 @@ class SO3LiePP : public BaseLiePP<SO3LiePP<Scalar>, group::SO3<Scalar>> {
   using Base = BaseLiePP<SO3LiePP<Scalar>, group::SO3<Scalar>>;
 
   public:
+    static constexpr int DoF = 3;
+
     SO3LiePP() : Base() { }
     explicit SO3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
@@ -147,6 +149,8 @@ class SE3LiePP : public BaseLiePP<SE3LiePP<Scalar>, group::SEn3<Scalar, 1>> {
   using Base = BaseLiePP<SE3LiePP<Scalar>, group::SEn3<Scalar, 1>>;
 
   public:
+    static constexpr int DoF = 6;
+
     SE3LiePP() : Base() { }
     explicit SE3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
@@ -168,6 +172,8 @@ class SE23LiePP : public BaseLiePP<SE23LiePP<Scalar>, group::SEn3<Scalar, 2>> {
   using Base = BaseLiePP<SE23LiePP<Scalar>, group::SEn3<Scalar, 2>>;
 
   public:
+    static constexpr int DoF = 9;
+
     SE23LiePP() : Base() { }
     explicit SE23LiePP(const typename Base::Native& gg) : Base(gg) { }
 
@@ -194,6 +200,7 @@ class SEn3LiePP : public BaseLiePP<SEn3LiePP<Scalar, N>, group::SEn3<Scalar, N>>
   using Base = BaseLiePP<SEn3LiePP<Scalar, N>, group::SEn3<Scalar, N>>;
 
   public:
+
     SEn3LiePP() : Base() { }
     explicit SEn3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
@@ -220,6 +227,8 @@ class Gal3LiePP : public BaseLiePP<Gal3LiePP<Scalar>, group::Gal3<Scalar>> {
   using Base = BaseLiePP<Gal3LiePP<Scalar>, group::Gal3<Scalar>>;
 
   public:
+    static constexpr int DoF = 10;
+
     Gal3LiePP() : Base() { }
     explicit Gal3LiePP(const typename Base::Native& gg) : Base(gg) { }
 
@@ -239,6 +248,8 @@ class Gal3TGLiePP : public BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>>
   using Base = BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>>;
 
   public:
+    static constexpr int DoF = 16;
+
     Gal3TGLiePP() : Base() { }
     explicit Gal3TGLiePP(const typename Base::Native& gg) : Base(gg) { }
 

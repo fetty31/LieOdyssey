@@ -9,8 +9,8 @@ using namespace lie_odyssey;
 // ---------------------- Preintegrator Tests ----------------------
 
 using PreInt = Preintegrator<LieGroup<Gal3Manif<double>>>;
+// using PreInt = Preintegrator<LieGroup<Gal3LiePP<double>>>;
 using Vec3   = Eigen::Vector3d;
-using Mat3   = Eigen::Matrix3d;
 
 TEST(PreintegratorTest, Initialization) {
     PreInt pre;
@@ -79,7 +79,7 @@ TEST(PreintegratorTest, BiasCorrection) {
     Vec3 delta_bg(0.001, 0.002, -0.001);
     Vec3 delta_ba(-0.01, 0.01, -0.02);
 
-    auto corrected = pre.getCorrectedDelta(delta_bg, delta_ba);
+    auto corrected = pre.getAndCorrectDelta(delta_bg, delta_ba);
 
     // Corrected state should differ from original
     EXPECT_FALSE(corrected.impl().v().isApprox(orig.impl().v(), 1e-12));

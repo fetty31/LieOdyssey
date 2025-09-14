@@ -141,6 +141,18 @@ class Preintegrator {
         sum_dt += dt;
     }
 
+    // Integrate one IMU sample.
+    // imu_meas: raw IMU measurements (rad/s, m/s^2)
+    //           including current bias estimates (rad/s, m/s^2)
+    //           as well as timestep (s)
+    virtual void integrate(const IMUmeas& imu_meas)
+    {
+        integrate(imu_meas.gyro, imu_meas.accel, 
+                  imu_meas.bias.gyro, imu_meas.bias.accel, 
+                  imu_meas.dt
+                );
+    }
+
     // Apply bias correction: given small bias deltas (delta_bg, delta_ba)
     virtual void correctDelta(const Vec3& delta_bg, const Vec3& delta_ba)
     {
@@ -157,7 +169,7 @@ class Preintegrator {
     }
 
     // Apply bias correction: given small bias deltas (delta_bg, delta_ba) return corrected dX
-    virtual Group getCorrectedDelta(const Vec3& delta_bg, const Vec3& delta_ba) {
+    virtual Group getAndCorrectDelta(const Vec3& delta_bg, const Vec3& delta_ba) {
         correctDelta(delta_bg, delta_ba);
         return dX;
     }
