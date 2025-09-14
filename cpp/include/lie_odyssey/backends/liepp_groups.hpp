@@ -73,7 +73,6 @@ class BaseLiePP {
     using Tangent        = typename Native::VectorType;    // Lie Algebra Tangent space 
     using MatrixType     = typename Native::MatrixType;    // Lie Group matrix type
     using Jacobian       = typename Native::TMatrixType;   // Transformation matrix type
-    // using DoF            = Jacobian.rows();
 
     Native g_;
 
@@ -103,7 +102,7 @@ class BaseLiePP {
 
     // Group ops
     Derived operator*(const Derived& other) const { return Derived(g_ * other.g_); }
-    Derived Inverse() const { return Derived(g_.inverse()); }
+    Derived Inverse() const { return Derived(g_.inv()); }
 
     // Adjoint 
     Jacobian Adjoint() const { return g_.Adjoint(); }

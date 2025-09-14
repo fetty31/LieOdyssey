@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Setup build options
 option(USE_CCACHE "Build using Ccache if found on the path" ON)
-option(ENABLE_TEST "Build LieOdyssey test" OFF)
+option(ENABLE_TEST "Build LieOdyssey test" ON)
 
 option(USE_SYSTEM_EIGEN3 "Use system pre-installed Eigen" ON)
 option(USE_SYSTEM_MANIF "Use system pre-installed Manif" OFF)

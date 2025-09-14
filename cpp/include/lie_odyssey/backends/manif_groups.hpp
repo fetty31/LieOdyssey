@@ -155,7 +155,8 @@ template <typename Scalar = double>
 class SO3Manif : public BaseManif<SO3Manif<Scalar>, manif::SO3<Scalar>> {
     using Base = BaseManif<SO3Manif<Scalar>, manif::SO3<Scalar>>;
   public:
-    using DoF = typename manif::SO3<Scalar>::DoF;
+    static constexpr int DoF = manif::SO3<Scalar>::DoF;
+
     SO3Manif() : Base() { }
     explicit SO3Manif(const Base& b) : Base(b) { }
     explicit SO3Manif(const typename Base::Native& gg) : Base(gg) { }
@@ -171,7 +172,8 @@ template <typename Scalar = double>
 class SE3Manif : public BaseManif<SE3Manif<Scalar>, manif::SE3<Scalar>> { 
     using Base = BaseManif<SE3Manif<Scalar>, manif::SE3<Scalar>>;
   public:
-    using DoF = typename manif::SE3<Scalar>::DoF;
+    static constexpr int DoF = manif::SE3<Scalar>::DoF;
+
     SE3Manif() : Base() { }
     explicit SE3Manif(const Base& b) : Base(b) { }
     explicit SE3Manif(const typename Base::Native& gg) : Base(gg) { }
@@ -188,7 +190,8 @@ template <typename Scalar = double>
 class SE23Manif : public BaseManif<SE23Manif<Scalar>, manif::SE_2_3<Scalar>> {
     using Base = BaseManif<SE23Manif<Scalar>, manif::SE_2_3<Scalar>>;
   public:
-    using DoF = typename manif::SE_2_3<Scalar>::DoF;
+    static constexpr int DoF = manif::SE_2_3<Scalar>::DoF;
+
     SE23Manif() : Base() { }
     explicit SE23Manif(const Base& b) : Base(b) { }
     explicit SE23Manif(const typename Base::Native& gg) : Base(gg) { }
@@ -206,7 +209,8 @@ template <typename Scalar = double>
 class Gal3Manif : public BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>> {
     using Base = BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>>;
   public:
-    using DoF = typename manif::SGal3<Scalar>::DoF;
+    static constexpr int DoF = manif::SGal3<Scalar>::DoF;
+
     Gal3Manif() : Base() { }
     explicit Gal3Manif(const Base& b) : Base(b) { }
     explicit Gal3Manif(const typename Base::Native& gg) : Base(gg) { }

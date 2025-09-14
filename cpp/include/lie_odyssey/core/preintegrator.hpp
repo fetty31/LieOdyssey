@@ -10,12 +10,12 @@ template <typename Group>
 class Preintegrator {
 
  public:
-    // using Group   = LieGroup<Gal3Manif<Scalar>>;
-    using Scalar  = Group::Scalar;
+    using Scalar  = typename Group::Impl::Native::Scalar;
     using Tangent = typename Group::Tangent;            
     using Jacob   = typename Group::Jacobian;           
     using Matrix  = typename Group::MatrixType; 
-    using DoF     = typename Group::Impl::DoF;
+
+    static constexpr int DoF = Group::Impl::DoF;
 
     using Mat3    = Eigen::Matrix<Scalar,3,3>;
     using Vec3    = Eigen::Matrix<Scalar,3,1>;
@@ -80,8 +80,8 @@ class Preintegrator {
 
         // --- use Manif analytic Jacobians ---
         // Compose: dX_new = dX ⊕ exp(xi)  i.e. right-plus: dX.plus(xi)
-        Jacob10 J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX
-        Jacob10 J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi
+        Jacob J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX
+        Jacob J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi
         typename Group::Impl::Native manif_dX = dX.impl().native();
         Group dX_new = Group(manif_dX.plus(xi, J_dX, J_xi));
 

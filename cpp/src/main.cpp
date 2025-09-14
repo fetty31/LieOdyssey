@@ -32,9 +32,9 @@ int main(int argc, char **argv)
     auto state = pre.getState();
 
     std::cout << "Preintegrated Δt: " << pre.getTotalTime() << " s\n";
-    std::cout << "ΔR =\n" << state.impl().R << "\n";
-    std::cout << "Δv = " << state.impl().v.transpose() << "\n";
-    std::cout << "Δp = " << state.impl().p.transpose() << "\n";
+    std::cout << "ΔR =\n" << state.impl().R() << "\n";
+    std::cout << "Δv = " << state.impl().v().transpose() << "\n";
+    std::cout << "Δp = " << state.impl().p().transpose() << "\n";
 
     // Small bias correction example
     Vec3 delta_bg(0.001, 0.001, 0.001);
