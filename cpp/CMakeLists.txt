@@ -33,7 +33,25 @@ set(CMAKE_BUILD_TYPE Release)
 set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
 
 # Add dependencies
-include(3rdparty/find_dependencies.cmake)
+# include(3rdparty/find_dependencies.cmake)
+
+# Eigen dependency
+
+# Disable Eigen tests/docs to avoid Android Studio conflicts
+set(EIGEN_BUILD_TESTING OFF CACHE BOOL "Disable Eigen tests" FORCE)
+set(EIGEN_BUILD_DOC OFF CACHE BOOL "Disable Eigen docs" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Disable global tests" FORCE)
+
+# include(3rdparty/eigen/eigen.cmake)  # setup Eigen INTERFACE
+add_subdirectory(3rdparty/eigen/eigen)
+
+if(USE_LIEPLUSPLUS)
+    include(3rdparty/lieplusplus/lieplusplus.cmake)
+endif()
+
+if(USE_MANIF)
+    include(3rdparty/manif/manif.cmake)
+endif()
 
 # LieOdyssey lib
 add_library(${PROJECT_NAME} INTERFACE )
@@ -42,6 +60,7 @@ target_include_directories(${PROJECT_NAME} INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
+target_include_directories(${PROJECT_NAME} INTERFACE ${Eigen_INCLUDE_DIR})
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 
 # Add Lie++ dependency
