@@ -110,6 +110,15 @@ public:
     // We'll forward to the documented member functions where possible.
     void plus(const Tangent& u) { g_ *= u.exp(); } // right plus X' = X ⊕ u
 
+    // Right Plus/Minus operators
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    //    J_xi: jacobian w.r.t. perturbation
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) 
+    {
+      g_ = g_.plus(u, J_dX, J_xi); // right plus X' = X ⊕ u
+    } 
+
     Tangent minus(const Derived& X) const {
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // Compute: Log( X^{-1} * this ) or as documented: this->minus(X) semantics.
@@ -118,6 +127,14 @@ public:
         Native invX = X.g_.inverse();
         Native relative = invX * self.g_;
         return relative.log(); 
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dX, Jacobian& J_xi) const {
+        // Right minus: documented X - Y or X.rminus(Y) returns tangent.
+        // returning also:
+        //    J_dX: jacobian w.r.t. state 
+        //    J_xi: jacobian w.r.t. perturbation
+        return g_.rminus(X, J_dX, J_xi); 
     }
 
     // Group ops

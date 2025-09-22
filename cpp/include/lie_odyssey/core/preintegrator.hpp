@@ -78,12 +78,10 @@ class Preintegrator {
 
         Tangent xi = tangent;
 
-        // --- use Manif analytic Jacobians ---
         // Compose: dX_new = dX ⊕ exp(xi)  i.e. right-plus: dX.plus(xi)
-        Jacob J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX
-        Jacob J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi
-        typename Group::Impl::Native manif_dX = dX.impl().native();
-        Group dX_new = Group(manif_dX.plus(xi, J_dX, J_xi));
+        Jacob J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX  == Adj(exp(xi))^-1
+        Jacob J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi  == Jr
+        dX.plus(xi, J_dX, J_xi);
 
         // --- compute ∂xi/∂b_g and ∂xi/∂b_a (10x3 each) ---
         // measurement noise / bias enters xi linearly:
@@ -134,7 +132,6 @@ class Preintegrator {
         Jacob cov_new = J_dX * cov * J_dX.transpose() + process_noise;
 
         // commit updates
-        dX = dX_new;
         J_bg = J_bg_new;
         J_ba = J_ba_new;
         cov = cov_new;

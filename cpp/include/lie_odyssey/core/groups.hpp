@@ -55,6 +55,10 @@ public:
         impl_.plus(u); 
     }
 
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) { 
+        impl_.plus(u, J_dX, J_xi); 
+    }
+
     Tangent minus(const LieGroup& X) const { 
         // X ⊖ this = Log( X^{-1} * this )
         return impl_.minus(X.impl_); 
