@@ -31,4 +31,4 @@ struct IMUmeas // IMU measurement
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_CORE_IMU_DATA_HPP__

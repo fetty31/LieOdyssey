@@ -104,4 +104,4 @@ private:
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_CORE_GROUPS_HPP__

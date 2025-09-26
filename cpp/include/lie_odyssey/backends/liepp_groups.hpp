@@ -93,16 +93,20 @@ class BaseLiePP {
     Tangent Log() { return Native::log(g_); }
 
     // Right Plus/Minus operators
-    void plus(Tangent& u){ g_ *= Native::exp(u); } // right plus X' = X ⊕ u
+    void plus(const Tangent& u)
+    { 
+      Native delta = g_ * Native::exp(u); // right plus X' = X ⊕ u
+      g_ = delta; 
+    } 
 
-    void plus(Tangent& u, Jacobian& J_dX, Jacobian& J_xi)
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi)
     {
       /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
       */
       Native delta = Native::exp(u);
       J_dX = delta.invAdjoint();
-      J_xi = Native::rightJacobian(u);
-      g_ *= delta; // right plus X' = X ⊕ u
+      J_xi = rightJacobian(u);
+      plus(u);
     } 
 
     Tangent minus(Derived& X)
@@ -272,4 +276,4 @@ class Gal3TGLiePP : public BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>>
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_BACKENDS_LIEPLUSPLUS_HPP__

@@ -14,7 +14,7 @@ int main(int argc, char **argv)
     Mat3 cov_g = Mat3::Identity() * 1e-5; // gyro
     Mat3 cov_a = Mat3::Identity() * 1e-3; // accel
 
-    Preintegrator<LieGroup<Gal3Manif<double>>> pre(cov_g, cov_a);
+    Preintegrator<LieGroup<Gal3Manif<double>>> pre(cov_a, cov_g);
 
     // Nominal biases
     Vec3 bg_nom(0.01, -0.02, 0.005);
@@ -47,7 +47,7 @@ int main(int argc, char **argv)
     // Small bias correction example
     Vec3 delta_bg(0.001, 0.001, 0.001);
     Vec3 delta_ba(-0.01, -0.01, -0.01);
-    auto dX_corr = pre.getAndCorrectDelta(delta_bg, delta_ba);
+    auto dX_corr = pre.getAndCorrectDelta(delta_ba, delta_bg);
 
     std::cout << "Corrected Δv = " << dX_corr.impl().v().transpose() << "\n";
     std::cout << "Corrected Δp = " << dX_corr.impl().p().transpose() << "\n";

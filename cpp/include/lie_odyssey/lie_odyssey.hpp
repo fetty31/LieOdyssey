@@ -8,4 +8,4 @@
 // #include "lie_odyssey/ekf/base_filter.hpp"
 // #include "lie_odyssey/ekf/ekf_ins.hpp"
 
-#endif
+#endif // __LIEODYSSEY_HPP__

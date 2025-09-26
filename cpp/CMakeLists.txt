@@ -16,6 +16,11 @@ option(USE_EIGEN3 "Install Eigen (mandatory)" ON)
 option(USE_MANIF "Install Manif lib (optional)" ON)
 option(USE_LIEPLUSPLUS "Install Lie++ lib (optional)" ON)
 
+# Check backend
+if(NOT USE_MANIF AND NOT USE_LIEPLUSPLUS)
+    message(FATAL_ERROR "You must enable at least one Lie backend: USE_MANIF or USE_LIEPLUSPLUS")
+endif()
+
 # ccache setup
 if(USE_CCACHE)
   find_program(CCACHE_PATH ccache)

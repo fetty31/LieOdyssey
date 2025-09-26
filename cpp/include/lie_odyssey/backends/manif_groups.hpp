@@ -250,4 +250,4 @@ class Gal3Manif : public BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>> {
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_BACKENDS_MANIF_HPP__
