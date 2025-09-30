@@ -137,6 +137,11 @@ class Preintegrator {
     // Group accessor
     Group getState() { return dX; }
 
+    // Covariance accessor
+    Jacob getCovariance() { return cov; }
+    Eigen::Matrix<Scalar,DoF,3> J_bg() { return J_bg; }
+    Eigen::Matrix<Scalar,DoF,3> J_ba() { return J_ba; }
+
     // Time accessor
     Scalar getTotalTime() { return sum_dt; }
 
