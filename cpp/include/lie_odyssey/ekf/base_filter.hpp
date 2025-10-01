@@ -20,7 +20,7 @@ public:
     using Mat3 = Eigen::Matrix<Scalar,3,3>;
 
     // State: Lie group element + biases
-    Group X_;           // Lie Group (rotation and/or translation)
+    Group X_;           // Lie Group
     Vec3 bg_;           // Gyro bias
     Vec3 ba_;           // Accel bias
 
@@ -33,9 +33,6 @@ public:
 
     // Preintegrator for IMU propagation
     Preintegrator<Group> preint;
-
-    Scalar tol = Scalar(1e-6);   // convergence tolerance
-    int max_iters = 5;           // maximum iterations
 
     BaseFilter(const Vec3& ba = Vec3::Zero(), 
                 const Vec3& bg = Vec3::Zero(), 
@@ -67,9 +64,9 @@ public:
 
         // Assemble augmented error-state transition F (DoF+6)
         Eigen::Matrix<Scalar,DoF,DoF+6> F_aug = Eigen::Matrix<Scalar,DoF,DoF+6>::Zero();
-        F_aug.template block<DoF,DoF>(0,0) = MatDoF::Identity(); // J_dX placeholder
-        F_aug.template block<DoF,3>(0,DoF) = preint.J_ba();   // ∂Δ/∂ba
-        F_aug.template block<DoF,3>(0,DoF+3) = preint.J_bg(); // ∂Δ/∂bg
+        F_aug.template block<DoF,DoF>(0,0) = MatDoF::Identity();  // J_dX placeholder
+        F_aug.template block<DoF,3>(0,DoF) = preint.get_J_ba();   // ∂Δ/∂ba
+        F_aug.template block<DoF,3>(0,DoF+3) = preint.get_J_bg(); // ∂Δ/∂bg
 
         // Discrete process noise mapped to error-state
         MatDoFext Q_aug = MatDoFext::Zero();
@@ -94,24 +91,25 @@ public:
     // R: measurement noise
     // h_fun: measurement function
     // H: Jacobian of measurement w.r.t tangent
-    template <typename MeasurementVec, typename HMat>
-    virtual void update(const MeasurementVec& y,  
-                        const Eigen::Matrix<Scalar,MeasurementVec::RowsAtCompileTime,MeasurementVec::RowsAtCompileTime>& R,
-                        std::function<HMat(const Group&)> h_fun,
-                        const HMat& H) 
+    template <typename Measurement, typename HMat>
+    void update(const Measurement& y,
+                const Eigen::Matrix<Scalar,
+                                    Measurement::DoF, Measurement::DoF>& R,
+                std::function<Measurement(const Group&)> h_fun,
+                const HMat& H)
     {
         // 1. Predict measurement using current state
-        MeasurementVec y_pred = h_fun(X_);  // h: measurement model functor
+        Measurement y_pred = h_fun(X_); // h: measurement model functor
 
-        // 2. Compute residual (innovation)
-        MeasurementVec r = y - y_pred;
+        // 2. Innovation (residual with Lie-aware minus)
+        auto r = y.minus(y_pred);
 
         // 3. Innovation covariance
-        Eigen::Matrix<Scalar, MeasurementVec::RowsAtCompileTime,
-                            MeasurementVec::RowsAtCompileTime> S = H * P_ * H.transpose() + R;
+        Eigen::Matrix<Scalar, Measurement::DoF,
+                            Measurement::DoF> S = H * P_ * H.transpose() + R;
 
         // 4. Kalman gain
-        Eigen::Matrix<Scalar, DoF + 6, MeasurementVec::RowsAtCompileTime> K = P_ * H.transpose() * S.inverse();
+        Eigen::Matrix<Scalar, DoF + 6, Measurement::DoF> K = P_ * H.transpose() * S.inverse();
 
         // 5. Compute error-state correction
         Eigen::Matrix<Scalar, DoF + 6, 1> dx = K * r;

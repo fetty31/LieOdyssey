@@ -131,7 +131,7 @@ struct PreintegrationTraits<SO3<Scalar>> {
     using Jacob      = typename Group::Jacobian;  // Eigen::Matrix<Scalar,3,3>
     using Mat3       = Eigen::Matrix<Scalar,3,3>;
     using Vec3       = Eigen::Matrix<Scalar,3,1>;
-    using MatNoise   = Eigen::Matrix<Scalar,3,6>; // map acc noise also 
+    using MatNoise   = Eigen::Matrix<Scalar,3,6>; // maps accel noise also 
     using VecTangent = Eigen::Matrix<Scalar,3,1>;
 
     // Build tangent increment xi = ω_unbiased * dt

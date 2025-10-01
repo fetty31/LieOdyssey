@@ -123,10 +123,11 @@ public:
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // Compute: Log( X^{-1} * this ) or as documented: this->minus(X) semantics.
         // We implement right-minusing: this ⊖ X = Log( X^{-1} ∘ this )
-        const Derived& self = static_cast<const Derived&>(*this);
-        Native invX = X.g_.inverse();
-        Native relative = invX * self.g_;
-        return relative.log(); 
+        // const Derived& self = static_cast<const Derived&>(*this);
+        // Native invX = X.g_.inverse();
+        // Native relative = invX * self.g_;
+        // return relative.log(); 
+        return g_.rminus(X); 
     }
 
     Tangent minus(const Derived& X, Jacobian& J_dX, Jacobian& J_xi) const {
@@ -240,13 +241,32 @@ class Gal3Manif : public BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>> {
 };
 
 // ------------------------------- Bundle / Composite ---------------------
-//
-// manif supports Bundle<> (composite manifold). Users wanting a wrapper for
-// Bundle should instantiate BaseManif<manif::Bundle<...>> directly. We don't
-// create a dedicated convenience wrapper here because the fields are user-
-// defined (the bundle template params).
-//
-// -----------------------------------------------------------------------
+
+template <typename Scalar, template<typename> class... Groups>
+class BundleManif : public BaseManif<BundleManif<Scalar, Groups...>, 
+                                     manif::Bundle<Scalar, Groups...>> 
+{
+    using Base = BaseManif<BundleManif<Scalar, Groups...>, 
+                           manif::Bundle<Scalar, Groups...>>;
+public:
+    using Native   = typename Base::Native;
+    using Tangent  = typename Base::Tangent;
+    using MatrixType = typename Base::MatrixType;
+    using Jacobian = typename Base::Jacobian;
+
+    static constexpr int DoF = Native::DoF;
+
+    BundleManif() : Base() { }
+    explicit BundleManif(const Base& b) : Base(b) { }
+    explicit BundleManif(const Native& gg) : Base(gg) { }
+
+    // Access a subgroup by index
+    template <std::size_t I>
+    auto subgroup() const { return this->g_.template element<I>(); }
+
+    template <std::size_t I>
+    auto subgroup() { return this->g_.template element<I>(); }
+};
 
 } // namespace lie_odyssey
 

@@ -86,10 +86,10 @@ class Preintegrator {
         Eigen::Matrix<Scalar,DoF,3> J_ba_new = J_dX * J_ba + J_xi * dxi_dba;
 
         // --- covariance propagation ---
-        // measurement noise vector n = [n_g(3); n_a(3)], discrete covariance Qm = diag(cov_gyro*dt, cov_acc*dt)
+        // measurement noise vector n = [n_a(3); n_g(3)], discrete covariance Qm = diag(cov_acc*dt, cov_gyro*dt)
         Mat6 Qm = Mat6::Zero();
-        Qm.template block<3,3>(0,0) = cov_gyro * dt;
-        Qm.template block<3,3>(3,3) = cov_acc  * dt;
+        Qm.template block<3,3>(0,0) = cov_acc * dt;
+        Qm.template block<3,3>(3,3) = cov_gyro  * dt;
 
         // map measurement noise n -> tangent xi via G (DoFx6)
         MatNoise G = MatNoise::Zero();
@@ -128,7 +128,7 @@ class Preintegrator {
         dX.plus(corrT); // apply correction on right: dX_corr = dX ⊕ Exp(corr)
     }
 
-    // Apply bias correction: given small bias deltas (delta_ba, delta_bg) return corrected dX
+    // Apply bias correction and return corrected dX 
     Group getAndCorrectDelta(const Vec3& delta_ba, const Vec3& delta_bg) {
         correctDelta(delta_ba, delta_bg);
         return dX;
@@ -139,8 +139,8 @@ class Preintegrator {
 
     // Covariance accessor
     Jacob getCovariance() { return cov; }
-    Eigen::Matrix<Scalar,DoF,3> J_bg() { return J_bg; }
-    Eigen::Matrix<Scalar,DoF,3> J_ba() { return J_ba; }
+    Eigen::Matrix<Scalar,DoF,3> get_J_bg() { return J_bg; }
+    Eigen::Matrix<Scalar,DoF,3> get_J_ba() { return J_ba; }
 
     // Time accessor
     Scalar getTotalTime() { return sum_dt; }

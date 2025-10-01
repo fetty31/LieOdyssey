@@ -107,6 +107,45 @@ TEST(Gal3ManifTest, MultiplicationInverse) {
     EXPECT_NEAR((identity - I).norm(), 0.0, 1e-9);
 }
 
+// ---------------------- BundleManif Tests ----------------------
+
+using PoseBiasBundle = BundleManif<double, manif::SE3, manif::R3>;
+
+TEST(BundleManifTest, ExpLogConsistency) {
+    Eigen::Matrix<double, PoseBiasBundle::DoF, 1> xi;
+    xi.setRandom();
+
+    auto bundle_exp = PoseBiasBundle::Exp(xi);
+    auto bundle_log = bundle_exp.Log();
+
+    for (int i = 0; i < xi.size(); ++i) {
+        EXPECT_NEAR(xi[i], bundle_log[i], 1e-9);
+    }
+}
+
+TEST(BundleManifTest, MultiplicationInverse) {
+    auto a = PoseBiasBundle::Exp(Eigen::Matrix<double, PoseBiasBundle::DoF, 1>::Random());
+    auto b = PoseBiasBundle::Exp(Eigen::Matrix<double, PoseBiasBundle::DoF, 1>::Random());
+
+    auto ab = a * b;
+    auto ab_inv = ab.Inverse();
+
+    auto se3_group = (ab * ab_inv).subgroup<0>();
+    auto identity = se3_group.quat().toRotationMatrix();
+    Eigen::MatrixXd I = Eigen::MatrixXd::Identity(identity.rows(), identity.cols());
+    EXPECT_NEAR((identity - I).norm(), 0.0, 1e-9);
+}
+
+TEST(BundleManifTest, SubgroupAccess) {
+    auto bundle = PoseBiasBundle::Identity();
+
+    auto pose = bundle.subgroup<0>(); // SE3
+    auto bias = bundle.subgroup<1>(); // R^3
+
+    EXPECT_NEAR(pose.quat().toRotationMatrix()(3,3), 1.0, 1e-9);
+    EXPECT_TRUE(bias.coeffs().isApprox(Eigen::Vector3d::Zero()));
+}
+
 // ---------------------- Main ----------------------
 
 int main(int argc, char **argv) {

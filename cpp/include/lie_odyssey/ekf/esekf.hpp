@@ -11,13 +11,17 @@ class ESEKF : public BaseFilter<Group> {
 public:
 
     using Base = BaseFilter<Group>;
+    using Scalar  = typename BaseFilter<Group>::Scalar;
+    using Vec3    = typename BaseFilter<Group>::Vec3;
+    using MatDoFext = typename BaseFilter<Group>::MatDoFext;
+    using Mat3 = typename BaseFilter<Group>::Mat3;
 
     ESEKF(const Vec3& ba = Vec3::Zero(), 
         const Vec3& bg = Vec3::Zero(), 
         const MatDoFext& P = MatDoFext::Identity()*Scalar(1e-3),
         const Mat3& cov_acc_init = Mat3::Identity()*Scalar(1e-5),
         const Mat3& cov_gyro_init = Mat3::Identity()*Scalar(1e-3))
-        : Base(ba, bg, P, cov_acc_init, cov_gyro_init);
+        : Base(ba, bg, P, cov_acc_init, cov_gyro_init)
     { }
 
 };
