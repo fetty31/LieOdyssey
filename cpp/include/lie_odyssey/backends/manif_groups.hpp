@@ -14,6 +14,7 @@
 //  - lie_odyssey::SE3<Scalar>
 //  - lie_odyssey::SE23Manif<Scalar>
 //  - lie_odyssey::Gal3Manif<Scalar>
+//  - lie_odyssey::BundleManif<Scalar, Groups>
 //
 // Common interface provided by all wrappers:
 //   using Native, Tangent, MatrixType, Jacobian;
