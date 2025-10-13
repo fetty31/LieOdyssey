@@ -128,7 +128,14 @@ public:
         // Native invX = X.g_.inverse();
         // Native relative = invX * self.g_;
         // return relative.log(); 
-        return g_.rminus(X); 
+        return g_.rminus(X.g_); 
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dX) const {
+        // Right minus: documented X - Y or X.rminus(Y) returns tangent.
+        // returning also:
+        //    J_dX: jacobian w.r.t. state 
+        return g_.rminus(X.g_, J_dX); 
     }
 
     Tangent minus(const Derived& X, Jacobian& J_dX, Jacobian& J_xi) const {
@@ -136,7 +143,7 @@ public:
         // returning also:
         //    J_dX: jacobian w.r.t. state 
         //    J_xi: jacobian w.r.t. perturbation
-        return g_.rminus(X, J_dX, J_xi); 
+        return g_.rminus(X.g_, J_dX, J_xi); 
     }
 
     // Group ops

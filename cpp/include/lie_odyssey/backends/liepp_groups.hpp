@@ -99,6 +99,15 @@ class BaseLiePP {
       g_ = delta; 
     } 
 
+    void plus(const Tangent& u, Jacobian& J_dX)
+    {
+      /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
+      */
+      Native delta = Native::exp(u);
+      J_dX = delta.invAdjoint();
+      plus(u);
+    } 
+
     void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi)
     {
       /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
@@ -113,6 +122,21 @@ class BaseLiePP {
     { 
       const Derived& self = static_cast<const Derived&>(*this);
       return Log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
+    }
+
+    Tangent minus(Derived& X, Jacobian& J_dX)
+    { 
+      // J_dx = To-Do
+      const Derived& self = static_cast<const Derived&>(*this);
+      return Log( X.Inverse().native()*self.g_ );  
+    }
+
+    Tangent minus(Derived& X, Jacobian& J_dX, Jacobian& J_xi)
+    { 
+      // J_dx = To-Do
+      // J_xi = To-Do
+      const Derived& self = static_cast<const Derived&>(*this);
+      return Log( X.Inverse().native()*self.g_ ); 
     }
 
     // Group ops

@@ -22,8 +22,13 @@ add_executable(test_preintegrator test_preintegrator.cpp)
 target_link_libraries(test_preintegrator PRIVATE lie_odyssey_cpp gtest_main)
 target_include_directories(test_preintegrator PRIVATE ${LIE_ODYSSEY_INCLUDE_DIRS})
 
+add_executable(test_iesekf test_iesekf.cpp)
+target_link_libraries(test_iesekf PRIVATE lie_odyssey_cpp gtest_main)
+target_include_directories(test_iesekf PRIVATE ${LIE_ODYSSEY_INCLUDE_DIRS})
+
 # Register tests with CTest
 include(GoogleTest)
 gtest_discover_tests(test_liepp_groups)
 gtest_discover_tests(test_manif_groups)
 gtest_discover_tests(test_preintegrator)
+gtest_discover_tests(test_iesekf)

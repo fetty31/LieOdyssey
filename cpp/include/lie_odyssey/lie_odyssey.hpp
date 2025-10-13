@@ -5,8 +5,6 @@
 #include "lie_odyssey/core/imu_data.hpp"
 #include "lie_odyssey/core/preintegrator.hpp"
 
-#include "lie_odyssey/ekf/base_filter.hpp"
-#include "lie_odyssey/ekf/esekf.hpp"
 #include "lie_odyssey/ekf/iesekf.hpp"
 
 #endif // __LIEODYSSEY_HPP__
