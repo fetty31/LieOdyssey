@@ -61,11 +61,11 @@ class Preintegrator {
         Vec3 omega_unbiased = omega_meas - bg_nominal;
         Vec3 acc_unbiased   = acc_meas  - ba_nominal;
 
-        // Transform body frame acceleration to inertial frame
-        Vec3 acc_global = dX.impl().R() * acc_unbiased + gravity;
+        // Compensate gravity
+        Vec3 acc_local = acc_unbiased + dX.impl().R().transpose() * gravity;
 
         // Build tangent increment xi:
-        Tangent xi = PreintegrationTraits<Group>::get_tangent(acc_global, 
+        Tangent xi = PreintegrationTraits<Group>::get_tangent(acc_local, 
                                                             omega_unbiased, 
                                                             dt, dX);
 

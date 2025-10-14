@@ -108,7 +108,7 @@ public:
             X_now.plus(dx);                   // new linearization point X ⊕ dx
 
             // Linearize measurement
-            HMat H = H_fun(*this, X_now);       // (Eigen::Dynamic x DoF) = (N measurements x DoF)
+            HMat H = H_fun(*this, X_now);     // (Eigen::Dynamic x DoF) = (N measurements x DoF)
 
             // Residual at this point
             Measurement r = h_fun(*this, X_now, y);   // y - h(X ⊕ dx)
