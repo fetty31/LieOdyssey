@@ -28,19 +28,7 @@ public:
     using Scalar = typename Filter::Scalar;
     static constexpr int DoF = Filter::DoF;
 
-    // Helper measurement type
-    struct Measurement {
-        static constexpr int DoF = 10; // arbitrary measurement dimension
-        using Vec = Eigen::Matrix<Scalar, DoF, 1>;
-        Vec value;
-
-        Measurement() : value(Vec::Zero()) {}
-        Measurement(const Vec& vv) : value(vv) {}
-
-        Vec& vector() { return value; }
-        const Vec& vector() const { return value; }
-    };
-
+    using Measurement = Eigen::Matrix<Scalar, 10, 1>; // arbitrary measurement dimension
 
     // Default simple dynamics: constant tangent motion along first axis
     static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas& imu) {
@@ -127,14 +115,14 @@ TYPED_TEST(IESEKFTestFixture, PredictWithDefaultDynamics) {
 
 TYPED_TEST(IESEKFTestFixture, UpdateWithZeroResidualReducesCovarianceTrace) {
     using Measurement = typename TestFixture::Measurement;
-    using HMat = Eigen::Matrix<typename TestFixture::Scalar, Measurement::DoF, TestFixture::DoF>;
+    using HMat = Eigen::Matrix<typename TestFixture::Scalar, Measurement::RowsAtCompileTime, TestFixture::DoF>;
 
     // Set filter covariance to something non-trivial
     this->filter.setCovariance(TestFixture::Filter::MatDoF::Identity() * 1e-2);
 
     // Residual function returns zero residual (y - h(X) == 0) so update should mostly reduce covariance
     auto h_fun = [](const typename TestFixture::Filter& /*f*/, const typename TestFixture::Group& /*X_now*/, const Measurement& /*y*/) -> Measurement {
-        return Measurement(); // zero residual
+        return Measurement::Zero(); // zero residual
     };
 
     auto H_fun = [](const typename TestFixture::Filter& /*f*/, const typename TestFixture::Group& /*X_now*/) -> HMat {
@@ -148,7 +136,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithZeroResidualReducesCovarianceTrace) {
     Measurement y;
     this->filter.template update<Measurement, HMat>(
         y,
-        Eigen::Matrix<double, Measurement::DoF, Measurement::DoF>::Identity() * 1e-3,
+        Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
         h_fun,
         H_fun
     );
@@ -161,15 +149,14 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithZeroResidualReducesCovarianceTrace) {
 
 TYPED_TEST(IESEKFTestFixture, UpdateWithNonzeroResidualChangesState) {
     using Measurement = typename TestFixture::Measurement;
-    using HMat = Eigen::Matrix<typename TestFixture::Scalar, Measurement::DoF, TestFixture::DoF>;
+    using HMat = Eigen::Matrix<typename TestFixture::Scalar, Measurement::RowsAtCompileTime, TestFixture::DoF>;
 
     // Ensure filter has reasonable covariance
     this->filter.setCovariance(TestFixture::Filter::MatDoF::Identity() * 1e-2);
 
     // Define measurement to be non-zero; make h_fun return residual that pushes state in first dimension
-    Measurement meas;
-    meas.value.setZero();
-    meas.value(0) = 0.5; // residual in first tangent dimension
+    Measurement meas = Measurement::Zero();
+    meas(0) = 0.5; // residual in first tangent dimension
 
     auto h_fun = [](const typename TestFixture::Filter& /*f*/, const typename TestFixture::Group& /*X_now*/, const Measurement& y) -> Measurement {
         // return residual equal to the measurement (simulate h(X)==0)
@@ -185,7 +172,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithNonzeroResidualChangesState) {
     // run update
     this->filter.template update<Measurement, HMat>(
         meas,
-        Eigen::Matrix<double, Measurement::DoF, Measurement::DoF>::Identity() * 1e-3,
+        Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
         h_fun,
         H_fun
     );

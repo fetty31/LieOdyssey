@@ -53,40 +53,29 @@ target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 if(USE_LIEPLUSPLUS)
   message(STATUS "Adding library LiePlusPlus")
   target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_LIEPLUSPLUS)
-  target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
+  # target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
+  target_include_directories(${PROJECT_NAME} INTERFACE
+    $<BUILD_INTERFACE:${LiePlusPlus_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>  # optional
+  )
+  # Export LiePlusPlus headers together with this project
+  install(DIRECTORY ${LiePlusPlus_SOURCE_DIR}/include/
+          DESTINATION include/LiePlusPlus)
   # target_include_directories(${PROJECT_NAME} INTERFACE ${LiePlusPlus_SOURCE_DIR}/include)
-  target_link_libraries(${PROJECT_NAME} INTERFACE LiePlusPlus)
+  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:LiePlusPlus::LiePlusPlus>)
 endif()
 
 # Add manif dependency
 if(USE_MANIF)
   message(STATUS "Adding library Manif")
   target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_MANIF)
-  target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
-  target_link_libraries(${PROJECT_NAME} INTERFACE manif)
+  # target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
+  target_include_directories(${PROJECT_NAME} INTERFACE
+    $<BUILD_INTERFACE:${manif_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>  # optional
+  )
+  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:manif::manif>)
 endif()
-
-
-# --------- Executable main ---------
-add_executable(${PROJECT_NAME}_exec
-              src/main.cpp 
-              )
-# target_include_directories(${PROJECT_NAME}_exec INTERFACE
-#     ${LIE_ODYSSEY_INCLUDE_DIRS}
-# )
-target_link_libraries(${PROJECT_NAME}_exec PRIVATE ${PROJECT_NAME})
-
-
-
-
-
-
-
-
-
-
-
-
 
 # (optional) Build tests
 if(ENABLE_TEST)
@@ -95,19 +84,19 @@ if(ENABLE_TEST)
 endif()
 
 # Install headers
-# install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY include/ DESTINATION include)
 
 # Export the INTERFACE target
-# install(TARGETS ${PROJECT_NAME}
-#     EXPORT ${PROJECT_NAME}Targets
-# )
+install(TARGETS ${PROJECT_NAME}
+    EXPORT ${PROJECT_NAME}Targets
+)
 
-# # Export info
-# install(EXPORT ${PROJECT_NAME}Targets
-#     FILE ${PROJECT_NAME}Targets.cmake
-#     NAMESPACE lie_odyssey::
-#     DESTINATION lib/cmake/lie_odyssey
-# )
+# Export info
+install(EXPORT ${PROJECT_NAME}Targets
+    FILE ${PROJECT_NAME}Targets.cmake
+    NAMESPACE lie_odyssey::
+    DESTINATION lib/cmake/lie_odyssey
+)
 
 # Package configuration
 include(CMakePackageConfigHelpers)

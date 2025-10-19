@@ -24,9 +24,9 @@ public:
     using MappingMatrix = Eigen::Matrix<Scalar,DoF,12>;
 
     // User-defined dynamics
-    using TangentFunction = std::function<Tangent(const iESEKF&, const IMUmeas&)>;
-    using JacobianXFun  = std::function<Jacobian(const iESEKF&, const IMUmeas&)>;
-    using JacobianWFun  = std::function<MappingMatrix(const iESEKF&, const IMUmeas&)>;
+    using TangentFunction = std::function<Tangent(const iESEKF<Group>&, const IMUmeas&)>;
+    using JacobianXFun  = std::function<Jacobian(const iESEKF<Group>&, const IMUmeas&)>;
+    using JacobianWFun  = std::function<MappingMatrix(const iESEKF<Group>&, const IMUmeas&)>;
 
     // State: Lie group element (or Bundle)
     Group X_;   
@@ -55,13 +55,13 @@ public:
     {
         // Provide safe defaults (identity dynamics)
         if (!f_) {
-            f_ = [](const iESEKF&, const IMUmeas&) { return VecTangent::Zero(); }; // cast
+            f_ = [](const iESEKF<Group>&, const IMUmeas&) { return VecTangent::Zero(); }; // cast
         }
         if (!f_dx_) {
-            f_dx_ = [](const iESEKF&, const IMUmeas&) { return Jacobian::Identity(); };
+            f_dx_ = [](const iESEKF<Group>&, const IMUmeas&) { return Jacobian::Identity(); };
         }
         if (!f_dw_) {
-            f_dw_ = [](const iESEKF&, const IMUmeas&) { return MappingMatrix::Zero(); };
+            f_dw_ = [](const iESEKF<Group>&, const IMUmeas&) { return MappingMatrix::Zero(); };
         }
     }
 
@@ -74,7 +74,7 @@ public:
         X_.plus(f_(*this, imu) * imu.dt, J_dX, J_xi);
 
         // Update covariance
-        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * imu.dt; // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
+        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * imu.dt;   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
         MappingMatrix Fw = J_xi * f_dw_(*this, imu) * imu.dt;     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
 
         P_ = Fx * P_ * Fx.transpose() + Fw * Q_ * Fw.transpose(); 
@@ -89,8 +89,8 @@ public:
     void update(const Measurement& y,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
-                std::function<Measurement(const iESEKF&, const Group&, const Measurement& y)> h_fun,
-                std::function<HMat(const iESEKF&, const Group&)> H_fun)
+                std::function<Measurement(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
+                std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
     {
 
         Group X_now = X_;   // predicted state (reference frame)
@@ -128,7 +128,7 @@ public:
             // Update error state
             KH = K*H;
 
-            dx = K*r.vector() + (KH - MatDoF::Identity()) * J_inv * dx; 
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
             X_now.plus(dx);
 
             // Check convergence
@@ -149,7 +149,7 @@ public:
     template <typename Measurement, typename HMat>
     void update(const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
-                std::function<void(const iESEKF&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
     {
 
         Group X_now = X_;   // predicted state (reference frame)
@@ -187,7 +187,7 @@ public:
             // Update error state
             KH = K*H;
 
-            dx = K*r.vector() + (KH - MatDoF::Identity()) * J_inv * dx; 
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
             X_now.plus(dx);
 
             // Check convergence
@@ -203,11 +203,11 @@ public:
     }
 
     // -------------------- Measurement Update --------------------
-    // R: measurement noise
+    // R: measurement noise (same for all measurements)
     // H_fun: measurement function -> fills residual z and measurement jacobian H
     template <typename Measurement, typename HMat>
     void update(Scalar R,
-                std::function<void(const iESEKF&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
     {
 
         Group X_now = X_;   // predicted state (reference frame)
@@ -243,7 +243,7 @@ public:
             // Update error state
             KH = K*H;
 
-            dx = K*r.vector() + (KH - MatDoF::Identity()) * J_inv * dx; 
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
             X_now.plus(dx);
 
             // Check convergence

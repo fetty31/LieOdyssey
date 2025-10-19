@@ -114,6 +114,14 @@ public:
     // Right Plus/Minus operators
     // returning also:
     //    J_dX: jacobian w.r.t. state  
+    void plus(const Tangent& u, Jacobian& J_dX) 
+    {
+      g_ = g_.plus(u, J_dX); // right plus X' = X ⊕ u
+    } 
+
+    // Right Plus/Minus operators
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
     //    J_xi: jacobian w.r.t. perturbation
     void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) 
     {
