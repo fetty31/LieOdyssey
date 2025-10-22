@@ -59,10 +59,6 @@ struct PreintegrationTraits<SGal3<Scalar>> {
         // s (time)
         tangent(9) = dt;
 
-        // rho (position): approximate displacement contribution over this small step
-        // use current preintegrated delta-velocity
-        Vec3 cur_dv = dX.impl().v(); 
-        tangent.template segment<3>(0) = cur_dv * dt + Scalar(0.5) * acc_unbiased * dt * dt;
         return tangent; // cast
     }
 
@@ -73,7 +69,7 @@ struct PreintegrationTraits<SGal3<Scalar>> {
         // --- compute ∂xi/∂b_g and ∂xi/∂b_a for default SGal(3) (10x3 each) ---
         // measurement noise / bias enters xi linearly:
         // xi.blocks:
-        //  rho = cur_dv*dt + 0.5 * (acc_biased - ba) * dt^2   => ∂rho/∂ba = -0.5*dt^2 * I, ∂rho/∂bg = 0
+        //  rho = 0                                            => ∂rho/∂ba = 0, ∂rho/∂bg = 0
         //  nu  = (acc_biased - ba) * dt                       => ∂nu/∂ba  = -dt * I,      ∂nu/∂bg = 0
         //  theta = (omega_biased - bg) * dt                   => ∂theta/∂bg = -dt * I,   ∂theta/∂ba = 0
         //  s = dt                                             => zeros
@@ -81,14 +77,11 @@ struct PreintegrationTraits<SGal3<Scalar>> {
         dxi_dbg.setZero();
         dxi_dba.setZero();
 
-        // ∂theta/∂bg = -dt * I (theta at indices 6..8)
+        // ∂theta/∂bg = -dt * I 
         dxi_dbg.template block<3,3>(6,0) = -Mat3::Identity() * dt;
 
-        // ∂nu/∂ba = -dt * I (nu at indices 3..5)
+        // ∂nu/∂ba = -dt * I 
         dxi_dba.template block<3,3>(3,0) = -Mat3::Identity() * dt;
-
-        // ∂rho/∂ba = -0.5 * dt^2 * I (rho at indices 0..2)
-        dxi_dba.template block<3,3>(0,0) = -Scalar(0.5) * Mat3::Identity() * dt * dt;
     }
 
     static void get_meas_noise(Eigen::Matrix<Scalar,10,6>& G, Scalar dt)
@@ -96,12 +89,13 @@ struct PreintegrationTraits<SGal3<Scalar>> {
         // default SGal(3) xi = [rho; nu; theta; s]
         G.setZero();
         
-        // rho: ∂rho/∂n_g = 0, ∂rho/∂n_a = 0.5*dt^2 * I
-        G.template block<3,3>(0,3) = Scalar(0.5) * Mat3::Identity() * dt * dt;
         // nu: ∂nu/∂n_a = dt * I
         G.template block<3,3>(3,3) = Mat3::Identity() * dt;
+
         // theta: ∂theta/∂n_g = dt * I
         G.template block<3,3>(6,0) = Mat3::Identity() * dt;
+
+        // rho: ∂rho/∂n_g = 0, ∂rho/∂n_a = 0
         // s: zeros
     }
 
@@ -111,13 +105,10 @@ struct PreintegrationTraits<SGal3<Scalar>> {
                                   const Vec3& delta_bg)
     {
         VecTangent corr = VecTangent::Zero();
-        corr.template head<3>()  = J_bg.template block<3,3>(0,0) * delta_bg +
-                                   J_ba.template block<3,3>(0,0) * delta_ba;
-        corr.template segment<3>(3) = J_bg.template block<3,3>(3,0) * delta_bg +
-                                      J_ba.template block<3,3>(3,0) * delta_ba;
-        corr.template segment<3>(6) = J_bg.template block<3,3>(6,0) * delta_bg +
-                                      J_ba.template block<3,3>(6,0) * delta_ba;
-        corr(9) = J_bg.row(9).dot(delta_bg) + J_ba.row(9).dot(delta_ba);
+
+        corr = J_bg * delta_bg + J_ba * delta_ba;
+        corr(9) = Scalar(0); // ensure stays zero (tau should never depend on biases).
+
         return corr; // cast
     }
 };
@@ -223,12 +214,7 @@ struct PreintegrationTraits<SE3<Scalar>> {
                                   const Vec3& delta_ba,
                                   const Vec3& delta_bg)
     {
-        VecTangent corr = VecTangent::Zero();
-        corr.template head<3>()  = J_bg.template block<3,3>(0,0) * delta_bg +
-                                   J_ba.template block<3,3>(0,0) * delta_ba;
-        corr.template segment<3>(3) = J_bg.template block<3,3>(3,0) * delta_bg +
-                                      J_ba.template block<3,3>(3,0) * delta_ba;
-        return corr;
+        return J_bg * delta_bg + J_ba * delta_ba;
     }
 };
 
@@ -248,8 +234,8 @@ struct PreintegrationTraits<SE2_3<Scalar>> {
     {
         VecTangent tangent = VecTangent::Zero();
 
-        // translation increment
-        tangent.template segment<3>(0) = dX.impl().v() * dt + Scalar(0.5) * acc_unbiased * dt * dt;
+        // translation increment 
+        tangent.template segment<3>(0) = Scalar(0.5) * acc_unbiased * dt * dt;
 
         // velocity increment
         tangent.template segment<3>(3) = acc_unbiased * dt;
@@ -293,14 +279,7 @@ struct PreintegrationTraits<SE2_3<Scalar>> {
                                   const Vec3& delta_ba,
                                   const Vec3& delta_bg)
     {
-        VecTangent corr = VecTangent::Zero();
-        corr.template head<3>()  = J_bg.template block<3,3>(0,0) * delta_bg +
-                                   J_ba.template block<3,3>(0,0) * delta_ba;
-        corr.template segment<3>(3) = J_bg.template block<3,3>(3,0) * delta_bg +
-                                      J_ba.template block<3,3>(3,0) * delta_ba;
-        corr.template segment<3>(6) = J_bg.template block<3,3>(6,0) * delta_bg +
-                                      J_ba.template block<3,3>(6,0) * delta_ba;
-        return corr;
+        return J_bg * delta_bg + J_ba * delta_ba;
     }
 };
 
