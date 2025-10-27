@@ -71,11 +71,11 @@ public:
         // Propagate state using user dynamics
         Jacobian J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX  == Adj(exp(xi))^-1
         Jacobian J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi  == Jr
-        X_.plus(f_(*this, imu) * imu.dt, J_dX, J_xi);
+        X_.plus(f_(*this, imu) * Scalar( imu.dt ), J_dX, J_xi);
 
         // Update covariance
-        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * imu.dt;   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
-        MappingMatrix Fw = J_xi * f_dw_(*this, imu) * imu.dt;     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
+        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * Scalar( imu.dt );   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
+        MappingMatrix Fw = J_xi * f_dw_(*this, imu) * Scalar( imu.dt );     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
 
         P_ = Fx * P_ * Fx.transpose() + Fw * Q_ * Fw.transpose(); 
     }
