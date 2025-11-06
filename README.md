@@ -2,9 +2,9 @@
 
 > An odyssey through inertial navigation on Lie groups.  
 
-`LieOdyssey` is a lightweight, research-friendly toolkit for IMU preintegration in Inertial Navigation Systems (INS), built on the mathematical foundation of Lie Theory.  
+`LieOdyssey` is a lightweight, research-friendly toolkit for IMU preintegration and state estimation in Inertial Navigation Systems (INS), built on the mathematical foundation of Lie Theory. 
 
-It provides efficient preintegration routines on the most common Lie Groups, enabling robust navigation and state estimation in robotics, drones and autonomous systems.  
+It provides efficient preintegration routines and filters on the most common Lie Groups, enabling robust navigation and state estimation in robotics, drones and autonomous systems.  
 
 ---
 
@@ -41,22 +41,48 @@ colcon build --symlink-install
 
 ## 📚 Background  
 
-IMU preintegration is a cornerstone of modern inertial navigation systems (INS) and visual/lidar-inertial SLAM pipelines.
-Rather than repeatedly integrating raw IMU measurements between every pair of keyframes during optimization, preintegration __accumulates relative motion increments (“deltas”) directly on the appropriate Lie group__ (e.g., SO(3), SE₂(3), SGal(3)).
+### IMU Preintegration on Lie Groups
 
-This approach offers several key benefits:
+IMU preintegration is a cornerstone of modern **inertial navigation systems (INS)** and **visual/lidar-inertial SLAM** pipelines.  
+Instead of re-integrating raw IMU data between every pair of keyframes during optimization, **preintegration accumulates relative motion increments (“deltas”) directly on the appropriate Lie group** — such as **SO(3)**, **SE₂(3)**, or **SGal(3)**.
 
-- __Geometric consistency__: Working on Lie groups respects the non-Euclidean geometry of rotations and poses, avoiding errors from naive linear approximations.
+---
 
-- __Faster optimization__: Preintegrated measurements summarize high-rate IMU data, reducing the number of variables the optimizer must handle.
+#### Why Preintegration?
 
-- __Accurate uncertainty propagation__: Covariances and Jacobians are computed alongside the deltas, enabling correct weighting of measurements in estimation.
+##### ✅ Geometric Consistency
+By operating on Lie groups, preintegration respects the **non-Euclidean geometry** of rotations and poses, avoiding errors caused by naive linear approximations in Euclidean space.
 
-By combining these advantages, preintegration allows robust and efficient state estimation in systems with high-rate inertial sensors.
+##### ⚡ Faster Optimization
+High-rate IMU data are summarized into compact preintegrated measurements, significantly **reducing computation** and the number of variables optimized.
+
+##### 🎯 Accurate Uncertainty Propagation
+Covariances and Jacobians are propagated alongside the deltas, ensuring **statistically correct weighting** of IMU constraints in the estimation process.
+
+---
+
+### Lie-Theoretic Foundations
+
+Classical filters like the EKF assume additive state updates in Euclidean space:
+\[
+x_{k+1} = f(x_k, u_k) + w_k
+\]
+
+For systems evolving on Lie groups (e.g., rotations, poses), we instead use **group operations**:
+\[
+X_{k+1} = f(X_k, u_k) \exp(w_k)
+\]
+
+This formulation naturally handles **nonlinear manifold structure**, improving numerical stability and global consistency.
+
+By combining preintegration with Lie-theoretic estimation, we achieve **robust, efficient and geometrically consistent** state estimation for systems with high-rate inertial sensors.
 
 ---
 
 ## 🛡 Roadmap  
+- [X] ESEKF Filter.  
+- [ ] Invariant Filter.  
+- [ ] Pose-Graph on general manifolds.  
 - [ ] Example demos (VIO, drone INS).  
 
 ---
