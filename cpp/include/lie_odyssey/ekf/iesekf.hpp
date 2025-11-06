@@ -104,7 +104,7 @@ public:
 
             // Current error state
             Jacobian J;
-            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (11)
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
             X_now.plus(dx);                   // new linearization point X ⊕ dx
 
             // Linearize measurement
@@ -115,7 +115,7 @@ public:
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_ * J_inv.transpose();
+            P_now = J_inv * P_now * J_inv.transpose();
 
             // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
@@ -126,6 +126,7 @@ public:
             Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() * R_inv;
 
             // Update error state
+            KH.setZero();
             KH = K*H;
 
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
@@ -140,7 +141,7 @@ public:
         X_ = X_now;
 
         // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_;
+        P_ = (MatDoF::Identity() - KH) * P_now;
     }
 
     // -------------------- Measurement Update --------------------
@@ -163,7 +164,7 @@ public:
 
             // Current error state
             Jacobian J;
-            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (11)
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
             X_now.plus(dx);                   // new linearization point X ⊕ dx
 
             // Get residual and linearized measurement model
@@ -174,7 +175,7 @@ public:
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_ * J_inv.transpose();
+            P_now = J_inv * P_now * J_inv.transpose();
 
             // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
@@ -185,6 +186,7 @@ public:
             Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() * R_inv;
 
             // Update error state
+            KH.setZero();
             KH = K*H;
 
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
@@ -199,7 +201,7 @@ public:
         X_ = X_now;
 
         // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_;
+        P_ = (MatDoF::Identity() - KH) * P_now;
     }
 
     // -------------------- Measurement Update --------------------
@@ -219,7 +221,7 @@ public:
 
             // Current error state
             Jacobian J;
-            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (11)
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
             X_now.plus(dx);                   // new linearization point X ⊕ dx
 
             // Get residual and linearized measurement model
@@ -230,7 +232,7 @@ public:
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_ * J_inv.transpose();
+            P_now = J_inv * P_now * J_inv.transpose();
 
             // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * H / R; // (HT R^−1 H)
@@ -241,6 +243,7 @@ public:
             Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() / R;
 
             // Update error state
+            KH.setZero();
             KH = K*H;
 
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
@@ -255,7 +258,7 @@ public:
         X_ = X_now;
 
         // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_;
+        P_ = (MatDoF::Identity() - KH) * P_now;
     }
 
     void reset() 
