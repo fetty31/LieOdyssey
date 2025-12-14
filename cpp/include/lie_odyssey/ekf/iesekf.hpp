@@ -94,11 +94,13 @@ public:
     {
 
         Group X_now = X_;   // predicted state (reference frame)
-        MatDoF P_now = P_;  // predicted covariance
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
         
         auto R_inv = R.inverse();
 
-        MatDoF KH = MatDoF::Zero();
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
 
         for(int iter=0; iter < max_iters_; ++iter) {
 
@@ -115,7 +117,7 @@ public:
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_now * J_inv.transpose();
+            P_now = J_inv * P_pred * J_inv.transpose();
 
             // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
@@ -123,12 +125,10 @@ public:
             aux += HRH;                             
             aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
 
-            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() * R_inv;
-
-            // Update error state
-            KH.setZero();
+            K = aux * H.transpose() * R_inv;
             KH = K*H;
 
+            // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
             X_now.plus(dx);
 
@@ -140,8 +140,15 @@ public:
         // Apply final correction
         X_ = X_now;
 
-        // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_now;
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
     }
 
     // -------------------- Measurement Update --------------------
@@ -154,11 +161,13 @@ public:
     {
 
         Group X_now = X_;   // predicted state (reference frame)
-        MatDoF P_now = P_;  // predicted covariance
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
         
         auto R_inv = R.inverse();
 
-        MatDoF KH = MatDoF::Zero();
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
 
         for(int iter=0; iter < max_iters_; ++iter) {
 
@@ -175,7 +184,7 @@ public:
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_now * J_inv.transpose();
+            P_now = J_inv * P_pred * J_inv.transpose();
 
             // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
@@ -183,12 +192,10 @@ public:
             aux += HRH;                             
             aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
 
-            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() * R_inv;
-
-            // Update error state
-            KH.setZero();
+            K = aux * H.transpose() * R_inv;
             KH = K*H;
 
+            // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
             X_now.plus(dx);
 
@@ -200,8 +207,15 @@ public:
         // Apply final correction
         X_ = X_now;
 
-        // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_now;
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
     }
 
     // -------------------- Measurement Update --------------------
@@ -212,11 +226,15 @@ public:
                 std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
     {
 
-        Group X_now = X_;   // predicted state (reference frame)
-        MatDoF P_now = P_;  // predicted covariance
-        
-        MatDoF KH = MatDoF::Zero();
+        using MatDyn = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
 
+        Group X_now = X_;   // predicted state (reference frame)
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+        
         for(int iter=0; iter < max_iters_; ++iter) {
 
             // Current error state
@@ -224,32 +242,31 @@ public:
             Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
             X_now.plus(dx);                   // new linearization point X ⊕ dx
 
-            // Get residual and linearized measurement model
+            // // Get residual and linearized measurement model
             Measurement r;
             HMat H;
-            H_fun(*this, X_now, r, H);       // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
-                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(*this, X_now, r, H);  // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                        // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             // Update covariance
             Jacobian J_inv = J.inverse();
-            P_now = J_inv * P_now * J_inv.transpose();
+            P_now = J_inv * P_pred * J_inv.transpose();
 
-            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            // // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
             MatDoF HRH = H.transpose() * H / R; // (HT R^−1 H)
             MatDoF aux = P_now.inverse();           // (P^−1)
             aux += HRH;                             
             aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
 
-            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K = aux * H.transpose() / R;
-
+            K = aux * H.transpose() / R;
+            KH = K * H;
+            
             // Update error state
-            KH.setZero();
-            KH = K*H;
-
-            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+            dx = K * r + (KH - MatDoF::Identity()) * dx;
             X_now.plus(dx);
 
             // Check convergence
+            // if((dx.coeffs().array().abs() <= tol_).all())
             if(dx.coeffs().norm() < tol_)
                 break;
         }
@@ -257,8 +274,18 @@ public:
         // Apply final correction
         X_ = X_now;
 
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+
         // Covariance update
-        P_ = (MatDoF::Identity() - KH) * P_now;
+        // P_ = (MatDoF::Identity() - KH) * P_now;
     }
 
     void reset() 
