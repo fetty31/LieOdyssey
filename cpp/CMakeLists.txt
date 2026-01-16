@@ -74,6 +74,9 @@ if(USE_MANIF)
     $<BUILD_INTERFACE:${manif_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>  # optional
   )
+  # Export LiePlusPlus headers together with this project
+  install(DIRECTORY ${manif_SOURCE_DIR}/include/
+          DESTINATION include/manif)
   # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:manif::manif>)
 endif()
 

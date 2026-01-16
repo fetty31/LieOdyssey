@@ -49,15 +49,15 @@
 
 // Lie++ includes
 // SEn3 (covers SE3 for N=1, SE23 for N=2, ...):
-#include <LiePlusPlus/groups/SEn3.hpp>
+#include <groups/SEn3.hpp>
 // SO3 (separate base group):
-#include <LiePlusPlus/groups/SO3.hpp>
+#include <groups/SO3.hpp>
 // Gal (separate base group):
-#include <LiePlusPlus/groups/Gal3.hpp>
+#include <groups/Gal3.hpp>
 // TG (separate base group):
-#include <LiePlusPlus/groups/TG.hpp>
+#include <groups/TG.hpp>
 // SDB (separate base group):
-#include <LiePlusPlus/groups/SDB.hpp>
+#include <groups/SDB.hpp>
 
 namespace lie_odyssey {
 

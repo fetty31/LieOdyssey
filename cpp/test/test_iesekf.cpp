@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <lie_odyssey.hpp>
+#include <lie_odyssey/lie_odyssey.hpp>
 
 using namespace lie_odyssey;
 

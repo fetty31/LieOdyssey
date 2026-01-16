@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
-#include <core/preintegrator.hpp>
-#include <core/groups.hpp>
+#include <lie_odyssey/core/preintegrator.hpp>
+#include <lie_odyssey/core/groups.hpp>
 
 using namespace lie_odyssey;
 

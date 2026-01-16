@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <backends/liepp_groups.hpp>
+#include <lie_odyssey/backends/liepp_groups.hpp>
 
 using namespace lie_odyssey;
 

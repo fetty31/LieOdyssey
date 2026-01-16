@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <backends/manif_groups.hpp>  
+#include <lie_odyssey/backends/manif_groups.hpp>  
 
 using namespace lie_odyssey;
 
@@ -142,7 +142,7 @@ TEST(BundleManifTest, SubgroupAccess) {
     auto pose = bundle.subgroup<0>(); // SE3
     auto bias = bundle.subgroup<1>(); // R^3
 
-    EXPECT_NEAR(pose.quat().toRotationMatrix()(3,3), 1.0, 1e-9);
+    EXPECT_NEAR(pose.quat().toRotationMatrix()(0,0), 1.0, 1e-9);
     EXPECT_TRUE(bias.coeffs().isApprox(Eigen::Vector3d::Zero()));
 }
 
