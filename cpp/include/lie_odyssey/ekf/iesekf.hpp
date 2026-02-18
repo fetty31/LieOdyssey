@@ -7,13 +7,16 @@
 
 namespace lie_odyssey {
 
-// -------------------- Iterative Error State Extended Kalman Filter (iESEKF) on Manifolds --------------------
+// -------------------- Iterative Error-State Extended Kalman Filter (iESEKF) on Manifolds --------------------
 template <typename Group>
 class iESEKF {
 public:
     using Scalar  = typename Group::Impl::Native::Scalar;
     using Tangent = typename Group::Tangent;
     static constexpr int DoF = Group::Impl::DoF;
+
+    static constexpr int POSE_SIZE = 6;
+    static constexpr int POSE_IDX  = 0;
 
     using VecTangent = Eigen::Matrix<Scalar, DoF, 1>;
 
@@ -130,6 +133,38 @@ public:
 
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // --- Degeneracy handling ---
+                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
+            Eigen::Matrix<Scalar,6,6> Hpose =
+                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
+
+                // Eigen decomposition
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
+            auto V = es.eigenvectors();
+            auto lambda = es.eigenvalues(); 
+
+                // Adaptive threshold
+            Scalar max_lambda = lambda.maxCoeff();
+            Scalar threshold = Scalar(0.01) * max_lambda;
+
+                // Build projection
+            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
+
+            for(int i=0; i<6; i++)
+                if(lambda(i) < threshold)
+                    S.row(i).setZero();
+
+                // Project pose increment
+            Eigen::Matrix<Scalar,6,1> dpose =
+                dx.template segment<6>(POSE_IDX);
+
+            dpose = V.inverse() * S * V * dpose;
+
+                // write back
+            dx.template segment<6>(POSE_IDX) = dpose;
+
+            // Update state
             X_now.plus(dx);
 
             // Check convergence
@@ -197,6 +232,38 @@ public:
 
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // --- Degeneracy handling ---
+                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
+            Eigen::Matrix<Scalar,6,6> Hpose =
+                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
+
+                // Eigen decomposition
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
+            auto V = es.eigenvectors();
+            auto lambda = es.eigenvalues(); 
+
+                // Adaptive threshold
+            Scalar max_lambda = lambda.maxCoeff();
+            Scalar threshold = Scalar(0.01) * max_lambda;
+
+                // Build projection
+            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
+
+            for(int i=0; i<6; i++)
+                if(lambda(i) < threshold)
+                    S.row(i).setZero();
+
+                // Project pose increment
+            Eigen::Matrix<Scalar,6,1> dpose =
+                dx.template segment<6>(POSE_IDX);
+
+            dpose = V.inverse() * S * V * dpose;
+
+                // write back
+            dx.template segment<6>(POSE_IDX) = dpose;
+
+            // Update state
             X_now.plus(dx);
 
             // Check convergence
@@ -252,17 +319,49 @@ public:
             Jacobian J_inv = J.inverse();
             P_now = J_inv * P_pred * J_inv.transpose();
 
-            // // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
-            MatDoF HRH = H.transpose() * H / R; // (HT R^−1 H)
-            MatDoF aux = P_now.inverse();           // (P^−1)
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * H / R;   // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();         // (P^−1)
             aux += HRH;                             
-            aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
+            aux = aux.inverse();                  // (HT R^−1 H + P^−1)^−1
 
             K = aux * H.transpose() / R;
             KH = K * H;
             
             // Update error state
-            dx = K * r + (KH - MatDoF::Identity()) * dx;
+            dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            // --- Degeneracy handling ---
+                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
+            Eigen::Matrix<Scalar,6,6> Hpose =
+                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
+
+                // Eigen decomposition
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
+            auto V = es.eigenvectors();
+            auto lambda = es.eigenvalues(); 
+
+                // Adaptive threshold
+            Scalar max_lambda = lambda.maxCoeff();
+            Scalar threshold = Scalar(0.01) * max_lambda;
+
+                // Build projection
+            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
+
+            for(int i=0; i<6; i++)
+                if(lambda(i) < threshold)
+                    S.row(i).setZero();
+
+                // Project pose increment
+            Eigen::Matrix<Scalar,6,1> dpose =
+                dx.template segment<6>(POSE_IDX);
+
+            dpose = V.inverse() * S * V * dpose;
+
+                // write back
+            dx.template segment<6>(POSE_IDX) = dpose;
+
+            // Update state
             X_now.plus(dx);
 
             // Check convergence

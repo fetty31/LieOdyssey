@@ -118,25 +118,25 @@ class BaseLiePP {
       plus(u);
     } 
 
-    Tangent minus(Derived& X)
+    Tangent minus(const Derived& X) const
     { 
       const Derived& self = static_cast<const Derived&>(*this);
-      return Log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
+      return Native::log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
     }
 
-    Tangent minus(Derived& X, Jacobian& J_dX)
+    Tangent minus(const Derived& X, Jacobian& J_dX) const
     { 
       // J_dx = To-Do
       const Derived& self = static_cast<const Derived&>(*this);
-      return Log( X.Inverse().native()*self.g_ );  
+      return Native::log( X.Inverse().native()*self.g_ );  
     }
 
-    Tangent minus(Derived& X, Jacobian& J_dX, Jacobian& J_xi)
+    Tangent minus(const Derived& X, Jacobian& J_dX, Jacobian& J_xi) const
     { 
       // J_dx = To-Do
       // J_xi = To-Do
       const Derived& self = static_cast<const Derived&>(*this);
-      return Log( X.Inverse().native()*self.g_ ); 
+      return Native::log( X.Inverse().native()*self.g_ ); 
     }
 
     // Group ops

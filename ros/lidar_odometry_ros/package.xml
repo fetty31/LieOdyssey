@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>lie_odyssey_ros</name>
+  <name>lidar_odometry_ros</name>
   <version>0.0.0</version>
-  <description>LieOdyssey ROS2 wrapper.</description>
-  <maintainer email="fetty3113@gmail.com">fetty</maintainer>
+  <description>The simplest LiDAR odometry one can develop. EKF-based SLAM with octree-based map.</description>
+  <maintainer email="fetty3113@gmail.com">vaive</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

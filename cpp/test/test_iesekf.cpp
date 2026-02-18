@@ -64,17 +64,17 @@ public:
 };
 
 // ---------------------- Test Type List ----------------------
-#if LIE_BACKEND_MANIF
-  using SGal3d = LieGroup<Gal3Manif<double>>;
-  using SO3d   = LieGroup<SO3Manif<double>>;
-  using SE3d   = LieGroup<SE3Manif<double>>;
-  using SE23d  = LieGroup<SE23Manif<double>>;
-#else
+// #if LIE_BACKEND_MANIF
+//   using SGal3d = LieGroup<Gal3Manif<double>>;
+//   using SO3d   = LieGroup<SO3Manif<double>>;
+//   using SE3d   = LieGroup<SE3Manif<double>>;
+//   using SE23d  = LieGroup<SE23Manif<double>>;
+// #else
   using SGal3d = LieGroup<Gal3LiePP<double>>;
   using SO3d   = LieGroup<SO3LiePP<double>>;
   using SE3d   = LieGroup<SE3LiePP<double>>;
   using SE23d  = LieGroup<SE23LiePP<double>>;
-#endif
+// #endif
 
 using LieGroupsToTest = ::testing::Types<SGal3d, SO3d, SE3d, SE23d>;
 TYPED_TEST_SUITE(IESEKFTestFixture, LieGroupsToTest);
@@ -107,7 +107,12 @@ TYPED_TEST(IESEKFTestFixture, PredictWithDefaultDynamics) {
     // For groups with explicit state getters like impl().p() or impl().v() we can check,
     // otherwise check that the state minus has non-zero tangent.
     auto dx = after.minus(before); 
+
+    #if LIE_BACKEND_MANIF
     EXPECT_GT(dx.coeffs().norm(), 0.0);
+    #else
+    EXPECT_GT(dx.norm(), 0.0);
+    #endif
 
     // Covariance should have been propagated (not equal to previous)
     EXPECT_FALSE(P_after.isApprox(P_before, 1e-15));
@@ -181,7 +186,12 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithNonzeroResidualChangesState) {
 
     // state_after should differ from state_before (there was a non-zero measurement residual)
     auto dx = state_after.minus(state_before); 
+
+    #if LIE_BACKEND_MANIF
     EXPECT_GT(dx.coeffs().norm(), 0.0);
+    #else
+    EXPECT_GT(dx.norm(), 0.0);
+    #endif
 }
 
 TYPED_TEST(IESEKFTestFixture, ResetRestoresIdentityCovariance) {
@@ -199,7 +209,13 @@ TYPED_TEST(IESEKFTestFixture, ResetRestoresIdentityCovariance) {
     // state should be identity (group's setIdentity semantics) - test via minus to zero
     auto st = this->filter.getState();
     auto zeroTang = st.minus(st); // should be zero
+
+    #if LIE_BACKEND_MANIF
     EXPECT_NEAR(zeroTang.coeffs().norm(), 0.0, 1e-12);
+    #else
+    EXPECT_NEAR(zeroTang.norm(), 0.0, 1e-12);
+    #endif
+    
 
     // covariance should be reset to 1e-3 * I per implementation
     auto P = this->filter.getCovariance();
