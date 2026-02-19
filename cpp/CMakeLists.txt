@@ -56,7 +56,7 @@ if(USE_LIEPLUSPLUS)
   # target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
   target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${LiePlusPlus_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>  # optional
+    $<INSTALL_INTERFACE:include/LiePlusPlus>  # optional
   )
   # Export LiePlusPlus headers together with this project
   install(DIRECTORY ${LiePlusPlus_SOURCE_DIR}/include/
@@ -72,7 +72,7 @@ if(USE_MANIF)
   # target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
   target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${manif_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>  # optional
+    $<INSTALL_INTERFACE:include/manif>  # optional
   )
   # Export LiePlusPlus headers together with this project
   install(DIRECTORY ${manif_SOURCE_DIR}/include/

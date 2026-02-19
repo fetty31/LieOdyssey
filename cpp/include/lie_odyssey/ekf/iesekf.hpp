@@ -15,10 +15,8 @@ public:
     using Tangent = typename Group::Tangent;
     static constexpr int DoF = Group::Impl::DoF;
 
-    static constexpr int POSE_SIZE = 6;
-    static constexpr int POSE_IDX  = 0;
-
     using VecTangent = Eigen::Matrix<Scalar, DoF, 1>;
+    using VecPose = Eigen::Matrix<Scalar, 6, 1>;
 
     using Jacobian = typename Group::Jacobian;          // same as MatDoF
     using NoiseMatrix = Eigen::Matrix<Scalar,12,12>;    // w = (n_w, n_a, n_{b_w}, n_{b_a})
@@ -30,30 +28,17 @@ public:
     using TangentFunction = std::function<Tangent(const iESEKF<Group>&, const IMUmeas&)>;
     using JacobianXFun  = std::function<Jacobian(const iESEKF<Group>&, const IMUmeas&)>;
     using JacobianWFun  = std::function<MappingMatrix(const iESEKF<Group>&, const IMUmeas&)>;
-
-    // State: Lie group element (or Bundle)
-    Group X_;   
-
-    // Covariance on error state (DoF)
-    MatDoF P_;
-
-    // Propagation noise matrix
-    NoiseMatrix Q_;
-
-    // Maximum iterations
-    int max_iters_;
-
-    // Tolerance
-    Scalar tol_;
+    using DegeneracyCallback = std::function<void(const iESEKF<Group>&, Tangent&, const MatDoF&)>;
 
     iESEKF(
            const MatDoF& P = MatDoF::Identity()*Scalar(1e-3),
            const NoiseMatrix& Q = NoiseMatrix::Identity()*Scalar(1e-3),
            TangentFunction f = nullptr,
            JacobianXFun f_dx = nullptr,
-           JacobianWFun f_dw = nullptr)
+           JacobianWFun f_dw = nullptr,
+           DegeneracyCallback degen_callback = nullptr)
         : X_(), P_(P), Q_(Q),
-        f_(f), f_dx_(f_dx), f_dw_(f_dw), 
+        f_(f), f_dx_(f_dx), f_dw_(f_dw), degeneracy_callback_(degen_callback),
         max_iters_(3), tol_(Scalar(1e-9))
     {
         // Provide safe defaults (identity dynamics)
@@ -65,6 +50,11 @@ public:
         }
         if (!f_dw_) {
             f_dw_ = [](const iESEKF<Group>&, const IMUmeas&) { return MappingMatrix::Zero(); };
+        }
+
+        // Safe callback, do not handle degeneracy
+        if (!degeneracy_callback_) {
+            degeneracy_callback_ = [](const iESEKF<Group>&, Tangent&, const MatDoF&) { return; };
         }
     }
 
@@ -134,35 +124,8 @@ public:
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 
-            // --- Degeneracy handling ---
-                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
-            Eigen::Matrix<Scalar,6,6> Hpose =
-                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
-
-                // Eigen decomposition
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
-            auto V = es.eigenvectors();
-            auto lambda = es.eigenvalues(); 
-
-                // Adaptive threshold
-            Scalar max_lambda = lambda.maxCoeff();
-            Scalar threshold = Scalar(0.01) * max_lambda;
-
-                // Build projection
-            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
-
-            for(int i=0; i<6; i++)
-                if(lambda(i) < threshold)
-                    S.row(i).setZero();
-
-                // Project pose increment
-            Eigen::Matrix<Scalar,6,1> dpose =
-                dx.template segment<6>(POSE_IDX);
-
-            dpose = V.inverse() * S * V * dpose;
-
-                // write back
-            dx.template segment<6>(POSE_IDX) = dpose;
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -233,35 +196,8 @@ public:
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 
-            // --- Degeneracy handling ---
-                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
-            Eigen::Matrix<Scalar,6,6> Hpose =
-                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
-
-                // Eigen decomposition
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
-            auto V = es.eigenvectors();
-            auto lambda = es.eigenvalues(); 
-
-                // Adaptive threshold
-            Scalar max_lambda = lambda.maxCoeff();
-            Scalar threshold = Scalar(0.01) * max_lambda;
-
-                // Build projection
-            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
-
-            for(int i=0; i<6; i++)
-                if(lambda(i) < threshold)
-                    S.row(i).setZero();
-
-                // Project pose increment
-            Eigen::Matrix<Scalar,6,1> dpose =
-                dx.template segment<6>(POSE_IDX);
-
-            dpose = V.inverse() * S * V * dpose;
-
-                // write back
-            dx.template segment<6>(POSE_IDX) = dpose;
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -331,35 +267,8 @@ public:
             // Update error state
             dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
 
-            // --- Degeneracy handling ---
-                // Extract pose block (assuming position+rotation tangent lie in first 6 dim.)
-            Eigen::Matrix<Scalar,6,6> Hpose =
-                HRH.template block<6,6>(POSE_IDX, POSE_IDX);
-
-                // Eigen decomposition
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<Scalar,6,6>> es(Hpose);
-            auto V = es.eigenvectors();
-            auto lambda = es.eigenvalues(); 
-
-                // Adaptive threshold
-            Scalar max_lambda = lambda.maxCoeff();
-            Scalar threshold = Scalar(0.01) * max_lambda;
-
-                // Build projection
-            Eigen::Matrix<Scalar,6,6> S = Eigen::Matrix<Scalar,6,6>::Identity();
-
-            for(int i=0; i<6; i++)
-                if(lambda(i) < threshold)
-                    S.row(i).setZero();
-
-                // Project pose increment
-            Eigen::Matrix<Scalar,6,1> dpose =
-                dx.template segment<6>(POSE_IDX);
-
-            dpose = V.inverse() * S * V * dpose;
-
-                // write back
-            dx.template segment<6>(POSE_IDX) = dpose;
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -399,6 +308,12 @@ public:
     // Access state
     Group getState() const { return X_; }
 
+    // Get max iters
+    int getMaxIters() { return max_iters_; }
+
+    // Get tolerance
+    Scalar getTolerance() { return tol_; }
+
     // Set filter covariance
     void setCovariance(const MatDoF& P) { P_ = P; }
 
@@ -408,13 +323,31 @@ public:
     // Set max iters
     void setMaxIters(int it) { max_iters_ = it; }
 
-    // Set max iters
+    // Set tolerance
     void setTolerance(Scalar tol) { tol_ = tol; }
 
-    protected:
-        TangentFunction f_;     // system dynamics (IMU input mapped to tangent space)
-        JacobianXFun f_dx_;     // Jacobian w.r.t. state
-        JacobianWFun f_dw_;     // Jacobian w.r.t. noise
+protected:
+
+    // State: Lie group element (or Bundle)
+    Group X_;   
+
+    // Covariance on error state (DoF)
+    MatDoF P_;
+
+    // Propagation noise matrix
+    NoiseMatrix Q_;
+
+    // Maximum iterations
+    int max_iters_;
+
+    // Tolerance
+    Scalar tol_;
+
+    // User-defined dynamics (+ degeneracy handling)
+    TangentFunction f_;     // system dynamics (IMU input mapped to tangent space)
+    JacobianXFun f_dx_;     // Jacobian w.r.t. state
+    JacobianWFun f_dw_;     // Jacobian w.r.t. noise
+    DegeneracyCallback degeneracy_callback_;   // Degeneracy handling callback (optional)
 
 };
 

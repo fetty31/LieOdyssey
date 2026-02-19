@@ -64,17 +64,17 @@ public:
 };
 
 // ---------------------- Test Type List ----------------------
-// #if LIE_BACKEND_MANIF
-//   using SGal3d = LieGroup<Gal3Manif<double>>;
-//   using SO3d   = LieGroup<SO3Manif<double>>;
-//   using SE3d   = LieGroup<SE3Manif<double>>;
-//   using SE23d  = LieGroup<SE23Manif<double>>;
-// #else
+#if LIE_BACKEND_MANIF
+  using SGal3d = LieGroup<Gal3Manif<double>>;
+  using SO3d   = LieGroup<SO3Manif<double>>;
+  using SE3d   = LieGroup<SE3Manif<double>>;
+  using SE23d  = LieGroup<SE23Manif<double>>;
+#else
   using SGal3d = LieGroup<Gal3LiePP<double>>;
   using SO3d   = LieGroup<SO3LiePP<double>>;
   using SE3d   = LieGroup<SE3LiePP<double>>;
   using SE23d  = LieGroup<SE23LiePP<double>>;
-// #endif
+#endif
 
 using LieGroupsToTest = ::testing::Types<SGal3d, SO3d, SE3d, SE23d>;
 TYPED_TEST_SUITE(IESEKFTestFixture, LieGroupsToTest);
