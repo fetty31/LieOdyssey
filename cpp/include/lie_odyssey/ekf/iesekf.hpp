@@ -76,12 +76,15 @@ public:
     // -------------------- Measurement Update --------------------
     // y: measurement
     // R: measurement noise
+    // R_inv: measurement noise inverse
     // h_fun: measurement function returning residual (y-ypred)
     // H_fun: Jacobian of measurement w.r.t tangent function
     template <typename Measurement, typename HMat>
     void update(const Measurement& y,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
                 std::function<Measurement(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
                 std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
     {
@@ -90,8 +93,6 @@ public:
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
         
-        auto R_inv = R.inverse();
-
         Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
         MatDoF KH;
 
@@ -151,10 +152,13 @@ public:
 
     // -------------------- Measurement Update --------------------
     // R: measurement noise
+    // R_inv: measurement noise inverse
     // H_fun: measurement function -> fills residual z and measurement jacobian H
     template <typename Measurement, typename HMat>
     void update(const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
                 std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
     {
 
@@ -162,7 +166,6 @@ public:
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
         
-        auto R_inv = R.inverse();
 
         Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
         MatDoF KH;

@@ -142,6 +142,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithZeroResidualReducesCovarianceTrace) {
     this->filter.template update<Measurement, HMat>(
         y,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
+        Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e3,
         h_fun,
         H_fun
     );
@@ -178,6 +179,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithNonzeroResidualChangesState) {
     this->filter.template update<Measurement, HMat>(
         meas,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
+        Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e3,
         h_fun,
         H_fun
     );
