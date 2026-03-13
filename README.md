@@ -46,6 +46,8 @@ colcon build --symlink-install
 IMU preintegration is a cornerstone of modern **inertial navigation systems (INS)** and **visual/lidar-inertial SLAM** pipelines.  
 Instead of re-integrating raw IMU data between every pair of keyframes during optimization, **preintegration accumulates relative motion increments (“deltas”) directly on the appropriate Lie group** — such as **SO(3)**, **SE₂(3)**, or **SGal(3)**.
 
+This allows high-rate inertial measurements to be summarized into a compact representation that can be reused efficiently during optimization.
+
 ---
 
 #### Why Preintegration?
@@ -57,21 +59,28 @@ By operating on Lie groups, preintegration respects the **non-Euclidean geometry
 High-rate IMU data are summarized into compact preintegrated measurements, significantly **reducing computation** and the number of variables optimized.
 
 ##### 🎯 Accurate Uncertainty Propagation
-Covariances and Jacobians are propagated alongside the deltas, ensuring **statistically correct weighting** of IMU constraints in the estimation process.
+Covariances and Jacobians are propagated alongside the motion increments ("deltas"), ensuring **statistically correct weighting** of IMU constraints in the estimation process.
+ensuring **statistically consistent weighting** of IMU constraints during estimation.
 
 ---
 
 ### Lie-Theoretic Foundations
 
 Classical filters like the EKF assume additive state updates in Euclidean space:
-\[
+```math
 x_{k+1} = f(x_k, u_k) + w_k
-\]
+```
 
 For systems evolving on Lie groups (e.g., rotations, poses), we instead use **group operations**:
-\[
-X_{k+1} = f(X_k, u_k) \exp(w_k)
-\]
+```math
+X_{k+1} = f(X_k, u_k)\exp(w_k)
+```
+
+with state perturbations as
+
+```math
+X = \hat{X}\exp(\delta)
+```
 
 This formulation naturally handles **nonlinear manifold structure**, improving numerical stability and global consistency.
 

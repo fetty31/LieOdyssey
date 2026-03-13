@@ -139,19 +139,53 @@ public:
         return g_.rminus(X.g_); 
     }
 
-    Tangent minus(const Derived& X, Jacobian& J_dX) const {
+    Tangent minus(const Derived& X, Jacobian& J_dthis) const {
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // returning also:
-        //    J_dX: jacobian w.r.t. state 
-        return g_.rminus(X.g_, J_dX); 
+        //     J_dthis: jacobian w.r.t. the right element (Y/this) 
+        return g_.rminus(X.g_, J_dthis); 
     }
 
-    Tangent minus(const Derived& X, Jacobian& J_dX, Jacobian& J_xi) const {
+    Tangent minus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const {
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // returning also:
-        //    J_dX: jacobian w.r.t. state 
-        //    J_xi: jacobian w.r.t. perturbation
-        return g_.rminus(X.g_, J_dX, J_xi); 
+        //    J_dthis: jacobian w.r.t. the right element (Y/this) 
+        //    J_dX: jacobian w.r.t. the left element (X)
+        return g_.rminus(X.g_, J_dthis, J_dX); 
+    }
+
+    // Left plus operator: X = exp(u) * X 
+    void lplus(const Tangent& u) {
+        g_ = u.exp() * g_;
+    }
+
+    // Left plus operator
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    void lplus(const Tangent& u, Jacobian& J_dX) 
+    {
+      g_ = g_.lplus(u, J_dX); // right plus X' = X ⊕ u
+    } 
+
+    // Left plus operator
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    //    J_xi: jacobian w.r.t. perturbation
+    void lplus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) 
+    {
+      g_ = g_.lplus(u, J_dX, J_xi); // right plus X' = X ⊕ u
+    } 
+
+    Tangent lminus(const Derived& X) const {
+        return g_.lminus(X.g_); 
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis) const {
+        return g_.lminus(X.g_, J_dthis); 
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const {
+        return g_.lminus(X.g_, J_dthis, J_dX); 
     }
 
     // Group ops

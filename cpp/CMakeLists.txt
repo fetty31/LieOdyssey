@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.16...3.26)
-project(lie_odyssey_cpp VERSION 1.0 LANGUAGES CXX)
+project(lie_odyssey_cpp VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+message(STATUS "Project version: ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 
 # Setup build options
 option(USE_CCACHE "Build using Ccache if found on the path" ON)

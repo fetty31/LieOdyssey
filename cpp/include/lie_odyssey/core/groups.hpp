@@ -68,12 +68,37 @@ public:
         return impl_.minus(X.impl_); 
     }
 
-    Tangent minus(const LieGroup& X, Jacobian& J_dX) const { 
-        return impl_.minus(X.impl_, J_dX); 
+    Tangent minus(const LieGroup& X, Jacobian& J_dthis) const { 
+        return impl_.minus(X.impl_, J_dthis); 
     }
 
-    Tangent minus(const LieGroup& X, Jacobian& J_dX, Jacobian& J_xi) const { 
-        return impl_.minus(X.impl_, J_dX, J_xi); 
+    Tangent minus(const LieGroup& X, Jacobian& J_dthis, Jacobian& J_dX) const { 
+        return impl_.minus(X.impl_, J_dthis, J_dX); 
+    }
+
+    // Left plus / minus
+    void lplus(const Tangent& u) { 
+        impl_.lplus(u); 
+    }
+
+    void lplus(const Tangent& u, Jacobian& J_dX) { 
+        impl_.lplus(u, J_dX); 
+    }
+
+    void lplus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) { 
+        impl_.lplus(u, J_dX, J_xi); 
+    }
+
+    Tangent lminus(const LieGroup& X) const { 
+        return impl_.lminus(X.impl_); 
+    }
+
+    Tangent lminus(const LieGroup& X, Jacobian& J_dthis) const { 
+        return impl_.lminus(X.impl_, J_dthis); 
+    }
+
+    Tangent lminus(const LieGroup& X, Jacobian& J_dthis, Jacobian& J_dX) const { 
+        return impl_.lminus(X.impl_, J_dthis, J_dX); 
     }
 
     // Adjoint
