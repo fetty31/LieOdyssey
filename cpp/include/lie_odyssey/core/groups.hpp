@@ -38,7 +38,7 @@ public:
     static LieGroup Exp(const Tangent& u) { 
         return LieGroup(Impl::Exp(u)); 
     }
-    Tangent Log() const { 
+    Tangent Log() { 
         return impl_.Log(); 
     }
 

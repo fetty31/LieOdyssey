@@ -19,6 +19,7 @@ public:
     static constexpr int DoF = Group::Impl::DoF;
 
     using VecTangent = Eigen::Matrix<Scalar, DoF, 1>;
+    
     using Jacobian = typename Group::Jacobian;          
     using NoiseMatrix = Eigen::Matrix<Scalar, 12, 12>;    
 
@@ -71,7 +72,7 @@ public:
         // The discrete-time transition matrix \Phi \= I + Fx*dt (first-order approx)
         Jacobian Fx = f_dx_(*this, imu); 
         MappingMatrix Fw = f_dw_(*this, imu);
-        Fw = X_.impl().Adj() * Fw; // map body-frame noise to tangent space
+        Fw = X_.Adjoint() * Fw; // map body-frame noise to tangent space
 
         // Discrete time transition \Phi = expm(Fx * dt)
         MatDoF Phi = (MatDoF::Identity() + Fx * Scalar(imu.dt)); 

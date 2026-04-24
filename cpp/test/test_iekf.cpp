@@ -56,14 +56,16 @@ public:
   using SO3d   = LieGroup<SO3Manif<double>>;
   using SE3d   = LieGroup<SE3Manif<double>>;
   using SE23d  = LieGroup<SE23Manif<double>>;
+  using SGal3d = LieGroup<Gal3Manif<double>>;
 #else
   using SO3d   = LieGroup<SO3LiePP<double>>;
   using SE3d   = LieGroup<SE3LiePP<double>>;
   using SE23d  = LieGroup<SE23LiePP<double>>;
+  using SGal3d = LieGroup<Gal3LiePP<double>>;
 #endif
 
 // Testing common Navigation groups
-using LieGroupsToTest = ::testing::Types<SO3d, SE3d, SE23d>;
+using LieGroupsToTest = ::testing::Types<SO3d, SE3d, SE23d, SGal3d>;
 TYPED_TEST_SUITE(InvariantEKFTestFixture, LieGroupsToTest);
 
 // ---------------------- Tests ----------------------
@@ -152,9 +154,9 @@ TYPED_TEST(InvariantEKFTestFixture, ConsistencyUnderLargeRotation) {
     // 2. Update at 90-degree rotation
     this->filter.reset();
     typename TestFixture::Group rotated_state;
-    typename TestFixture::Group::Tangent rot_vec = TestFixture::Group::Tangent::Zero();
+    typename TestFixture::Filter::VecTangent rot_vec = TestFixture::Filter::VecTangent::Zero();
     rot_vec(2) = 1.57; // 90 deg Z
-    rotated_state.plus(rot_vec);
+    rotated_state.plus(typename TestFixture::Group::Tangent(rot_vec));
     
     this->filter.setState(rotated_state);
     this->filter.setCovariance(TestFixture::Filter::MatDoF::Identity() * 0.1);

@@ -16,7 +16,6 @@ public:
     static constexpr int DoF = Group::Impl::DoF;
 
     using VecTangent = Eigen::Matrix<Scalar, DoF, 1>;
-    using VecPose = Eigen::Matrix<Scalar, 6, 1>;
 
     using Jacobian = typename Group::Jacobian;          // same as MatDoF
     using NoiseMatrix = Eigen::Matrix<Scalar,12,12>;    // w = (n_w, n_a, n_{b_w}, n_{b_a})

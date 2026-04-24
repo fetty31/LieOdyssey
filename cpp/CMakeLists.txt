@@ -43,6 +43,12 @@ set(LIE_ODYSSEY_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey)
 include(3rdparty/find_dependencies.cmake)
 
 # LieOdyssey lib
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/lie_odyssey/version.hpp"
+    @ONLY
+)
+
 add_library(${PROJECT_NAME} INTERFACE )
 target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -90,6 +96,10 @@ endif()
 
 # Install headers
 install(DIRECTORY include/ DESTINATION include)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lie_odyssey/version.hpp"
+  DESTINATION include/lie_odyssey
+)
 
 # Export the INTERFACE target
 install(TARGETS ${PROJECT_NAME}
