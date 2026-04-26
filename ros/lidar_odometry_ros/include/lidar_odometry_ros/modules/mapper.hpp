@@ -33,6 +33,8 @@ class lidar_odometry_ros::Mapper {
         void set_num_threads(int n);
         void set_config(const Config::Mapping& cfg);
 
+        void clear_matches();
+
         bool exists();
         int size();
         double last_time();

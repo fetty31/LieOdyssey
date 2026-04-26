@@ -321,7 +321,7 @@
                 /*NOTE: update() will trigger the matching procedure ( see "iESEKF.cpp" )
                 in order to update the measurement stage of the KF with the computed point-to-plane distances*/
 
-                map.matches.clear(); // clear matches vector for next iteration
+                map.clear_matches(); // clear matches vector for next iteration
 
                     // Get output state from iESEKF
                 lidar_odometry_ros::State corrected_state = lidar_odometry_ros::State(this->_iESEKF->getState(), 
@@ -548,8 +548,7 @@
             H = iESEKF::HMat::Zero(N, iESEKF::Bundle::DoF);
             z.resize(N);
 
-            iESEKF::Bundle s = group.impl(); // lie_odyssey::ManifBundle object
-            manif::SGal3<Scalar> SGal3_s = s.subgroup<0>();
+            State current_state(group);
 
             // For each match, calculate its derivative and distance
             #pragma omp parallel for num_threads(this->num_threads_)
@@ -558,23 +557,19 @@
                 Eigen::Vector4f p4_imu = match.get_4Dlocal();
                 Eigen::Vector4f normal = match.plane.get_normal();
 
+                // match.update_global(current_state); // update match global position using current state estimate
+
                 // Set correct dimension/type
                 Eigen::Matrix<Scalar, 3, 1> p_imu, n;
                 p_imu = p4_imu.head(3).cast<Scalar>();
                 n     = normal.head(3).cast<Scalar>();
-
-                // Compute jacobian w.r.t. state
-                Eigen::Matrix<Scalar, 3, manif::SGal3<Scalar>::DoF> J_dX; // jacobian SGal3 action := J_dX ​= d(G * p_imu)/dX​
-                SGal3_s.act(p_imu, J_dX);
+                n.normalize();
 
                 // Fill H with state part
-                H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = n.transpose() * J_dX;
-
-                // H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = iESEKF::fill_H_point_to_plane(group, normal, p_imu);
+                iESEKF::fill_H_point_to_plane(group, n, p_imu, i, H);
      
                 // Measurement: distance to the closest plane
-                z(i) = -Scalar(match.dist);
-
+                z(i) = -Scalar(match.get_distance());
             }
 
             if(this->config.debug) 
@@ -665,7 +660,8 @@
                 Q,
                 iESEKF::f,
                 iESEKF::df_dx,
-                iESEKF::df_dw
+                iESEKF::df_dw,
+                iESEKF::degeneracy_callback
             );
             this->_iESEKF->setMaxIters(config.ekf.MAX_NUM_ITERS);
 

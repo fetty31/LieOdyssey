@@ -70,6 +70,9 @@ add_library(${PROJECT_NAME}
             src/plane.cpp
             src/match.cpp
             src/filters/iesekf_sgal3.cpp
+            # src/filters/iesekf_se23.cpp
+            # src/filters/iesekf_so3.cpp
+            # src/filters/iesekf_se3.cpp
             )
 target_compile_options(${PROJECT_NAME} PRIVATE ${OpenMP_FLAGS})
 target_link_libraries(${PROJECT_NAME} ${PCL_LIBRARIES} ${OpenMP_LIBS} lie_odyssey::lie_odyssey_cpp)

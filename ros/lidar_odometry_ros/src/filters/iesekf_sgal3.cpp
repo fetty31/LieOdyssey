@@ -47,6 +47,11 @@ void lidar_odometry_ros::iESEKF::group_to_state(const Group& g, V3& p, Quat& q, 
 	gravity = X.subgroup<3>().coeffs();
 }
 
+void lidar_odometry_ros::iESEKF::state_to_group(const V3& p, const Quat& q, const V3& v, const V3& b_w, const V3& b_a, const V3& gravity, Group& g)
+{
+	g = get_filled_state(p, q, v, b_w, b_a, gravity);
+}
+
 typename Filter::Tangent lidar_odometry_ros::iESEKF::f(const Filter& kf, const lie_odyssey::IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
@@ -69,6 +74,31 @@ typename Filter::Tangent lidar_odometry_ros::iESEKF::f(const Filter& kf, const l
 
 	// theta (angular velocity contribution)
 	t.template segment<3>(6) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
+
+	// s (time)
+	t(9) = Scalar(1);
+
+    return t; // cast to Tangent
+}
+
+typename Filter::Tangent lidar_odometry_ros::iESEKF::f_state(const Group& g, const lie_odyssey::IMUmeas& imu) 
+{
+	// Build tangent increment xi for SGal(3) group:
+	// xi = [ rho(3); nu(3); theta(3); s(1) ] 
+    typename Filter::VecTangent t = Filter::VecTangent::Zero();
+
+	auto grav = g.impl().subgroup<3>().coeffs(); 				// gravity vector estimate
+	auto R = g.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto v0 = g.impl().subgroup<0>().linearVelocity();			// velocity estimate
+
+	// nu (linear acceleration contribution)
+	t.template segment<3>(3) = (imu.accel - imu.bias.accel /* -n_a */).cast<Scalar>() - R.transpose() * grav;
+
+	// theta (angular velocity contribution)
+	t.template segment<3>(6) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
+
+	// rho (position): 
+	t.template segment<3>(0) = v0 + t.template segment<3>(3) * imu.dt; // p ⊞ (v*dt + 1/2*((a - ba - na) + Rt*g)*dt*dt) -> rho = v*dt
 
 	// s (time)
 	t(9) = Scalar(1);
@@ -137,7 +167,11 @@ void lidar_odometry_ros::iESEKF::H_fun(const Filter& /*kf*/, const Group& X_now,
 	);
 }
 
-Eigen::Matrix<Scalar, 1, 10> lidar_odometry_ros::iESEKF::fill_H_point_to_plane(const Group& group, const V3& normal, const V3& point)
+void lidar_odometry_ros::iESEKF::fill_H_point_to_plane(const Group& group, 
+														const V3& normal, 
+														const V3& point, 
+														int i, 
+														HMat& H)
 {
 	iESEKF::Bundle s = group.impl(); // lie_odyssey::ManifBundle object
 	manif::SGal3<Scalar> SGal3_s = s.subgroup<0>();
@@ -147,39 +181,12 @@ Eigen::Matrix<Scalar, 1, 10> lidar_odometry_ros::iESEKF::fill_H_point_to_plane(c
 	SGal3_s.act(point, J_dX);
 
 	// Fill H with state part
-	Eigen::Matrix<Scalar, 1, 10> H = normal.transpose() * J_dX;
-	return H;
+	H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
 }
 
 void lidar_odometry_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH)
 {
 	/* 
-		Here we handle degeneracy in SGal3 group (first subgroup of our Bundle state)
+		To-Do: handle degeneracy in SGal3 group (first subgroup of our Bundle state)
 	*/
-	static constexpr int DoF = 10;
-
-	// Compute pose information matrix
-	using Mat = Eigen::Matrix<Scalar,DoF,DoF>;
-    Mat H = HRH.template topLeftCorner<DoF,DoF>();
-
-	// Eigen decomposition
-	Eigen::SelfAdjointEigenSolver<Mat> es(H);
-    auto V = es.eigenvectors();
-    auto lambda = es.eigenvalues();
-
-	// Adaptive threshold
-    Scalar max_lambda = lambda.maxCoeff();
-    Scalar threshold = Scalar(0.0001) * max_lambda;
-
-	// Build projection
-    Mat S = Mat::Identity();
-    for(int i=0; i<DoF; i++)
-        if(lambda(i) < threshold)
-            S.row(i).setZero();
-
-	auto& dx_vec = dx.coeffs();
-    Eigen::Matrix<Scalar,DoF,1> 
-		corrected_dx = V * S * V.transpose() * dx_vec.template segment<DoF>(0);
-
-	dx_vec.template segment<DoF>(0) = corrected_dx; // update tangent vector
 }

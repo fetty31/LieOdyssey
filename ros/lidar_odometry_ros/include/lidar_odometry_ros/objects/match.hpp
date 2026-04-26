@@ -22,6 +22,8 @@ class lidar_odometry_ros::Match{
 
         bool lisanAlGaib(); // whether is the chosen one :)
 
+        float get_distance();
+
         void update_global(lidar_odometry_ros::State& s);
 
         Eigen::Vector4f get_4Dglobal();

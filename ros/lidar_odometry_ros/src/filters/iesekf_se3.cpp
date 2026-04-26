@@ -46,6 +46,11 @@ void lidar_odometry_ros::iESEKF::group_to_state(const Group& g, V3& p, Quat& q, 
 	gravity = X.subgroup<4>().coeffs();
 }
 
+void lidar_odometry_ros::iESEKF::state_to_group(const V3& p, const Quat& q, const V3& v, const V3& b_w, const V3& b_a, const V3& gravity, Group& g)
+{
+	g = get_filled_state(p, q, v, b_w, b_a, gravity);
+}
+
 typename Filter::Tangent lidar_odometry_ros::iESEKF::f(const Filter& kf, const lie_odyssey::IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
@@ -53,14 +58,14 @@ typename Filter::Tangent lidar_odometry_ros::iESEKF::f(const Filter& kf, const l
 	// v ⊞ ((a - ba - na) + Rt*g)*dt
 	// p ⊞ (v*dt + 1/2*((a - ba - na) + Rt*g)*dt*dt)
 
-	// Build tangent increment xi for R3 + SO(3) + R3 bundle:
+	// Build tangent increment xi for SE(3) + R3 bundle:
 	// xi = [ rho(3); theta(3); nu(3) ] 
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
 	Group X = kf.getState(); 
-	auto g = X.impl().subgroup<5>().coeffs(); 					// gravity vector estimate
-	auto R = X.impl().subgroup<1>().quat().toRotationMatrix();	// orientation estimate
-	auto v0 = X.impl().subgroup<2>().coeffs();					// velocity estimate
+	auto g = X.impl().subgroup<4>().coeffs(); 					// gravity vector estimate
+	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto v0 = X.impl().subgroup<1>().coeffs();					// velocity estimate
 
 	// nu (linear acceleration contribution)
 	t.template segment<3>(6) = (imu.accel - imu.bias.accel /* -n_a */).cast<Scalar>() - R.transpose() * g;
@@ -69,7 +74,29 @@ typename Filter::Tangent lidar_odometry_ros::iESEKF::f(const Filter& kf, const l
 	t.template segment<3>(3) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
 
 	// rho (position): 
-	t.template segment<3>(0) = v0;
+	t.template segment<3>(0) = R.transpose()*v0 + 0.5 * t.template segment<3>(6) * imu.dt;
+
+    return t; // cast to Tangent
+}
+
+typename Filter::Tangent lidar_odometry_ros::iESEKF::f_state(const Group& g, const lie_odyssey::IMUmeas& imu) 
+{
+	// Build tangent increment xi for SE(3) group:
+	// xi = [ rho(3); theta(3); nu(3) ] 
+    typename Filter::VecTangent t = Filter::VecTangent::Zero();
+
+	auto grav = g.impl().subgroup<4>().coeffs(); 				// gravity vector estimate
+	auto R = g.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto v0 = g.impl().subgroup<1>().coeffs();					// velocity estimate
+
+	// nu (linear acceleration contribution)
+	t.template segment<3>(6) = (imu.accel - imu.bias.accel /* -n_a */).cast<Scalar>() - R.transpose() * grav;
+
+	// theta (angular velocity contribution)
+	t.template segment<3>(3) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
+
+	// rho (position): 
+	t.template segment<3>(0) =  R.transpose()*v0 + 0.5 * t.template segment<3>(6) * imu.dt;
 
     return t; // cast to Tangent
 }
@@ -84,8 +111,16 @@ typename Filter::Jacobian lidar_odometry_ros::iESEKF::df_dx(const Filter& kf, co
 	Filter::Jacobian Jx = Filter::Jacobian::Zero();
 
 	Group X = kf.getState(); 
-	auto g = X.impl().subgroup<5>().coeffs(); 					// gravity estimate
-	auto R = X.impl().subgroup<1>().quat().toRotationMatrix();	// orientation estimate
+	auto g = X.impl().subgroup<4>().coeffs(); 					// gravity estimate
+	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto v0 = X.impl().subgroup<1>().coeffs();					// velocity estimate
+
+	// position
+	Jx.block<3, 3>(0, 3) = manif::skew(R.transpose()*v0)          // w.r.t R := d(R^-1*g)/dR * d(R^-1)/dR
+						- manif::skew(R.transpose()*g)*imu.dt*0.5; //           + d(R^-1*v)/dR * d(R^-1)/dR
+	Jx.block<3, 3>(0, 6)  = R.transpose();
+	Jx.block<3, 3>(0, 12) = -Eigen::Matrix<Scalar,3,3>::Identity()*0.5*imu.dt; // w.r.t b_a
+	Jx.block<3, 3>(0, 15) = -R.transpose()*0.5*imu.dt; // w.r.t g
 
 	// velocity 
     Jx.block<3, 3>(6,  3) = -manif::skew(R.transpose() * g);	        // w.r.t R := d(R^t*g)/dR 
@@ -103,11 +138,16 @@ typename Filter::MappingMatrix lidar_odometry_ros::iESEKF::df_dw(const Filter& /
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
 
+    // position
+	Jw.block<3, 3>(0, 3)  = -Eigen::Matrix<Scalar,3,3>::Identity()*0.5*imu.dt; // w.r.t n_a
+	// velocity
     Jw.block<3, 3>(6, 3)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_a
+	// rotation
     Jw.block<3, 3>(3, 0)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_w
+	// bias
     Jw.block<3, 3>(9, 6)  =  Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_{b_w}
     Jw.block<3, 3>(12, 9) =  Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_{b_a}
-    
+
     return Jw;
 }
 
@@ -133,6 +173,24 @@ void lidar_odometry_ros::iESEKF::H_fun(const Filter& /*kf*/, const Group& X_now,
 	    z,
 	    H
 	);
+}
+
+// Fill Measurement Jacobian H row with point-to-plane residual derivative 
+void lidar_odometry_ros::iESEKF::fill_H_point_to_plane(const Group& group, 
+														const V3& normal, 
+														const V3& point, 
+														int i, 
+														HMat& H)
+{
+	iESEKF::Bundle s = group.impl(); // lie_odyssey::ManifBundle object
+	manif::SE3<Scalar> SE3 = s.subgroup<0>();
+
+	// Compute jacobian w.r.t. state
+	Eigen::Matrix<Scalar, 3, manif::SE3<Scalar>::DoF> J_dX; // jacobian SE3 action := J_dX ​= d(G * p_imu)/dX​
+	SE3.act(point, J_dX);
+
+	// Fill H with state part
+	H.block<1, manif::SE3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
 }
 
 void lidar_odometry_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH)

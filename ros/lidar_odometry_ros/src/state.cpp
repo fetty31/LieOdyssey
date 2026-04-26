@@ -54,49 +54,49 @@
             this->p = T.block(0, 3, 3, 1);
         }
 
-        void lidar_odometry_ros::State::update(double t){
+        void lidar_odometry_ros::State::update(double t)
+        {
+            using Scalar = iESEKF::Scalar;
 
-                // R ⊞ (w - bw - nw)*dt
-                // v ⊞ (R*(a - ba - na) + g)*dt
-                // p ⊞ (v*dt + 1/2*(R*(a - ba - na) + g)*dt*dt)
+            double dt = t - this->time;
+            if (dt <= 0.0) return;
 
-                // Time between IMU samples
-                double dt = t - this->time;
-                if(dt < 0.0) return; // invalid time, do not update
+            // Build group from current state
+            iESEKF::Group group;
+            iESEKF::state_to_group(this->p.cast<Scalar>(),
+                                this->q.cast<Scalar>(),
+                                this->v.cast<Scalar>(),
+                                this->b.gyro.cast<Scalar>(),
+                                this->b.accel.cast<Scalar>(),
+                                this->g.cast<Scalar>(),
+                                group);
 
-                // Exp orientation
-                Eigen::Vector3f w = this->w - this->b.gyro;
-                float w_norm = w.norm();
-                Eigen::Matrix3f R = Eigen::Matrix3f::Identity();
+            // Build tangent (IMU input)
+            lie_odyssey::IMUmeas imu_input;
+            imu_input.accel = this->a.cast<Scalar>();
+            imu_input.gyro = this->w.cast<Scalar>();
+            imu_input.bias.accel = this->b.accel.cast<Scalar>();
+            imu_input.bias.gyro = this->b.gyro.cast<Scalar>();
+            imu_input.dt = dt;
 
-                if (w_norm > 1.e-7){
-                    Eigen::Vector3f r = w / w_norm;
-                    Eigen::Matrix3f K;
+            auto xi = iESEKF::f_state(group, imu_input); // get tangent increment from IMU input
 
-                    K << 0.0, -r[2], r[1],
-                         r[2], 0.0, -r[0],
-                         -r[1], r[0], 0.0;
+            // Propagate on Lie group
+            group.plus(xi * dt);
 
-                    float r_ang = w_norm * dt;
+            // Back to state
+            iESEKF::V3 position, velocity, gravity, bg, ba;
+            iESEKF::Quat orientation;
 
-                    /// Rodrigues Transformation
-                    R += std::sin(r_ang) * K + (1.0 - std::cos(r_ang)) * K * K;
-                }
+            iESEKF::group_to_state(group, position, orientation, velocity, bg, ba, gravity);
 
-                // Acceleration
-                Eigen::Vector3f a0 = this->q._transformVector(this->a - this->b.accel);
-                a0 += this->g;
-
-                // Orientation
-                Eigen::Quaternionf q_update(R);
-                this->q *= q_update;
-
-                // Position
-                this->p += this->v*dt + 0.5*a0*dt*dt;
-
-                // Velocity
-                this->v += a0*dt;
-
+            this->q = orientation.cast<float>();
+            this->p = position.cast<float>();
+            this->v = velocity.cast<float>();
+            this->g = gravity.cast<float>();
+            this->b.gyro = bg.cast<float>();
+            this->b.accel = ba.cast<float>();
+            this->time = t;
         }
 
         void lidar_odometry_ros::State::operator+=(const lidar_odometry_ros::State& State){

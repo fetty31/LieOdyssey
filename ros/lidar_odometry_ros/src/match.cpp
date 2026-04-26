@@ -14,6 +14,10 @@
             return this->plane.good_fit();
         }
 
+        float lidar_odometry_ros::Match::get_distance(){
+            return this->plane.dist2plane(this->p_global);
+        }
+
         void lidar_odometry_ros::Match::update_global(lidar_odometry_ros::State& s){
             Eigen::Vector4f p4_global = s.get_RT() * this->get_4Dlocal();
             this->p_global = p4_global.head(3);

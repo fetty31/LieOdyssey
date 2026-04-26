@@ -8,6 +8,9 @@
 #include "lidar_odometry_ros/utils/algorithms.hpp"
 
 #include "lidar_odometry_ros/modules/filters/iesekf_sgal3.hpp"
+// #include "lidar_odometry_ros/modules/filters/iesekf_se23.hpp"
+// #include "lidar_odometry_ros/modules/filters/iesekf_so3.hpp"
+// #include "lidar_odometry_ros/modules/filters/iesekf_se3.hpp"
 
 using namespace lidar_odometry_ros;
 

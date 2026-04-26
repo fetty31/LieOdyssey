@@ -30,6 +30,10 @@
             else return 0;
         }
 
+        void Mapper::clear_matches(){
+            this->matches.clear();
+        }
+
         double Mapper::last_time(){
             return this->last_map_time;
         }
@@ -37,6 +41,10 @@
         Matches Mapper::match(State s, pcl::PointCloud<PointType>::Ptr& pc){
 
             if(not this->exists()) return matches;
+
+            // if(this->matches.size() > 0) {
+            //     return this->matches; // if matches from last iter exist, return them (avoid matching every iter, which is costly)
+            // }
 
             std::size_t N0 = (pc->points.size() > static_cast<std::size_t>(config.MAX_NUM_PC2MATCH)) ? 
                                 static_cast<std::size_t>(pc->points.size()) - config.MAX_NUM_PC2MATCH : 0;
