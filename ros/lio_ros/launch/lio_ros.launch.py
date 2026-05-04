@@ -16,15 +16,15 @@ def generate_launch_description():
     )
 
     lio_node = Node(
-        package='lidar_odometry_ros',
+        package='lio_ros',
         namespace='',
-        executable='lidar_odometry_ros_node',
-        name='lidar_odometry_ros',
+        executable='lio_ros_node',
+        name='lio_ros_node',
         output='screen',
         parameters=[PathJoinSubstitution([
-                FindPackageShare('lidar_odometry_ros'),
+                FindPackageShare('lio_ros'),
                 'config',
-                'kitti.yaml'
+                'params.yaml'
             ])]
     )
 
@@ -37,7 +37,7 @@ def generate_launch_description():
         cmd=[[
             'ros2 run rviz2 rviz2 -d ',
              PathJoinSubstitution([
-                FindPackageShare('lidar_odometry_ros'),
+                FindPackageShare('lio_ros'),
                 'config',
                 'rviz',
                 'limo.rviz'

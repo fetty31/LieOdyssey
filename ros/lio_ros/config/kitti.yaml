@@ -1,6 +1,6 @@
 # KITTI dataset config
 
-lidar_odometry_ros:
+lio_ros:
   ros__parameters:
     topics:
       input:
@@ -15,7 +15,7 @@ lidar_odometry_ros:
 
     num_threads: 20 # OpenMP threads (will be equal to $(nproc) if it is set higher)
 
-    sensor_type: 1  # LiDAR type (0: OUSTER \ 1: VELODYNE \ 2: HESAI \ 3: LIVOX)
+    sensor_type: "velodyne"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
 
     debug: true     # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
     verbose: true   # print debug/performance board
@@ -66,10 +66,6 @@ lidar_odometry_ros:
         active: true
         value: 4.0  # [m]
 
-      FoV: # crop field of view
-        active: false
-        value: 180.0  # [deg]
-      
       rateSampling: # quick downsample
         active: true
         value: 4

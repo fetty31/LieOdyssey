@@ -1,8 +1,9 @@
 #pragma once
 
 #include <lie_odyssey/lie_odyssey.hpp>
+#include "lio_ros/state.hpp"
 
-namespace lidar_odometry_ros::iESEKF {
+namespace lio_ros::iESEKF {
 
 using Scalar = double;
 
@@ -10,9 +11,7 @@ using V3 = Eigen::Matrix<Scalar, 3, 1>;
 using Quat = Eigen::Quaternion<Scalar>;
 
 using Bundle = lie_odyssey::BundleManif<Scalar, 
-                                    manif::R3,     // position
-                                    manif::SO3,    // orientation
-                                    manif::R3,     // velocity 
+                                    manif::SGal3,  // pose + velocity 
                                     manif::R3,     // angular velocity bias
                                     manif::R3,     // acceleration bias
                                     manif::R3      // gravity (To-Do make it S2 group)
@@ -27,16 +26,17 @@ using MatDoF  = Filter::MatDoF;
 using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
 using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
 
-// Initialization
-Group get_filled_state(const V3& p, const Quat& q, const V3& v, const V3& b_w, const V3& b_a, const V3& gravity);
-
 // Type-conversion helper
-void group_to_state(const Group& g, V3& p, Quat& q, V3& v, V3& b_w, V3& b_a, V3& gravity);
-void state_to_group(const V3& p, const Quat& q, const V3& v, const V3& b_w, const V3& b_a, const V3& gravity, Group& g);
+void group_to_state(const Group& g, lio_ros::State& state);
+void state_to_group(const lio_ros::State& state, Group& g);
+
+// Covariance retrieval (Pose + Vel.)
+std::vector<double> get_pose_covariance(const MatDoF& P);
+std::vector<double> get_velocity_covariance(const MatDoF& P);
 
 // Propagation model (IMU dynamics)
 typename Filter::Tangent f(const Filter& kf, const lie_odyssey::IMUmeas& imu);
-typename Filter::Tangent f_state(const Group& g, const lie_odyssey::IMUmeas& imu);
+typename Filter::Tangent f_state(const lio_ros::State& state);
 
 // Jacobians of the dynamics
 typename Filter::Jacobian df_dx(const Filter& kf, const lie_odyssey::IMUmeas& imu);
@@ -52,4 +52,4 @@ void fill_H_point_to_plane(const Group& group, const V3& normal, const V3& point
 // Degeneracy handler
 void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);
 
-} // namespace lidar_odometry_ros::iESEKF 
+} // namespace lio_ros::iESEKF 

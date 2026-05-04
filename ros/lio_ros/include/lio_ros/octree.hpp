@@ -34,7 +34,7 @@
 #include <functional>
 #include <Eigen/Dense>
 
-namespace lidar_odometry_ros {
+namespace lio_ros {
 
 namespace octree {
 
@@ -603,5 +603,5 @@ struct Octree {
 
 } // namespace octree
 
-} // namespace lidar_odometry_ros
+} // namespace lio_ros
 
