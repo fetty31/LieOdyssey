@@ -8,11 +8,22 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
 
     rviz_config = LaunchConfiguration('rviz')
+    param_config = LaunchConfiguration('config')
 
     rviz_config_arg = DeclareLaunchArgument(
         'rviz',
         default_value='False',
         description = 'Whether to run an rviz instance'
+    )
+
+    param_config_arg = DeclareLaunchArgument(
+        'config',
+        default_value=PathJoinSubstitution([
+                FindPackageShare('lio_ros'),
+                'config',
+                'params.yaml'
+            ]),
+        description = 'Path to yaml config'
     )
 
     lio_node = Node(
@@ -21,11 +32,7 @@ def generate_launch_description():
         executable='lio_ros_node',
         name='lio_ros_node',
         output='screen',
-        parameters=[PathJoinSubstitution([
-                FindPackageShare('lio_ros'),
-                'config',
-                'params.yaml'
-            ])]
+        parameters=[param_config]
     )
 
     rviz_conditioned = ExecuteProcess(
@@ -49,6 +56,7 @@ def generate_launch_description():
     
     return LaunchDescription([
         rviz_config_arg,
+        param_config_arg,
         lio_node,
         rviz_conditioned
     ])

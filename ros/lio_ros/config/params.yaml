@@ -6,7 +6,6 @@ lio_ros_node:
       input:
         lidar: /ouster/points
         imu: /ouster/imu
-      # output:
 
     frames: # output frames (the transform between frames will be broadcasted)
       world: map
@@ -15,10 +14,9 @@ lio_ros_node:
 
     num_threads: 1 # OpenMP threads (will be equal to $(nproc) if it is set higher)
 
-    sensor_type: "ouster"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
+    sensor_type: "OUSTER"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
 
     debug: true     # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
-    verbose: true   # print debug/performance board
 
     time_offset: true           # whether to take into account a possible sync offset between IMU and LiDAR (set to true if they are not properly in sync)
     end_of_sweep: false         # whether the sweep reference time is w.r.t. the start or the end of the scan (only applies to VELODYNE/OUSTER)
