@@ -63,48 +63,50 @@ class LIOwrapper : public rclcpp::Node
 
     public:
 
-        LIOwrapper() : Node("lio_ros", 
+        LIOwrapper() : Node("lio_ros_node", 
                             rclcpp::NodeOptions()
                             .automatically_declare_parameters_from_overrides(true) ) 
-            {
+            { }
 
-                // Declare the one and only Core object (singleton pattern)
-                lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
+        void init()
+        {
+            // Declare the one and only Core object (singleton pattern)
+            lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
 
-                // Load config
-                lio_ros::Config config;
-                this->loadConfig(&config);
+            // Load config
+            lio_ros::Config config;
+            this->loadConfig(&config);
 
-                rclcpp::Parameter tf_pub = this->get_parameter("frames.tf_pub");
-                this->publish_tf = tf_pub.as_bool();
+            rclcpp::Parameter tf_pub = this->get_parameter("frames.tf_pub");
+            this->publish_tf = tf_pub.as_bool();
 
-                // Define two callback groups (ensure parallel execution of lidar_callback & imu_callback)
-                rclcpp::SubscriptionOptions lidar_opt, imu_opt;
-                lidar_opt.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-                imu_opt.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+            // Define two callback groups (ensure parallel execution of lidar_callback & imu_callback)
+            rclcpp::SubscriptionOptions lidar_opt, imu_opt;
+            lidar_opt.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+            imu_opt.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
-                // Set up subscribers
-                lidar_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                                config.lidar_topic, 1, std::bind(&LIOwrapper::lidar_callback, this, std::placeholders::_1), lidar_opt);
-                imu_sub_   = this->create_subscription<sensor_msgs::msg::Imu>(
-                                config.imu_topic, 1000, std::bind(&LIOwrapper::imu_callback, this, std::placeholders::_1), imu_opt);
-                
-                // Set up publishers
-                pc_pub      = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud", 1);
-                state_pub   = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/state", 1);
+            // Set up subscribers
+            lidar_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                            config.lidar_topic, 1, std::bind(&LIOwrapper::lidar_callback, this, std::placeholders::_1), lidar_opt);
+            imu_sub_   = this->create_subscription<sensor_msgs::msg::Imu>(
+                            config.imu_topic, 1000, std::bind(&LIOwrapper::imu_callback, this, std::placeholders::_1), imu_opt);
+            
+            // Set up publishers
+            pc_pub      = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud", 1);
+            state_pub   = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/state", 1);
 
-                desk_pub     = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/deskewed", 1);
-                match_pub    = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/match", 1);
-                finalraw_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud_raw", 1);
-                body_pub     = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/body", 1);
-                match_points_pub = this->create_publisher<visualization_msgs::msg::MarkerArray>("/lio_ros/match_points", 1);
+            desk_pub     = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/deskewed", 1);
+            match_pub    = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/match", 1);
+            finalraw_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud_raw", 1);
+            body_pub     = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/body", 1);
+            match_points_pub = this->create_publisher<visualization_msgs::msg::MarkerArray>("/lio_ros/match_points", 1);
 
-                // Init TF broadcaster
-                tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+            // Init TF broadcaster
+            tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
-                // Initialize LIO core
-                core.initialize(config);
-            }
+            // Initialize LIO core
+            core.initialize(config);
+        }
         
         private:
         
@@ -239,33 +241,47 @@ class LIOwrapper : public rclcpp::Node
             config->imu_calib_time = est_time_p.as_double();
 
             // Extrinsics
-            auto get_vec3f = [this](const std::string& name) {
-                auto v = this->get_parameter(name).as_double_array();
+            auto get_vec3f = [this](const std::string& name) -> Eigen::Vector3f {
+                rclcpp::Parameter v_p = this->get_parameter(name);
+                std::vector<double> v = v_p.as_double_array();
                 if (v.size() != 3) {
                     throw std::runtime_error(name + " must have size 3");
                 }
-                return Eigen::Map<const Eigen::Vector3d>(v.data()).cast<float>();
-            };
+                Eigen::Vector3d vec(v[0], v[1], v[2]);
 
-            auto get_mat3f = [this](const std::string& name) {
-                auto v = this->get_parameter(name).as_double_array();
+                if (!vec.allFinite()) {
+                    throw std::runtime_error(name + " contains NaN/Inf");
+                }
+                return vec.cast<float>();
+            };
+            auto get_mat3f = [this](const std::string& name) -> Eigen::Matrix3f {
+                rclcpp::Parameter v_p = this->get_parameter(name);
+                std::vector<double> v = v_p.as_double_array();
                 if (v.size() != 9) {
                     throw std::runtime_error(name + " must have size 9");
                 }
-                return Eigen::Map<const Eigen::Matrix3d>(v.data()).cast<float>();
+                Eigen::Matrix3d M;
+                M << v[0], v[1], v[2],
+                    v[3], v[4], v[5],
+                    v[6], v[7], v[8];
+
+                if (!M.allFinite()) {
+                    throw std::runtime_error(name + " contains NaN/Inf");
+                }
+                return M.cast<float>();
             };
 
-            auto imu_t = get_vec3f("extrinsics.imu.t");
-            auto imu_R = get_mat3f("extrinsics.imu.R");
+            Eigen::Vector3f imu_t = get_vec3f("extrinsics.imu.t");
+            Eigen::Matrix3f imu_R = get_mat3f("extrinsics.imu.R");
 
             config->imu_extr.translate(imu_t);
-            config->imu_extr.rotate(imu_R);
+            config->imu_extr.rotate(imu_R.transpose());
 
-            auto lidar_t = get_vec3f("extrinsics.lidar.t");
-            auto lidar_R = get_mat3f("extrinsics.lidar.R");
+            Eigen::Vector3f lidar_t = get_vec3f("extrinsics.lidar.t");
+            Eigen::Matrix3f lidar_R = get_mat3f("extrinsics.lidar.R");
 
             config->lidar_extr.translate(lidar_t);
-            config->lidar_extr.rotate(lidar_R);
+            config->lidar_extr.rotate(lidar_R.transpose());
 
             // Intrinsics
             config->accel_bias = get_vec3f("intrinsics.accel.bias");
@@ -528,7 +544,8 @@ int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);
 
-    rclcpp::Node::SharedPtr lio_node = std::make_shared<LIOwrapper>();
+    auto lio_node = std::make_shared<LIOwrapper>();
+    lio_node->init();
 
     rclcpp::executors::MultiThreadedExecutor executor; // by default using all available cores
     executor.add_node(lio_node);

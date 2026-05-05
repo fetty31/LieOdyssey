@@ -17,14 +17,14 @@ void lio_ros::State::update(double t) {
 }   
 
 Eigen::Isometry3f lio_ros::State::get_transform() const {
-    Eigen::Isometry3f T;
+    Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
     T.translate(p);
     T.rotate(q);
     return T;
 }
 
 Eigen::Isometry3f lio_ros::State::get_inv_transform() const {
-    Eigen::Isometry3f T;
+    Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
     Eigen::Matrix3f R = q.toRotationMatrix();
     T.translate(-R.transpose()*p);
     T.rotate(R.transpose());

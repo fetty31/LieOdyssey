@@ -1,6 +1,6 @@
 # General config
 
-lio_ros:
+lio_ros_node:
   ros__parameters:
     topics:
       input:

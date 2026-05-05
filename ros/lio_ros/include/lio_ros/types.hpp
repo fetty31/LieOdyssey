@@ -78,10 +78,10 @@ struct Config {
     bool time_offset = false;        // whether to sync imu-lidar (not accurate approach)
 
     // IMU extrinsics (IMU -> body)
-    Eigen::Isometry3f imu_extr;
+    Eigen::Isometry3f imu_extr = Eigen::Isometry3f::Identity();
 
     // LiDAR extrinsics (LiDAR -> body)
-    Eigen::Isometry3f lidar_extr;
+    Eigen::Isometry3f lidar_extr = Eigen::Isometry3f::Identity();
 
     // IMU intrinsics
     Eigen::Vector3f accel_bias{0.f, 0.f, 0.f};

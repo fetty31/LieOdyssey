@@ -75,7 +75,7 @@ void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
         static Eigen::Vector3f accel_avg (0., 0., 0.);
         static bool print = true;
 
-        if ((imu.stamp - this->first_imu_stamp_) < config_.imu_calib_time) {
+        if ( (imu.stamp - this->first_imu_stamp_) < config_.imu_calib_time) {
 
             num_samples++;
 
@@ -103,16 +103,19 @@ void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
                 std::cout << " Accel mean: " << "[ " << accel_avg[0] << ", " << accel_avg[1] << ", " << accel_avg[2] << " ]\n";
 
                 // Estimate gravity vector - Only approximate if biases have not been pre-calibrated
-                Eigen::Vector3f grav_vec = (accel_avg - this->state_.bias.a).normalized() * fabs(9.81f);
-                Eigen::Quaternionf grav_q = Eigen::Quaternionf::FromTwoVectors(grav_vec, Eigen::Vector3f(0.f, 0.f, 9.81f));
-                
-                std::cout << " Gravity mean: " << "[ " << grav_vec[0] << ", " << grav_vec[1] << ", " << grav_vec[2] << " ]\n";
+                Eigen::Vector3f grav_vec = (accel_avg - this->state_.bias.a).normalized() * 9.81f;
+                if (grav_vec.norm() > 1e-6f) {
+                    Eigen::Quaternionf grav_q =
+                        Eigen::Quaternionf::FromTwoVectors(grav_vec, Eigen::Vector3f(0.f, 0.f, 9.81f));
 
-                // set gravity aligned orientation
-                this->state_.q = grav_q;
+                    std::cout << " Gravity mean: " << "[ " << grav_vec[0] << ", " << grav_vec[1] << ", " << grav_vec[2] << " ]\n";
+                    
+                    // set gravity aligned orientation
+                    this->state_.q = grav_q.normalized();
 
-                // set estimated gravity vector
-                this->state_.g = grav_vec;
+                    // set estimated gravity vector
+                    this->state_.g = grav_vec;
+                }
 
             }
 
@@ -134,8 +137,6 @@ void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
                                                     << to_string_with_precision(this->state_.bias.w[1], 8) << ", "
                                                     << to_string_with_precision(this->state_.bias.w[2], 8) << std::endl;
             }
-
-            this->state_.q.normalize();
 
             // Set calib flag
             this->calibrated_ = true;
@@ -415,6 +416,8 @@ void lio_ros::OdometryCore::initFilter() {
 
 void lio_ros::OdometryCore::initState() {
 
+    this->state_.q.normalize();
+
     iESEKF::Group group;
     iESEKF::state_to_group(this->state_, group);
 
@@ -425,19 +428,21 @@ void lio_ros::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
 {
     double dt = imu.stamp - this->last_imu_stamp_;
     
-    if ( (dt == 0.) || (dt > 0.1) ) { dt = 1.0/200.0; }
+    if ( (dt <= 0.) || (dt > 0.1) ) { dt = 1.0/200.0; }
+
+    const Eigen::Matrix3f R = config_.imu_extr.rotation();
+    const Eigen::Vector3f t = config_.imu_extr.translation();
 
     // Transform angular velocity (will be the same on a rigid body, so just rotate to baselink frame)
-    Eigen::Vector3f ang_vel_cg = config_.imu_extr.rotation() * imu.gyro.cast<float>();
+    Eigen::Vector3f ang_vel_cg = R * imu.gyro.cast<float>();
+
+    // Transform linear acceleration (need to account for component due to translational difference)
+    Eigen::Vector3f lin_accel_cg = R * imu.accel.cast<float>();
 
     static Eigen::Vector3f ang_vel_cg_prev = ang_vel_cg;
 
-    // Transform linear acceleration (need to account for component due to translational difference)
-    Eigen::Vector3f lin_accel_cg = config_.imu_extr.rotation() * imu.accel.cast<float>();
-
-    lin_accel_cg = lin_accel_cg
-                    + ((ang_vel_cg - ang_vel_cg_prev) / dt).cross(-config_.imu_extr.translation())
-                    + ang_vel_cg.cross(ang_vel_cg.cross(-config_.imu_extr.translation()));
+    lin_accel_cg += ((ang_vel_cg - ang_vel_cg_prev) / dt).cross(-t)
+                + ang_vel_cg.cross(ang_vel_cg.cross(-t));
 
     ang_vel_cg_prev = ang_vel_cg;
 

@@ -10,6 +10,7 @@ void lio_ros::iESEKF::group_to_state(const Group& g, lio_ros::State& state)
 	// position, orientation, velocity
 	state.p = X.subgroup<0>().translation().cast<float>();
 	state.q = X.subgroup<0>().quat().cast<float>();
+	state.q.normalize();
 	state.v = X.subgroup<0>().linearVelocity().cast<float>();
 
 	// biases
@@ -31,8 +32,11 @@ void lio_ros::iESEKF::state_to_group(const lio_ros::State& state, Group& g)
 	using SGal3 = manif::SGal3<iESEKF::Scalar>;
 	using R3    = manif::R3<iESEKF::Scalar>;
 
+	Eigen::Quaternion<Scalar> q = state.q.cast<Scalar>();
+	q.normalize();   // eigen cast does not guarantee normalized quat
+
 	auto X0 = NativeBundle(SGal3(state.p.cast<Scalar>(),                     // x y z                  0
-								state.q.cast<Scalar>(),                      // rotation               6
+								q,                     	 					 // rotation               6
 								state.v.cast<Scalar>(),                      // vx, vy, vz             3
 								0.),                                         // delta t                9
 							R3(state.bias.w.cast<Scalar>()), 				 // b_w                   10
@@ -101,7 +105,9 @@ typename Filter::Tangent lio_ros::iESEKF::f_state(const lio_ros::State& state)
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
 	auto grav = state.g.cast<Scalar>(); 				// gravity vector estimate
-	auto R = state.q.toRotationMatrix().cast<Scalar>();	// orientation estimate
+	Eigen::Quaternion<Scalar> q = state.q.cast<Scalar>();
+	q.normalize();
+	auto R = q.toRotationMatrix(); 						// orientation estimate
 	auto v0 = state.v.cast<Scalar>();				    // velocity estimate
 
 	// nu (linear acceleration contribution)
