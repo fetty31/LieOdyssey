@@ -1,7 +1,8 @@
 #include <signal.h>
+#include <random>
 
 // LiDAR Odometry Library
-#include "lio_ros/odometry_core.hpp"
+#include "gilda_lio/odometry_core.hpp"
 
 // ROS
 #include "rclcpp/rclcpp.hpp"
@@ -30,30 +31,27 @@
 
 class LIOwrapper : public rclcpp::Node
 {
-
-    // VARIABLES
-
-    public:
-        std::string world_frame;
-        std::string body_frame;
-
-        bool publish_tf;
-
     private:
+        std::string world_frame_;
+        std::string body_frame_;
+
+        bool publish_tf_;
+
             // subscribers
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr         imu_sub_;
 
             // main publishers
-        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub;
-        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr       state_pub;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr       state_pub_;
 
             // debug publishers
-        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr desk_pub;
-        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr match_pub;
-        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr finalraw_pub;
-        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr body_pub;
-        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr map_bb_pub;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr desk_pub_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr match_pub_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr finalraw_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr body_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr map_bb_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr gauss_pub_;
 
             // TF 
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -62,22 +60,21 @@ class LIOwrapper : public rclcpp::Node
 
     public:
 
-        LIOwrapper() : Node("lio_ros_node", 
+        LIOwrapper() : Node("gilda_lio_node", 
                             rclcpp::NodeOptions()
-                            .automatically_declare_parameters_from_overrides(true) ) 
-            { }
+                            .automatically_declare_parameters_from_overrides(true) ) { }
 
         void init()
         {
             // Declare the one and only Core object (singleton pattern)
-            lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
+            gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
 
             // Load config
-            lio_ros::Config config;
+            gilda_lio::Config config;
             this->loadConfig(&config);
 
             rclcpp::Parameter tf_pub = this->get_parameter("frames.tf_pub");
-            this->publish_tf = tf_pub.as_bool();
+            this->publish_tf_ = tf_pub.as_bool();
 
             // Define two callback groups (ensure parallel execution of lidar_callback & imu_callback)
             rclcpp::SubscriptionOptions lidar_opt, imu_opt;
@@ -91,13 +88,14 @@ class LIOwrapper : public rclcpp::Node
                             config.imu_topic, 1000, std::bind(&LIOwrapper::imu_callback, this, std::placeholders::_1), imu_opt);
             
             // Set up publishers
-            pc_pub      = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud", 1);
-            state_pub   = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/state", 1);
+            pc_pub_      = this->create_publisher<sensor_msgs::msg::PointCloud2>("/gilda_lio/pointcloud", 1);
+            state_pub_   = this->create_publisher<nav_msgs::msg::Odometry>("/gilda_lio/state", 1);
 
-            desk_pub     = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/deskewed", 1);
-            match_pub    = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/match", 1);
-            finalraw_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud_raw", 1);
-            body_pub     = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/body", 1);
+            desk_pub_     = this->create_publisher<sensor_msgs::msg::PointCloud2>("/gilda_lio/deskewed", 1);
+            match_pub_    = this->create_publisher<sensor_msgs::msg::PointCloud2>("/gilda_lio/match", 1);
+            finalraw_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/gilda_lio/pointcloud_raw", 1);
+            body_pub_     = this->create_publisher<nav_msgs::msg::Odometry>("/gilda_lio/body", 1);
+            gauss_pub_    = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/gaussian_map", 1);
 
             // Init TF broadcaster
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -114,11 +112,11 @@ class LIOwrapper : public rclcpp::Node
 
         void lidar_callback(const sensor_msgs::msg::PointCloud2 & msg) {
             
-            lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
+            gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
             static bool pc_in_good_shape = this->checkPointcloudStructure(msg, core.get_sensor_type());
 
             if(not pc_in_good_shape){
-                throw std::runtime_error("lio_ros::FATAL ERROR: invalid pointcloud structure\n\n");
+                throw std::runtime_error("gilda_lio::FATAL ERROR: invalid pointcloud structure\n\n");
             }
 
             pcl::PointCloud<LioPointType>::Ptr pc_ (std::make_shared<pcl::PointCloud<LioPointType>>());
@@ -129,38 +127,43 @@ class LIOwrapper : public rclcpp::Node
             auto tack = std::chrono::system_clock::now();
 
             std::chrono::duration<double> elapsed_time = tack-tick;
-            RCLCPP_INFO(get_logger(), "LIO_ROS:: took %f ms to process scan", elapsed_time.count()*1000.0);
+            RCLCPP_INFO(get_logger(), "GILDA_LIO:: took %f ms to update", elapsed_time.count()*1000.0);
 
             // Publish output pointcloud
             sensor_msgs::msg::PointCloud2 pc_ros;
             pcl::toROSMsg(*core.getWorldScan(), pc_ros);
             pc_ros.header.stamp = this->get_clock()->now();
-            pc_ros.header.frame_id = this->world_frame;
-            this->pc_pub->publish(pc_ros);
+            pc_ros.header.frame_id = this->world_frame_;
+            this->pc_pub_->publish(pc_ros);
 
             // Publish debugging pointclouds
             sensor_msgs::msg::PointCloud2 deskewed_msg;
             pcl::toROSMsg(*core.getDeskewedScan(), deskewed_msg);
             deskewed_msg.header.stamp = this->get_clock()->now();
-            deskewed_msg.header.frame_id = this->world_frame;
-            this->desk_pub->publish(deskewed_msg);
+            deskewed_msg.header.frame_id = this->world_frame_;
+            this->desk_pub_->publish(deskewed_msg);
 
             sensor_msgs::msg::PointCloud2 match_msg;
             pcl::toROSMsg(*core.getScanToMatch(), match_msg);
             match_msg.header.stamp = this->get_clock()->now();
-            match_msg.header.frame_id = this->body_frame;
-            this->match_pub->publish(match_msg);
+            match_msg.header.frame_id = this->body_frame_;
+            this->match_pub_->publish(match_msg);
 
             sensor_msgs::msg::PointCloud2 finalraw_msg;
             pcl::toROSMsg(*core.getRawWorldScan(), finalraw_msg);
             finalraw_msg.header.stamp = this->get_clock()->now();
-            finalraw_msg.header.frame_id = this->world_frame;
-            this->finalraw_pub->publish(finalraw_msg);
+            finalraw_msg.header.frame_id = this->world_frame_;
+            this->finalraw_pub_->publish(finalraw_msg);
+
+            // Visualize gaussian map
+            auto map = core.getMap();
+            if(map != nullptr)
+                gauss_pub_->publish(makeGaussianMarkers(*map, this->now()));
         }
 
         void imu_callback(const sensor_msgs::msg::Imu & msg) {
 
-            lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
+            gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
 
             lie_odyssey::IMUmeas imu;
             this->fromROStoLimo(msg, imu);
@@ -173,19 +176,19 @@ class LIOwrapper : public rclcpp::Node
             this->fromLimoToROS(core.getState(),      core.getPoseCovariance(), core.getTwistCovariance(), state_msg);
             this->fromLimoToROS(core.getLiDARState(), core.getPoseCovariance(), core.getTwistCovariance(), body_msg);
 
-            this->state_pub->publish(state_msg);
-            this->body_pub->publish(body_msg);
+            this->state_pub_->publish(state_msg);
+            this->body_pub_->publish(body_msg);
 
             // TF broadcasting
-            if(this->publish_tf)
-                this->broadcastTF(core.getState(), world_frame, body_frame, true);
+            if(this->publish_tf_)
+                this->broadcastTF(core.getState(), world_frame_, body_frame_, true);
         }
 
     /* ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
         ///////////////////////////////////////             Load params          ///////////////////////////////////////////////////////////// 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
 
-        void loadConfig(lio_ros::Config* config){
+        void loadConfig(gilda_lio::Config* config){
 
             // Topics
             rclcpp::Parameter lidar_topic_p = this->get_parameter("topics.input.lidar");
@@ -198,8 +201,8 @@ class LIOwrapper : public rclcpp::Node
             rclcpp::Parameter body_p = this->get_parameter("frames.body");
             config->world_frame = world_p.as_string();
             config->body_frame  = body_p.as_string();
-            this->world_frame = config->world_frame;
-            this->body_frame  = config->body_frame;
+            this->world_frame_ = config->world_frame;
+            this->body_frame_  = config->body_frame;
 
             // General
             rclcpp::Parameter n_thread_p = this->get_parameter("num_threads");
@@ -207,13 +210,13 @@ class LIOwrapper : public rclcpp::Node
 
             auto sensor_str = this->get_parameter("sensor_type").as_string();
             if ( (sensor_str == "ouster") || (sensor_str == "OUSTER") ) {
-                config->sensor_type = lio_ros::SensorType::OUSTER;
+                config->sensor_type = gilda_lio::SensorType::OUSTER;
             } else if ( (sensor_str == "velodyne") || (sensor_str == "VELODYNE") ) {
-                config->sensor_type = lio_ros::SensorType::VELODYNE;
+                config->sensor_type = gilda_lio::SensorType::VELODYNE;
             } else if ( (sensor_str == "hesai") || (sensor_str == "HESAI") ) {
-                config->sensor_type = lio_ros::SensorType::HESAI;
+                config->sensor_type = gilda_lio::SensorType::HESAI;
             } else if ( (sensor_str == "livox") || (sensor_str == "LIVOX") ) {
-                config->sensor_type = lio_ros::SensorType::LIVOX;
+                config->sensor_type = gilda_lio::SensorType::LIVOX;
             } else {
                 throw std::runtime_error("Invalid sensor_type: " + sensor_str);
             }
@@ -328,11 +331,21 @@ class LIOwrapper : public rclcpp::Node
             rclcpp::Parameter plane_thr_p = this->get_parameter("iESEKF.Mapping.PLANES_THRESHOLD");
             config->plane_threshold = plane_thr_p.as_double();
 
-            // iOcTree 
-            rclcpp::Parameter bucket_size = this->get_parameter("iESEKF.Mapping.Octree.bucket_size");
-            config->octree_bucket_size = bucket_size.as_int();
-            rclcpp::Parameter min_extent = this->get_parameter("iESEKF.Mapping.Octree.min_extent");
-            config->octree_extent = static_cast<float>(min_extent.as_double());
+            // Gaussian IVox 
+            rclcpp::Parameter buffer_p = this->get_parameter("iESEKF.Mapping.GaussIVox.buffer_size");
+            config->max_buffer_size = buffer_p.as_int();
+            rclcpp::Parameter upd_p = this->get_parameter("iESEKF.Mapping.GaussIVox.update_size");
+            config->update_threshold = upd_p.as_int();
+            rclcpp::Parameter res_p = this->get_parameter("iESEKF.Mapping.GaussIVox.resolution");
+            config->resolution = res_p.as_double();
+            rclcpp::Parameter chi_p = this->get_parameter("iESEKF.Mapping.GaussIVox.chi_square");
+            config->chi_square_threshold = chi_p.as_double();
+            rclcpp::Parameter noise_p = this->get_parameter("iESEKF.Mapping.GaussIVox.noise_floor");
+            config->noise_floor = noise_p.as_double();
+            rclcpp::Parameter angular_p = this->get_parameter("iESEKF.Mapping.GaussIVox.lidar_angle_noise");
+            config->lidar_angle_noise = angular_p.as_double();
+            rclcpp::Parameter range_p = this->get_parameter("iESEKF.Mapping.GaussIVox.lidar_range_noise");
+            config->lidar_range_noise = range_p.as_double();
 
             // Covariance
             rclcpp::Parameter gyro_p = this->get_parameter("iESEKF.covariance.gyro");
@@ -362,9 +375,9 @@ class LIOwrapper : public rclcpp::Node
             out.accel(2) = in.linear_acceleration.z;
         }
 
-        void fromLimoToROS(const lio_ros::State& in, nav_msgs::msg::Odometry& out){
+        void fromLimoToROS(const gilda_lio::State& in, nav_msgs::msg::Odometry& out){
             out.header.stamp = this->get_clock()->now();
-            out.header.frame_id = "map";
+            out.header.frame_id = this->world_frame_;
 
             // Pose/Attitude
             Eigen::Vector3d pos = in.p.cast<double>();
@@ -390,7 +403,7 @@ class LIOwrapper : public rclcpp::Node
             out.twist.twist.angular.z = ang_v(2);
         }
 
-        void fromLimoToROS(const lio_ros::State& in, const std::vector<double>& cov_pose,
+        void fromLimoToROS(const gilda_lio::State& in, const std::vector<double>& cov_pose,
                             const std::vector<double>& cov_twist, nav_msgs::msg::Odometry& out){
 
             this->fromLimoToROS(in, out);
@@ -402,7 +415,7 @@ class LIOwrapper : public rclcpp::Node
             }
         }
 
-        void broadcastTF(const lio_ros::State& in, std::string parent_name, std::string child_name, bool now){
+        void broadcastTF(const gilda_lio::State& in, std::string parent_name, std::string child_name, bool now){
 
             geometry_msgs::msg::TransformStamped tf_msg;
             tf_msg.header.stamp    = (now) ? this->get_clock()->now() : rclcpp::Time(in.time);
@@ -430,18 +443,18 @@ class LIOwrapper : public rclcpp::Node
             tf_broadcaster_->sendTransform(tf_msg);
         }
 
-        bool checkPointcloudStructure(const sensor_msgs::msg::PointCloud2 & msg, lio_ros::SensorType sensor){
+        bool checkPointcloudStructure(const sensor_msgs::msg::PointCloud2 & msg, gilda_lio::SensorType sensor){
 
             using sensor_msgs::msg::PointField;
 
-            if (sensor == lio_ros::SensorType::OUSTER) {
+            if (sensor == gilda_lio::SensorType::OUSTER) {
                 for(size_t i=0; i < msg.fields.size(); i++){
                     if( (msg.fields[i].name == "t") && (msg.fields[i].datatype == PointField::UINT32) )
                         return true;
                 }
         
                 RCLCPP_ERROR_STREAM(this->get_logger(), "\n-------------------------------------------------------------------\n" 
-                                    << "lio_ros::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
+                                    << "gilda_lio::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
                                     << "          Remember that for OUSTER alike pointclouds, the expected fields are:\n"
                                     << "                  x: FLOAT32 (x coordinate in meters)\n"
                                     << "                  y: FLOAT32 (y coordinate in meters)\n"
@@ -450,14 +463,14 @@ class LIOwrapper : public rclcpp::Node
                                     << "-------------------------------------------------------------------\n"
                                     );
         
-            } else if (sensor == lio_ros::SensorType::VELODYNE) {
+            } else if (sensor == gilda_lio::SensorType::VELODYNE) {
                 for(size_t i=0; i < msg.fields.size(); i++){
                     if( (msg.fields[i].name == "time") && (msg.fields[i].datatype == PointField::FLOAT32)  )
                         return true;
                 }
 
                 RCLCPP_ERROR_STREAM(this->get_logger(), "\n-------------------------------------------------------------------\n" 
-                                    << "lio_ros::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
+                                    << "gilda_lio::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
                                     << "          Remember that for VELODYNE alike pointclouds, the expected fields are:\n"
                                     << "                  x: FLOAT32 (x coordinate in meters)\n"
                                     << "                  y: FLOAT32 (y coordinate in meters)\n"
@@ -466,14 +479,14 @@ class LIOwrapper : public rclcpp::Node
                                     << "-------------------------------------------------------------------\n"
                                     );
         
-            } else if ( (sensor == lio_ros::SensorType::HESAI) || (sensor == lio_ros::SensorType::LIVOX) ) {
+            } else if ( (sensor == gilda_lio::SensorType::HESAI) || (sensor == gilda_lio::SensorType::LIVOX) ) {
                 for(size_t i=0; i < msg.fields.size(); i++){
                     if( (msg.fields[i].name == "timestamp") && (msg.fields[i].datatype == PointField::FLOAT64) )
                         return true;
                 }
 
                 RCLCPP_ERROR_STREAM(this->get_logger(), "\n-------------------------------------------------------------------\n" 
-                                    << "lio_ros::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
+                                    << "gilda_lio::FATAL ERROR: the received pointcloud MUST have a timestamp field available!\n"
                                     << "          Remember that for HESAI/LIVOX alike pointclouds, the expected fields are:\n"
                                     << "                  x: FLOAT32 (x coordinate in meters)\n"
                                     << "                  y: FLOAT32 (y coordinate in meters)\n"
@@ -484,7 +497,7 @@ class LIOwrapper : public rclcpp::Node
         
             } else {
                 RCLCPP_ERROR_STREAM(this->get_logger(), "\n-------------------------------------------------------------------\n" 
-                                    << "lio_ros::FATAL ERROR: LiDAR sensor type unknown or not specified!\n"
+                                    << "gilda_lio::FATAL ERROR: LiDAR sensor type unknown or not specified!\n"
                                     << "-------------------------------------------------------------------\n"
                                     );
             }
@@ -492,47 +505,205 @@ class LIOwrapper : public rclcpp::Node
             return false;
         }
 
-        visualization_msgs::msg::MarkerArray getMatchesMarker(std::vector<lio_ros::Match>& matches, std::string frame_id){
-            visualization_msgs::msg::MarkerArray m_array;
+        visualization_msgs::msg::MarkerArray makeGaussianMarkers(
+            const gauss_mapping::GaussianIVox& ivox,
+            const rclcpp::Time& stamp)
+        {
+            visualization_msgs::msg::MarkerArray arr;
+            std::shared_lock lock(ivox.map_mtx_); // safe map access
+
+            std::mt19937 gen(12345); // fixed seed for consistent cluster colors
+            std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+            std::unordered_map<gauss_mapping::UnionFindNode*, std::tuple<float,float,float>> parent_colors;
+            std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
+
+            // Build clusters based on Union-Find parents and assign colors
+            for (const auto& [key, node] : ivox.map_) {
+                auto root = node->find();
+                clusters[root].push_back(key);
+                if (parent_colors.find(root) == parent_colors.end()) {
+                    parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
+                }
+            }
+
+            auto resolution = ivox.getVoxelResolution();
+
+            // Visualize each voxel Gaussian primitive
+            int id = 0;
+            for (auto& [root, voxels] : clusters) {
+
+                auto& gaus = root->gauss_ptr;
+                if (!gaus) continue; // safety check, should always have a Gaussian
+
+                for (const auto& key : voxels) {
+
+                    gauss_mapping::Point voxel_center;
+                    voxel_center[0] = (key.x() + 0.5) * resolution;
+                    voxel_center[1] = (key.y() + 0.5) * resolution;
+                    voxel_center[2] = (key.z() + 0.5) * resolution;
+
+                    visualization_msgs::msg::Marker m;
+
+                    switch (gaus->type) {
+                        case gauss_mapping::PrimitiveType::PLANE:
+                            m = makePlaneMarker(*gaus, voxel_center, resolution, id++, stamp, parent_colors[root]);
+                            arr.markers.push_back(m);
+                            break;
+
+                        case gauss_mapping::PrimitiveType::VOLUME:
+                            m = makeVolumeMarker(*gaus, id++, stamp, parent_colors[root]);
+                            arr.markers.push_back(m);
+                            break;
+
+                        default:
+                            break;
+                    }
+
+                }
+
+            }
+            
+            return arr;
+        }
+
+        visualization_msgs::msg::Marker makePlaneMarker(
+            const gauss_mapping::GaussianPrimitive& g,
+            const gauss_mapping::Point& voxel_center,
+            const double resolution,
+            int id,
+            const rclcpp::Time& stamp,
+            std::tuple<float,float,float>& color) const
+        {
+
+            using Point = gauss_mapping::Point;
+
             visualization_msgs::msg::Marker m;
 
-            m_array.markers.reserve(matches.size()+1);
+            const double plane_size = resolution;
+            const double thickness = 0.002;
 
-            m.header.frame_id = frame_id;
-            m.header.stamp = this->get_clock()->now();
-            m.ns = "lio_ros_match";
-            
-            m.id = -1;
-            m.action = visualization_msgs::msg::Marker::DELETEALL;
-            m_array.markers.push_back(m);
+            // Compute plane center and normal
+            Point normal = g.buildNormalVector();
+            double norm2 = normal.squaredNorm();
+            Point p0 = voxel_center; 
 
+            Point p_plane = p0 - normal * (normal.dot(p0) + g.param[2]) / norm2;
+
+            normal.normalize();
+            if (normal.norm() < 1e-6) normal = Eigen::Vector3d::UnitZ();
+
+            Eigen::Vector3d z_axis = normal;
+
+            // Pick a WORLD axis that is least aligned with the normal
+            Eigen::Vector3d ref_axis;
+            if (std::abs(z_axis.x()) <= std::abs(z_axis.y()) &&
+                std::abs(z_axis.x()) <= std::abs(z_axis.z())) {
+                ref_axis = Eigen::Vector3d::UnitX();
+            }
+            else if (std::abs(z_axis.y()) <= std::abs(z_axis.z())) {
+                ref_axis = Eigen::Vector3d::UnitY();
+            }
+            else {
+                ref_axis = Eigen::Vector3d::UnitZ();
+            }
+
+            // Build orthonormal basis
+            Eigen::Vector3d x_axis = ref_axis.cross(z_axis).normalized();
+            Eigen::Vector3d y_axis = z_axis.cross(x_axis).normalized();
+
+            Eigen::Matrix3d R;
+            R.col(0) = x_axis;
+            R.col(1) = y_axis;
+            R.col(2) = normal;
+
+            Eigen::Quaterniond q(R);
+
+            m.header.frame_id = world_frame_;
+            m.header.stamp = stamp;
+            m.ns = "gilda_planes";
+            m.id = id;
+            m.type = visualization_msgs::msg::Marker::CUBE;
+            m.action = visualization_msgs::msg::Marker::ADD;
+
+            m.pose.position.x = p_plane.x();
+            m.pose.position.y = p_plane.y();
+            m.pose.position.z = p_plane.z();
+
+            m.pose.orientation.x = q.x();
+            m.pose.orientation.y = q.y();
+            m.pose.orientation.z = q.z();
+            m.pose.orientation.w = q.w();
+
+            m.scale.x = plane_size; 
+            m.scale.y = plane_size;
+            m.scale.z = thickness;
+            // m.scale.x = plane_size * sqrt(g.cov(0,0)); // spread along x-axis
+            // m.scale.y = plane_size * sqrt(g.cov(1,1)); // spread along y-axis
+            // m.scale.z = sqrt(g.cov(2,2)); // spread along z-axis
+
+            m.color.r = std::get<0>(color);
+            m.color.g = std::get<1>(color);
+            m.color.b = std::get<2>(color);
+            m.color.a = 0.8f;
+
+            m.lifetime = rclcpp::Duration(0, 0);
+
+            return m;
+        }
+
+        visualization_msgs::msg::Marker makeVolumeMarker(
+            const gauss_mapping::GaussianPrimitive& g,
+            int id,
+            const rclcpp::Time& stamp,
+            std::tuple<float,float,float>& color
+            ) const
+        {
+            visualization_msgs::msg::Marker m;
+
+            const double k_sigma = 1.0;
+
+            Eigen::SelfAdjointEigenSolver<gauss_mapping::Mat3> es(g.cov);
+            if (es.info() != Eigen::Success) return m;
+
+            Eigen::Vector3d evals = es.eigenvalues();
+            Eigen::Matrix3d evecs = es.eigenvectors();
+
+            constexpr double EPS = 1e-12;
+            evals = evals.cwiseMax(EPS);
+
+            if (evecs.determinant() < 0.0)
+                evecs.col(0) *= -1.0;
+
+            Eigen::Quaterniond q(evecs);
+
+            m.header.frame_id = world_frame_;
+            m.header.stamp = stamp;
+            m.ns = "gilda_volumes";
+            m.id = id;
             m.type = visualization_msgs::msg::Marker::SPHERE;
             m.action = visualization_msgs::msg::Marker::ADD;
 
-            m.color.r = 0.0f;
-            m.color.g = 0.0f;
-            m.color.b = 1.0f;
-            m.color.a = 1.0f;
+            m.pose.position.x = g.mean.x();
+            m.pose.position.y = g.mean.y();
+            m.pose.position.z = g.mean.z();
 
-            m.lifetime = rclcpp::Duration::from_seconds(0.0);
+            m.pose.orientation.x = q.x();
+            m.pose.orientation.y = q.y();
+            m.pose.orientation.z = q.z();
+            m.pose.orientation.w = q.w();
 
-            m.pose.orientation.w = 1.0;
+            m.scale.x = 2.0 * k_sigma * std::sqrt(evals(0));
+            m.scale.y = 2.0 * k_sigma * std::sqrt(evals(1));
+            m.scale.z = 2.0 * k_sigma * std::sqrt(evals(2));
 
-            m.scale.x = 0.2;
-            m.scale.y = 0.2;
-            m.scale.z = 0.2;
+            m.color.r = std::get<0>(color);
+            m.color.g = std::get<1>(color);
+            m.color.b = std::get<2>(color);
+            m.color.a = 0.8f;
 
-            for(std::size_t i=0; i < matches.size(); i++){
-                m.id = i;
-                Eigen::Vector3f match_p = matches[i].point;
-                m.pose.position.x = match_p(0);
-                m.pose.position.y = match_p(1);
-                m.pose.position.z = match_p(2);
+            m.lifetime = rclcpp::Duration(0, 0);
 
-                m_array.markers.push_back(m);
-            }
-
-            return m_array;
+            return m;
         }
 
 };

@@ -23,9 +23,9 @@ lio_ros_node:
     motion_compensation: true   # whether to perform motion compensation (deskewing)
 
     calibration:  # automatic IMU calibration (if all set to false, no calibration will be done)
-      gravity_align: false     # estimate gravity vector
-      accel: false             # estimate lin. accel. bias
-      gyro: false              # estimate ang. vel. bias
+      gravity_align: true     # estimate gravity vector
+      accel: true             # estimate lin. accel. bias
+      gyro: true              # estimate ang. vel. bias
       time: 3.0               # [s] time to estimate (during this time, the robot must be at stand still)
 
     extrinsics: # w.r.t baselink [SI]

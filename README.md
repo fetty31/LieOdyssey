@@ -32,10 +32,10 @@ make install
 ```
 > By default both _Lie++_ and _Manif_ will be the retrieved and installed when building _LieOdyssey_. If you would want to install only one of them, the explicit build flags `-DUSE_{MANIF/LIEPLUSPLUS}=ON/OFF` are available.
 
-If you want to use `LieOdyssey` within ROS, ensure you have cloned the repo inside a ROS workspace and build via default:
-```sh
-colcon build --symlink-install
-```
+The project includes multiple __ROS packages__ that use the `lie_odyssey_cpp` library as a core backend for LiDAR–Inertial SLAM and odometry:
+    
+- [__`lio_ros`__]()  
+- [__`gilda_lio`__]()  
 
 ---
 
@@ -60,26 +60,26 @@ High-rate IMU data are summarized into compact preintegrated measurements, signi
 
 ##### 🎯 Accurate Uncertainty Propagation
 Covariances and Jacobians are propagated alongside the motion increments ("deltas"), ensuring **statistically correct weighting** of IMU constraints in the estimation process.
-ensuring **statistically consistent weighting** of IMU constraints during estimation.
 
 ---
 
 ### Lie-Theoretic Foundations
 
-Classical filters like the EKF assume additive state updates in Euclidean space:
+Classical filters like the Extended Kalman Filter (EKF) assume **additive updates in Euclidean space**:
 ```math
 x_{k+1} = f(x_k, u_k) + w_k
 ```
 
-For systems evolving on Lie groups (e.g., rotations, poses), we instead use **group operations**:
+However, many robotic states (e.g., rotations in SO(3) or poses in SE(3)) lie on **Lie groups**, which are nonlinear manifolds. In this setting, addition is not globally well-defined.
+
+Instead of additive noise, uncertainty is modeled in the **Lie algebra** (the tangent space), and mapped to the group via the exponential map:
 ```math
-X_{k+1} = f(X_k, u_k)\exp(w_k)
+X_{k+1} = f(X_k, u_k)\,\exp(w_k)
 ```
 
-with state perturbations as
-
+The state is expressed as a (here right) perturbation around an estimate:
 ```math
-X = \hat{X}\exp(\delta)
+X = \hat{X}\,\exp(\delta)
 ```
 
 This formulation naturally handles **nonlinear manifold structure**, improving numerical stability and global consistency.

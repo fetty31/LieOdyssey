@@ -1,6 +1,6 @@
 # KITTI dataset config
 
-lio_ros_node:
+gilda_lio_node:
   ros__parameters:
     topics:
       input:
@@ -79,9 +79,14 @@ lio_ros_node:
         NUM_MATCH_POINTS: 5           # num of points that constitute a match
         MAX_DIST_PLANE: 2.0           # [m] max distance between points of every match
         PLANES_THRESHOLD: 5.0e-2      # [m] threshold to consider if match points are part of a plane 
-        Octree: # incremental OcTree
-          bucket_size: 2      # maximum number of points allowed in an octant before it gets subdivided
-          min_extent: 0.2     # minimum extent of the octant (used to stop subdividing)
+        GaussIVox: # voxelmap
+          update_size: 1              # number of accumulated points to re-compute gaussian 
+          buffer_size: 50             # max number of points before merging gaussians (number of points which make covariance converge)
+          resolution: 1.5             # voxel resolution [m]
+          chi_square: 7.815           # chi-square threshold for mahalanobis distance (used for merging strategy)
+          noise_floor: 1.e-6          # regularization noise term, represents the minimum covariance (highest confidence on a gaussian)
+          lidar_angle_noise: 1.e-4    # LiDAR angular error/std [rad]
+          lidar_range_noise: 1.e-5    # LiDAR range error/std [m]
 
       covariance:
         gyro: 6.01e-4
