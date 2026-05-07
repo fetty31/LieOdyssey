@@ -1,8 +1,9 @@
 #include <signal.h>
-#include <random>
 
 // LiDAR Odometry Library
 #include "gilda_lio/odometry_core.hpp"
+
+#include "ros_visuals.hpp"
 
 // ROS
 #include "rclcpp/rclcpp.hpp"
@@ -36,6 +37,7 @@ class LIOwrapper : public rclcpp::Node
         std::string body_frame_;
 
         bool publish_tf_;
+        bool debug_;
 
             // subscribers
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
@@ -52,6 +54,8 @@ class LIOwrapper : public rclcpp::Node
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr body_pub_;
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr map_bb_pub_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr gauss_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr voxel_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr uncert_pub_;
 
             // TF 
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -96,6 +100,8 @@ class LIOwrapper : public rclcpp::Node
             finalraw_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/gilda_lio/pointcloud_raw", 1);
             body_pub_     = this->create_publisher<nav_msgs::msg::Odometry>("/gilda_lio/body", 1);
             gauss_pub_    = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/gaussian_map", 1);
+            voxel_pub_    = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/voxel_map", 1);
+            uncert_pub_   = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/uncertainty_map", 1);
 
             // Init TF broadcaster
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -157,8 +163,12 @@ class LIOwrapper : public rclcpp::Node
 
             // Visualize gaussian map
             auto map = core.getMap();
-            if(map != nullptr)
-                gauss_pub_->publish(makeGaussianMarkers(*map, this->now()));
+            if( (map != nullptr) && debug_ ){
+                gauss_pub_->publish(ros_visuals::makeGaussianMarkers(*map, this->now(), this->world_frame_));
+                voxel_pub_->publish(ros_visuals::makeVoxelMarkers(*map, this->now(), this->world_frame_));
+                uncert_pub_->publish(ros_visuals::makeUncertaintyMarkers(*map, this->now(), this->world_frame_));
+
+            }
         }
 
         void imu_callback(const sensor_msgs::msg::Imu & msg) {
@@ -223,6 +233,7 @@ class LIOwrapper : public rclcpp::Node
 
             rclcpp::Parameter debug_p = this->get_parameter("debug");
             config->debug = debug_p.as_bool();
+            this->debug_ = config->debug;
             rclcpp::Parameter offset_p = this->get_parameter("time_offset");
             config->time_offset = offset_p.as_bool();
             rclcpp::Parameter eos_p = this->get_parameter("end_of_sweep");
@@ -503,207 +514,6 @@ class LIOwrapper : public rclcpp::Node
             }
             
             return false;
-        }
-
-        visualization_msgs::msg::MarkerArray makeGaussianMarkers(
-            const gauss_mapping::GaussianIVox& ivox,
-            const rclcpp::Time& stamp)
-        {
-            visualization_msgs::msg::MarkerArray arr;
-            std::shared_lock lock(ivox.map_mtx_); // safe map access
-
-            std::mt19937 gen(12345); // fixed seed for consistent cluster colors
-            std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-            std::unordered_map<gauss_mapping::UnionFindNode*, std::tuple<float,float,float>> parent_colors;
-            std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
-
-            // Build clusters based on Union-Find parents and assign colors
-            for (const auto& [key, node] : ivox.map_) {
-                auto root = node->find();
-                clusters[root].push_back(key);
-                if (parent_colors.find(root) == parent_colors.end()) {
-                    parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
-                }
-            }
-
-            auto resolution = ivox.getVoxelResolution();
-
-            // Visualize each voxel Gaussian primitive
-            int id = 0;
-            for (auto& [root, voxels] : clusters) {
-
-                auto& gaus = root->gauss_ptr;
-                if (!gaus) continue; // safety check, should always have a Gaussian
-
-                for (const auto& key : voxels) {
-
-                    gauss_mapping::Point voxel_center;
-                    voxel_center[0] = (key.x() + 0.5) * resolution;
-                    voxel_center[1] = (key.y() + 0.5) * resolution;
-                    voxel_center[2] = (key.z() + 0.5) * resolution;
-
-                    visualization_msgs::msg::Marker m;
-
-                    switch (gaus->type) {
-                        case gauss_mapping::PrimitiveType::PLANE:
-                            m = makePlaneMarker(*gaus, voxel_center, resolution, id++, stamp, parent_colors[root]);
-                            arr.markers.push_back(m);
-                            break;
-
-                        case gauss_mapping::PrimitiveType::VOLUME:
-                            m = makeVolumeMarker(*gaus, id++, stamp, parent_colors[root]);
-                            arr.markers.push_back(m);
-                            break;
-
-                        default:
-                            break;
-                    }
-
-                }
-
-            }
-            
-            return arr;
-        }
-
-        visualization_msgs::msg::Marker makePlaneMarker(
-            const gauss_mapping::GaussianPrimitive& g,
-            const gauss_mapping::Point& voxel_center,
-            const double resolution,
-            int id,
-            const rclcpp::Time& stamp,
-            std::tuple<float,float,float>& color) const
-        {
-
-            using Point = gauss_mapping::Point;
-
-            visualization_msgs::msg::Marker m;
-
-            const double plane_size = resolution;
-            const double thickness = 0.002;
-
-            // Compute plane center and normal
-            Point normal = g.buildNormalVector();
-            double norm2 = normal.squaredNorm();
-            Point p0 = voxel_center; 
-
-            Point p_plane = p0 - normal * (normal.dot(p0) + g.param[2]) / norm2;
-
-            normal.normalize();
-            if (normal.norm() < 1e-6) normal = Eigen::Vector3d::UnitZ();
-
-            Eigen::Vector3d z_axis = normal;
-
-            // Pick a WORLD axis that is least aligned with the normal
-            Eigen::Vector3d ref_axis;
-            if (std::abs(z_axis.x()) <= std::abs(z_axis.y()) &&
-                std::abs(z_axis.x()) <= std::abs(z_axis.z())) {
-                ref_axis = Eigen::Vector3d::UnitX();
-            }
-            else if (std::abs(z_axis.y()) <= std::abs(z_axis.z())) {
-                ref_axis = Eigen::Vector3d::UnitY();
-            }
-            else {
-                ref_axis = Eigen::Vector3d::UnitZ();
-            }
-
-            // Build orthonormal basis
-            Eigen::Vector3d x_axis = ref_axis.cross(z_axis).normalized();
-            Eigen::Vector3d y_axis = z_axis.cross(x_axis).normalized();
-
-            Eigen::Matrix3d R;
-            R.col(0) = x_axis;
-            R.col(1) = y_axis;
-            R.col(2) = normal;
-
-            Eigen::Quaterniond q(R);
-
-            m.header.frame_id = world_frame_;
-            m.header.stamp = stamp;
-            m.ns = "gilda_planes";
-            m.id = id;
-            m.type = visualization_msgs::msg::Marker::CUBE;
-            m.action = visualization_msgs::msg::Marker::ADD;
-
-            m.pose.position.x = p_plane.x();
-            m.pose.position.y = p_plane.y();
-            m.pose.position.z = p_plane.z();
-
-            m.pose.orientation.x = q.x();
-            m.pose.orientation.y = q.y();
-            m.pose.orientation.z = q.z();
-            m.pose.orientation.w = q.w();
-
-            m.scale.x = plane_size; 
-            m.scale.y = plane_size;
-            m.scale.z = thickness;
-            // m.scale.x = plane_size * sqrt(g.cov(0,0)); // spread along x-axis
-            // m.scale.y = plane_size * sqrt(g.cov(1,1)); // spread along y-axis
-            // m.scale.z = sqrt(g.cov(2,2)); // spread along z-axis
-
-            m.color.r = std::get<0>(color);
-            m.color.g = std::get<1>(color);
-            m.color.b = std::get<2>(color);
-            m.color.a = 0.8f;
-
-            m.lifetime = rclcpp::Duration(0, 0);
-
-            return m;
-        }
-
-        visualization_msgs::msg::Marker makeVolumeMarker(
-            const gauss_mapping::GaussianPrimitive& g,
-            int id,
-            const rclcpp::Time& stamp,
-            std::tuple<float,float,float>& color
-            ) const
-        {
-            visualization_msgs::msg::Marker m;
-
-            const double k_sigma = 1.0;
-
-            Eigen::SelfAdjointEigenSolver<gauss_mapping::Mat3> es(g.cov);
-            if (es.info() != Eigen::Success) return m;
-
-            Eigen::Vector3d evals = es.eigenvalues();
-            Eigen::Matrix3d evecs = es.eigenvectors();
-
-            constexpr double EPS = 1e-12;
-            evals = evals.cwiseMax(EPS);
-
-            if (evecs.determinant() < 0.0)
-                evecs.col(0) *= -1.0;
-
-            Eigen::Quaterniond q(evecs);
-
-            m.header.frame_id = world_frame_;
-            m.header.stamp = stamp;
-            m.ns = "gilda_volumes";
-            m.id = id;
-            m.type = visualization_msgs::msg::Marker::SPHERE;
-            m.action = visualization_msgs::msg::Marker::ADD;
-
-            m.pose.position.x = g.mean.x();
-            m.pose.position.y = g.mean.y();
-            m.pose.position.z = g.mean.z();
-
-            m.pose.orientation.x = q.x();
-            m.pose.orientation.y = q.y();
-            m.pose.orientation.z = q.z();
-            m.pose.orientation.w = q.w();
-
-            m.scale.x = 2.0 * k_sigma * std::sqrt(evals(0));
-            m.scale.y = 2.0 * k_sigma * std::sqrt(evals(1));
-            m.scale.z = 2.0 * k_sigma * std::sqrt(evals(2));
-
-            m.color.r = std::get<0>(color);
-            m.color.g = std::get<1>(color);
-            m.color.b = std::get<2>(color);
-            m.color.a = 0.8f;
-
-            m.lifetime = rclcpp::Duration(0, 0);
-
-            return m;
         }
 
 };

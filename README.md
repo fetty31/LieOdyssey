@@ -34,8 +34,8 @@ make install
 
 The project includes multiple __ROS packages__ that use the `lie_odyssey_cpp` library as a core backend for LiDAR–Inertial SLAM and odometry:
     
-- [__`lio_ros`__]()  
-- [__`gilda_lio`__]()  
+- [__`lio_ros`__](ros/lio_ros/README.md): A minimalist LiDAR-Inertial Odometry (LIO) implementation for ROS 2 
+- [__`gilda_lio`__](ros/gilda_lio/README.md): A LiDAR-Inertial Odometry (LIO) system with an Adaptive Gaussian Voxelmap (same idea as [Voxelmap++](https://github.com/uestc-icsp/VoxelMapPlus_Public))
 
 ---
 

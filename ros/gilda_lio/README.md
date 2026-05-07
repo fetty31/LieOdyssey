@@ -2,6 +2,13 @@
 
 A high-performance Gaussian-based LiDAR-Inertial Odometry (LIO) system featuring real-time Gaussian likelihood estimation and adaptive mapping. GILDA leverages Gaussian voxel representation for efficient and accurate 3D mapping with LiDAR-Inertial fusion using the Iterative Error-State Extended Kalman Filter (iESEKF) from `LieOdyssey`.
 
+<div align="center">
+  <img src="doc/kitti_map.png" alt="KITTI 0027 map"  width="600"/>
+  <small>
+  <p> KITTI 0027 Voxel Map </p>
+  </small>
+</div>
+
 ## Features
 
 - **Gaussian Likelihood Estimation**: Real-time Gaussian-based point-to-plane residual computation
@@ -261,3 +268,6 @@ See LICENSE file in the parent LieOdyssey repository.
 
 - **Author**: fetty
 - **Email**: fetty3113@gmail.com
+
+## References
+- [Voxelmap++](https://github.com/uestc-icsp/VoxelMapPlus_Public): Mergeable Voxel Mapping Method for Online LiDAR(-inertial) Odometry
