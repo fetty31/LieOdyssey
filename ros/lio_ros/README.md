@@ -2,6 +2,20 @@
 
 A minimalist LiDAR-Inertial Odometry (LIO) implementation for ROS 2, featuring EKF-based SLAM with octree-based 3D mapping. This package provides robust odometry estimation by fusing LiDAR scans with IMU measurements using the Iterative Error-State Extended Kalman Filter (iESEKF) from `LieOdyssey`.
 
+<div align="center">
+  <img src="doc/frontal.png" alt="UPC Campus Nord"  width="600"/>
+  <small>
+  <p> UPC Campus Nord, Barcelona (front view) </p>
+  </small>
+</div>
+
+<div align="center">
+  <img src="doc/top.png" alt="UPC Campus Nord"  width="600"/>
+  <small>
+  <p> UPC Campus Nord, Barcelona (top view) </p>
+  </small>
+</div>
+
 ## Features
 
 - **LiDAR-Inertial Fusion**: Combines LiDAR point clouds with IMU data for robust odometry

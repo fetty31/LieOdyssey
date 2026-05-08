@@ -82,7 +82,7 @@ gilda_lio_node:
         GaussIVox: # voxelmap
           update_size: 1              # number of accumulated points to re-compute gaussian 
           buffer_size: 50             # max number of points before merging gaussians (number of points which make covariance converge)
-          resolution: 1.5             # voxel resolution [m]
+          resolution: 0.5             # voxel resolution [m]
           chi_square: 7.815           # chi-square threshold for mahalanobis distance (used for merging strategy)
           noise_floor: 1.e-6          # regularization noise term, represents the minimum covariance (highest confidence on a gaussian)
           lidar_angle_noise: 1.e-4    # LiDAR angular error/std [rad]

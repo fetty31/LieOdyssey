@@ -2,10 +2,17 @@
 
 A high-performance Gaussian-based LiDAR-Inertial Odometry (LIO) system featuring real-time Gaussian likelihood estimation and adaptive mapping. GILDA leverages Gaussian voxel representation for efficient and accurate 3D mapping with LiDAR-Inertial fusion using the Iterative Error-State Extended Kalman Filter (iESEKF) from `LieOdyssey`.
 
+
 <div align="center">
   <img src="doc/kitti_map.png" alt="KITTI 0027 map"  width="600"/>
   <small>
   <p> KITTI 0027 Voxel Map </p>
+  </small>
+</div>
+<div align="center">
+  <img src="doc/collage.png" alt="KITTI 0027 collage"  width="600"/>
+  <small>
+  <p> Top left: accumulated pointcloud. Top right: map voxels. Bottom left: plane uncertainty (blue low, yellow high). Bottom right: Fused voxels with same color </p>
   </small>
 </div>
 
@@ -95,7 +102,7 @@ ros2 launch gilda_lio gilda_lio.launch.py rviz:=True
 
 Example with KITTI dataset configuration:
 ```bash
-ros2 launch gilda_lio gilda_lio.launch.py config:=$(find gilda_lio)/config/kitti.yaml rviz:=True
+ros2 launch gilda_lio gilda_lio.launch.py config:=$(ros2 pkg prefix gilda_lio)/share/gilda_lio/config/kitti.yaml rviz:=True
 ```
 
 Example with custom config:

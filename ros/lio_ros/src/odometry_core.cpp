@@ -465,6 +465,7 @@ void lio_ros::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
     iESEKF::group_to_state(this->filter_->getState(), st);
     st.a = imu.accel.cast<float>();
     st.w = imu.gyro.cast<float>();
+    st.time = imu.stamp;
     st.bias.a = this->state_.bias.a;
     st.bias.w = this->state_.bias.w;
     this->mtx_state_buf.lock();
@@ -564,9 +565,15 @@ pcl::PointCloud<LioPointType>::Ptr lio_ros::OdometryCore::deskewScan(pcl::PointC
     std::vector<lio_ros::State> frames = this->integrateImu(this->prev_scan_stamp_, this->scan_stamp_); // baselink/body frames
 
     if(frames.size() < 1){
-        std::cout << "lio_ros::ERROR: No frames obtained from IMU propagation!\n";
-        std::cout << "           Returning null deskewed pointcloud!\n";
-        return lio_ros::make_shared<pcl::PointCloud<LioPointType>>();
+        std::cout << "lio_ros::WARNING: No frames obtained from IMU propagation!\n";
+        std::cout << "           Scan not deskewed!\n";
+        #pragma omp parallel for num_threads(this->max_num_threads_)
+        for (std::size_t k = 0; k < deskewed_scan->points.size(); k++) {
+            auto &pt = deskewed_scan->points[k];
+            pt.getVector3fMap() = this->config_.lidar_extr * pt.getVector3fMap(); // baselink/body frame
+        }
+
+        return deskewed_scan; 
     }
 
     // deskewed pointcloud w.r.t last known state prediction
@@ -622,8 +629,10 @@ std::vector<lio_ros::State> lio_ros::OdometryCore::integrateImu(double start_tim
 bool lio_ros::OdometryCore::propagatedFromTimeRange(double start_time, double end_time,
                                         boost::circular_buffer<lio_ros::State>::reverse_iterator& begin_prop_it,
                                         boost::circular_buffer<lio_ros::State>::reverse_iterator& end_prop_it) {
+    if(this->state_buffer_.empty())
+        return false;
 
-    if (this->state_buffer_.empty() || this->state_buffer_.front().time < end_time) {
+    if (this->state_buffer_.front().time < end_time) {
         // Wait for the latest IMU data
         std::cout << "PROPAGATE WAITING...\n";
         std::cout << "     - buffer time: " << std::setprecision(15) << state_buffer_.front().time << std::endl;
