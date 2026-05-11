@@ -7,6 +7,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+option(USE_PROFILING "Activate profiling" OFF)
+
 set(CMAKE_BUILD_TYPE "Release")
 
 find_package( PCL 1.12 REQUIRED )
@@ -55,6 +57,9 @@ add_library(${PROJECT_NAME}
             src/ekf.cpp
             )
 target_compile_options(${PROJECT_NAME} PRIVATE ${OpenMP_FLAGS})
+if(USE_PROFILING)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC GILDA_PROFILE=1)
+endif(USE_PROFILING)
 target_link_libraries(${PROJECT_NAME} ${PCL_LIBRARIES} ${OpenMP_LIBS} lie_odyssey::lie_odyssey_cpp)
 
 # ROS execs
@@ -75,6 +80,5 @@ install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}/
 )
-
 
 ament_package()

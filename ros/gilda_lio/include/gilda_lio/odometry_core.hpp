@@ -2,6 +2,7 @@
 
 #include "gilda_lio/map.hpp"
 #include "gilda_lio/ekf.hpp"
+#include "gilda_lio/profiler.hpp"
 
 namespace gilda_lio {
 
@@ -59,6 +60,9 @@ public:
     // Get map backend 
     const Map::MapType* getMap() const;
 
+    // Get profiler
+    Profiler& getProfiler() { return profiler_; }
+
 private:
     void initFilter();
     void initState();
@@ -101,6 +105,9 @@ private:
 
     // Map object
     std::unique_ptr<Map> map_;
+
+    // Profiler (if enabled)
+    gilda_lio::Profiler profiler_{"ODOMETRY_CORE"};
 
     // Timing
     double scan_stamp_ = 0.0;

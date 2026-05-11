@@ -71,6 +71,8 @@ void gilda_lio::OdometryCore::initialize(const gilda_lio::Config& config)
 // Process IMU measurement (propagate state)
 void gilda_lio::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
 {
+    GILDA_PROFILE_FUNCTION(profiler_);
+
     this->imuToBody(imu);
 
     if(this->first_imu_stamp_ == 0.0)
@@ -197,6 +199,7 @@ void gilda_lio::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
 // Process LiDAR scan (update state with plane constraints)
 void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr& scan, double stamp)
 {
+    GILDA_PROFILE_FUNCTION(profiler_);
 
     if(scan->points.size() < 1){
         std::cout << "gilda_lio::Input PointCloud is empty!\n";
@@ -210,6 +213,11 @@ void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::P
         std::cout << "gilda_lio::IMU buffer is empty!\n";
         return;
     }
+
+    pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_pc_ (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
+
+{ // Preprocess scan (NaN removal, cropping, downsampling, motion compensation)
+    GILDA_PROFILE_SCOPE(profiler_, "processScan/Preprocessing");
 
     // Remove NaNs
     std::vector<int> idx;
@@ -243,17 +251,16 @@ void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::P
         filter_f = [this](boost::range::index_value<LioPointType&, long> p)
             { return true; };
     }
+
+    pcl::PointCloud<LioPointType>::Ptr input_pc (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
     auto filtered_pc = scan->points 
                 | boost::adaptors::indexed()
                 | boost::adaptors::filtered(filter_f);
-
-    pcl::PointCloud<LioPointType>::Ptr input_pc (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
     for (auto it = filtered_pc.begin(); it != filtered_pc.end(); it++) {
         input_pc->points.push_back(it->value());
     }
 
     // Motion compensation
-    pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_pc_ (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
     deskewed_Xt2_pc_ = this->deskewScan(input_pc, stamp);
     /*NOTE: deskewed_Xt2_pc_ should be in base_link/body frame w.r.t last propagated state (Xt2) */
 
@@ -268,18 +275,24 @@ void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::P
         this->pc2match_ = deskewed_Xt2_pc_;
     }
 
+} // finish preprocessing
+
     if(this->pc2match_->points.size() > 1){
 
         // iESEKF observation stage
         this->mtx_filter.lock();
 
         // Update iESEKF measurements 
+        {
+        GILDA_PROFILE_SCOPE(profiler_, "processScan/iESEKF Update");
         this->filter_->update
                 <iESEKF::Measurement, 
                 iESEKF::HMat> (static_cast<iESEKF::Scalar>(config_.lidar_noise),
                                 iESEKF::H_fun /*Measurement function*/);
         /*NOTE: update() will trigger the matching procedure
         in order to update the measurement stage of the KF with the computed point-to-plane distances*/
+        }        
+
 
             // Get output state from iESEKF
         gilda_lio::State corrected_state;
@@ -332,8 +345,11 @@ void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::P
         }
 
         // Add scan to map
+        {
+        GILDA_PROFILE_SCOPE(profiler_, "processScan/Map update");
         auto pose_cov = this->getPoseCovariance();
         map_->update(pc2match_, this->state_, pose_cov);
+        }
 
     }else
         std::cout << "-------------- gilda_lio::NULL ITERATION --------------\n";
@@ -492,6 +508,8 @@ void gilda_lio::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
 
 pcl::PointCloud<LioPointType>::Ptr gilda_lio::OdometryCore::deskewScan(pcl::PointCloud<LioPointType>::Ptr& pc, double& start_time)
 {
+    GILDA_PROFILE_SCOPE(profiler_, "processScan/deskewScan");
+
     if(pc->points.size() < 1) 
         return gilda_lio::make_shared<pcl::PointCloud<LioPointType>>();
 
@@ -545,9 +563,9 @@ pcl::PointCloud<LioPointType>::Ptr gilda_lio::OdometryCore::deskewScan(pcl::Poin
     // copy points into deskewed_scan in order of timestamp
     pcl::PointCloud<LioPointType>::Ptr deskewed_scan (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
     deskewed_scan->points.resize(pc->points.size());
-    
+
     std::partial_sort_copy(pc->points.begin(), pc->points.end(),
-                            deskewed_scan->points.begin(), deskewed_scan->points.end(), point_time_cmp);
+                        deskewed_scan->points.begin(), deskewed_scan->points.end(), point_time_cmp);
 
     if(deskewed_scan->points.size() < 1){
         std::cout << "gilda_lio::ERROR: failed to sort input pointcloud!\n";
@@ -582,6 +600,7 @@ pcl::PointCloud<LioPointType>::Ptr gilda_lio::OdometryCore::deskewScan(pcl::Poin
     if(frames.size() < 1){
         std::cout << "gilda_lio::WARNING: No frames obtained from IMU propagation!\n";
         std::cout << "           Scan not deskewed!\n";
+
         #pragma omp parallel for num_threads(this->max_num_threads_)
         for (std::size_t k = 0; k < deskewed_scan->points.size(); k++) {
             auto &pt = deskewed_scan->points[k];
@@ -595,6 +614,7 @@ pcl::PointCloud<LioPointType>::Ptr gilda_lio::OdometryCore::deskewScan(pcl::Poin
     pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_scan_ (gilda_lio::make_shared<pcl::PointCloud<LioPointType>>());
     deskewed_Xt2_scan_->points.resize(deskewed_scan->points.size());
 
+    GILDA_PROFILE_SCOPE(profiler_, "processScan/deskewScan/deskew_points");
     #pragma omp parallel for num_threads(this->max_num_threads_)
     for (std::size_t k = 0; k < deskewed_scan->points.size(); k++) {
 
@@ -623,7 +643,9 @@ pcl::PointCloud<LioPointType>::Ptr gilda_lio::OdometryCore::deskewScan(pcl::Poin
     return deskewed_Xt2_scan_; 
 }
 
-std::vector<gilda_lio::State> gilda_lio::OdometryCore::integrateImu(double start_time, double end_time){
+std::vector<gilda_lio::State> gilda_lio::OdometryCore::integrateImu(double start_time, double end_time)
+{
+    GILDA_PROFILE_SCOPE(profiler_, "processScan/deskewScan/integrateImu");
 
     std::vector<gilda_lio::State> states;
 

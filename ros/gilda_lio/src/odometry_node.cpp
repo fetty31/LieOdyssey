@@ -47,6 +47,9 @@ class LIOwrapper : public rclcpp::Node
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr       state_pub_;
 
+            // profiling timer
+        rclcpp::TimerBase::SharedPtr profiler_timer_;
+
             // debug publishers
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr desk_pub_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr match_pub_;
@@ -70,6 +73,11 @@ class LIOwrapper : public rclcpp::Node
 
         void init()
         {
+            RCLCPP_INFO_STREAM(this->get_logger(), "\n\n------------------ GILDA LIO ------------------\n" 
+              << "LiDAR-Inertial Odometry with Gaussian Map and iESEKF\n"
+              << "Author: Oriol Martinez (@fetty31)"
+              << "\n------------------------------------------------------\n");
+
             // Declare the one and only Core object (singleton pattern)
             gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
 
@@ -87,7 +95,7 @@ class LIOwrapper : public rclcpp::Node
 
             // Set up subscribers
             lidar_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                            config.lidar_topic, 1, std::bind(&LIOwrapper::lidar_callback, this, std::placeholders::_1), lidar_opt);
+                            config.lidar_topic, 10, std::bind(&LIOwrapper::lidar_callback, this, std::placeholders::_1), lidar_opt);
             imu_sub_   = this->create_subscription<sensor_msgs::msg::Imu>(
                             config.imu_topic, 1000, std::bind(&LIOwrapper::imu_callback, this, std::placeholders::_1), imu_opt);
             
@@ -102,6 +110,19 @@ class LIOwrapper : public rclcpp::Node
             gauss_pub_    = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/gaussian_map", 1);
             voxel_pub_    = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/voxel_map", 1);
             uncert_pub_   = this->create_publisher<visualization_msgs::msg::MarkerArray>("/gilda_lio/uncertainty_map", 1);
+
+            // Set up profiler timer (if enabled)
+            #if GILDA_PROFILE
+            RCLCPP_WARN(this->get_logger(), "GILDA LIO: Profiling enabled. Publishing profiler stats at 2 Hz.");
+            profiler_timer_ = this->create_wall_timer(
+                                std::chrono::milliseconds(500),
+                                [this]()
+                                {
+                                    RCLCPP_INFO(this->get_logger(), 
+                                                gilda_lio::OdometryCore::getInstance().getProfiler().str()
+                                                .c_str());
+                                });
+            #endif
 
             // Init TF broadcaster
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -128,12 +149,12 @@ class LIOwrapper : public rclcpp::Node
             pcl::PointCloud<LioPointType>::Ptr pc_ (std::make_shared<pcl::PointCloud<LioPointType>>());
             pcl::fromROSMsg(msg, *pc_);
 
-            auto tick = std::chrono::system_clock::now(); 
+            // auto tick = std::chrono::system_clock::now(); 
             core.processScan(pc_, rclcpp::Time(msg.header.stamp).seconds());
-            auto tack = std::chrono::system_clock::now();
+            // auto tack = std::chrono::system_clock::now();
 
-            std::chrono::duration<double> elapsed_time = tack-tick;
-            RCLCPP_INFO(get_logger(), "GILDA_LIO:: took %f ms to update", elapsed_time.count()*1000.0);
+            // std::chrono::duration<double> elapsed_time = tack-tick;
+            // RCLCPP_INFO(get_logger(), "GILDA_LIO:: took %f ms to update", elapsed_time.count()*1000.0);
 
             // Publish output pointcloud
             sensor_msgs::msg::PointCloud2 pc_ros;
@@ -233,7 +254,8 @@ class LIOwrapper : public rclcpp::Node
 
             rclcpp::Parameter debug_p = this->get_parameter("debug");
             config->debug = debug_p.as_bool();
-            this->debug_ = config->debug;
+            rclcpp::Parameter map_debug_p = this->get_parameter("map_debug");
+            this->debug_ = map_debug_p.as_bool();
             rclcpp::Parameter offset_p = this->get_parameter("time_offset");
             config->time_offset = offset_p.as_bool();
             rclcpp::Parameter eos_p = this->get_parameter("end_of_sweep");

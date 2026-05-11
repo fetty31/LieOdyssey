@@ -16,7 +16,8 @@ gilda_lio_node:
 
     sensor_type: "OUSTER"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
 
-    debug: true     # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
+    debug: true       # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
+    map_debug: false  # publish voxelmap gaussians for visualizing purposes (can be heavy, use with high voxel size)
 
     time_offset: true           # whether to take into account a possible sync offset between IMU and LiDAR (set to true if they are not properly in sync)
     end_of_sweep: false         # whether the sweep reference time is w.r.t. the start or the end of the scan (only applies to VELODYNE/OUSTER)
