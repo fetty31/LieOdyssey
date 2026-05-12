@@ -12,16 +12,16 @@ gilda_lio_node:
       body: base_link
       tf_pub: true
 
-    num_threads: 1 # OpenMP threads (will be equal to $(nproc) if it is set higher)
+    num_threads: 20 # OpenMP threads (will be equal to $(nproc) if it is set higher)
 
     sensor_type: "HESAI"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
 
     debug: true       # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
-    map_debug: false  # publish voxelmap gaussians for visualizing purposes (can be heavy, use with high voxel size)
+    map_debug: false  # publish voxelmap gaussians for visualizing purposes (big overhead, deactivate for real-time use)
 
     time_offset: true           # whether to take into account a possible sync offset between IMU and LiDAR (set to true if they are not properly in sync)
     end_of_sweep: false         # whether the sweep reference time is w.r.t. the start or the end of the scan (only applies to VELODYNE/OUSTER)
-    motion_compensation: true   # whether to perform motion compensation (deskewing)
+    motion_compensation: false   # whether to perform motion compensation (deskewing)
 
     calibration:  # automatic IMU calibration (if all set to false, no calibration will be done)
       gravity_align: false     # estimate gravity vector
@@ -83,7 +83,7 @@ gilda_lio_node:
         GaussIVox: # voxelmap
           update_size: 1              # number of accumulated points to re-compute gaussian 
           buffer_size: 50             # max number of points before merging gaussians (number of points which make covariance converge)
-          resolution: 0.5             # voxel resolution [m]
+          resolution: 0.25            # voxel resolution [m]
           chi_square: 7.815           # chi-square threshold for mahalanobis distance (used for merging strategy)
           noise_floor: 0.00001        # regularization noise term, represents the minimum covariance (highest confidence on a gaussian)
           lidar_angle_noise: 0.001    # LiDAR angular error/std [rad]

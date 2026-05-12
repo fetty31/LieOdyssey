@@ -62,6 +62,8 @@ void lio_ros::OdometryCore::initialize(const lio_ros::Config& config)
 // Process IMU measurement (propagate state)
 void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
 {
+    LIO_PROFILE_FUNCTION(profiler_);
+
     this->imuToBody(imu);
 
     if(this->first_imu_stamp_ == 0.0)
@@ -188,6 +190,7 @@ void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
 // Process LiDAR scan (update state with plane constraints)
 void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr& scan, double stamp)
 {
+    LIO_PROFILE_FUNCTION(profiler_);
 
     if(scan->points.size() < 1){
         std::cout << "lio_ros::Input PointCloud is empty!\n";
@@ -201,6 +204,11 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
         std::cout << "lio_ros::IMU buffer is empty!\n";
         return;
     }
+
+    pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_pc_ (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
+
+{ // Preprocess scan (NaN removal, cropping, downsampling, motion compensation)
+    LIO_PROFILE_SCOPE(profiler_, "processScan/Preprocessing");
 
     // Remove NaNs
     std::vector<int> idx;
@@ -244,7 +252,6 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
     }
 
     // Motion compensation
-    pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_pc_ (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
     deskewed_Xt2_pc_ = this->deskewScan(input_pc, stamp);
     /*NOTE: deskewed_Xt2_pc_ should be in base_link/body frame w.r.t last propagated state (Xt2) */
 
@@ -259,18 +266,23 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
         this->pc2match_ = deskewed_Xt2_pc_;
     }
 
+} // finish preprocessing
+
     if(this->pc2match_->points.size() > 1){
 
         // iESEKF observation stage
         this->mtx_filter.lock();
 
         // Update iESEKF measurements 
+        {
+        LIO_PROFILE_SCOPE(profiler_, "processScan/iESEKF Update");
         this->filter_->update
                 <iESEKF::Measurement, 
                 iESEKF::HMat> (static_cast<iESEKF::Scalar>(config_.lidar_noise),
                                 iESEKF::H_fun /*Measurement function*/);
         /*NOTE: update() will trigger the matching procedure
         in order to update the measurement stage of the KF with the computed point-to-plane distances*/
+        }
 
             // Get output state from iESEKF
         lio_ros::State corrected_state;
@@ -323,7 +335,10 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
         }
 
         // Add scan to map
+        {
+        LIO_PROFILE_SCOPE(profiler_, "processScan/Map update");
         map_->update(mapped_scan);
+        }
 
     }else
         std::cout << "-------------- lio_ros::NULL ITERATION --------------\n";
@@ -477,6 +492,8 @@ void lio_ros::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
 
 pcl::PointCloud<LioPointType>::Ptr lio_ros::OdometryCore::deskewScan(pcl::PointCloud<LioPointType>::Ptr& pc, double& start_time)
 {
+    LIO_PROFILE_SCOPE(profiler_, "processScan/deskewScan");
+
     if(pc->points.size() < 1) 
         return lio_ros::make_shared<pcl::PointCloud<LioPointType>>();
 
@@ -580,6 +597,7 @@ pcl::PointCloud<LioPointType>::Ptr lio_ros::OdometryCore::deskewScan(pcl::PointC
     pcl::PointCloud<LioPointType>::Ptr deskewed_Xt2_scan_ (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
     deskewed_Xt2_scan_->points.resize(deskewed_scan->points.size());
 
+    LIO_PROFILE_SCOPE(profiler_, "processScan/deskewScan/deskew_points");
     #pragma omp parallel for num_threads(this->max_num_threads_)
     for (std::size_t k = 0; k < deskewed_scan->points.size(); k++) {
 
@@ -608,7 +626,9 @@ pcl::PointCloud<LioPointType>::Ptr lio_ros::OdometryCore::deskewScan(pcl::PointC
     return deskewed_Xt2_scan_; 
 }
 
-std::vector<lio_ros::State> lio_ros::OdometryCore::integrateImu(double start_time, double end_time){
+std::vector<lio_ros::State> lio_ros::OdometryCore::integrateImu(double start_time, double end_time)
+{
+    LIO_PROFILE_SCOPE(profiler_, "processScan/deskewScan/integrateImu");
 
     std::vector<lio_ros::State> states;
 

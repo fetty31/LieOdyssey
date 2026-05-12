@@ -48,6 +48,9 @@ class LIOwrapper : public rclcpp::Node
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub;
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr       state_pub;
 
+            // profiling timer
+        rclcpp::TimerBase::SharedPtr profiler_timer_;
+
             // debug publishers
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr desk_pub;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr match_pub;
@@ -99,6 +102,19 @@ class LIOwrapper : public rclcpp::Node
             finalraw_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lio_ros/pointcloud_raw", 1);
             body_pub     = this->create_publisher<nav_msgs::msg::Odometry>("/lio_ros/body", 1);
 
+            // Set up profiler timer (if enabled)
+            #if LIO_PROFILE
+            RCLCPP_WARN(this->get_logger(), "LIO ROS: Profiling enabled. Publishing profiler stats at 10 Hz.");
+            profiler_timer_ = this->create_wall_timer(
+                                std::chrono::milliseconds(100),
+                                [this]()
+                                {
+                                    RCLCPP_INFO(this->get_logger(), 
+                                                lio_ros::OdometryCore::getInstance().getProfiler().str()
+                                                .c_str());
+                                });
+            #endif
+
             // Init TF broadcaster
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -124,12 +140,12 @@ class LIOwrapper : public rclcpp::Node
             pcl::PointCloud<LioPointType>::Ptr pc_ (std::make_shared<pcl::PointCloud<LioPointType>>());
             pcl::fromROSMsg(msg, *pc_);
 
-            auto tick = std::chrono::system_clock::now(); 
+            // auto tick = std::chrono::system_clock::now(); 
             core.processScan(pc_, rclcpp::Time(msg.header.stamp).seconds());
-            auto tack = std::chrono::system_clock::now();
+            // auto tack = std::chrono::system_clock::now();
 
-            std::chrono::duration<double> elapsed_time = tack-tick;
-            RCLCPP_INFO(get_logger(), "LIO_ROS:: took %f ms to process scan", elapsed_time.count()*1000.0);
+            // std::chrono::duration<double> elapsed_time = tack-tick;
+            // RCLCPP_INFO(get_logger(), "LIO_ROS:: took %f ms to process scan", elapsed_time.count()*1000.0);
 
             // Publish output pointcloud
             sensor_msgs::msg::PointCloud2 pc_ros;

@@ -113,9 +113,9 @@ class LIOwrapper : public rclcpp::Node
 
             // Set up profiler timer (if enabled)
             #if GILDA_PROFILE
-            RCLCPP_WARN(this->get_logger(), "GILDA LIO: Profiling enabled. Publishing profiler stats at 2 Hz.");
+            RCLCPP_WARN(this->get_logger(), "GILDA LIO: Profiling enabled. Publishing profiler stats at 10 Hz.");
             profiler_timer_ = this->create_wall_timer(
-                                std::chrono::milliseconds(500),
+                                std::chrono::milliseconds(100),
                                 [this]()
                                 {
                                     RCLCPP_INFO(this->get_logger(), 

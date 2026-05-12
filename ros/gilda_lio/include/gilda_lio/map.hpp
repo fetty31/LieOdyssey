@@ -21,14 +21,13 @@ struct Match {
     Match(const Eigen::Vector3f& p, 
             const Eigen::Vector3f& bl_p, 
             const GaussPtr& gauss,
-            const int min_points,
             const Scalar max_distance) 
         : point(p), local_point(bl_p)
     {
         if(gauss == nullptr) return; // safety check
 
         // Check closest gaussian is valid
-        if( enough_points(gauss, min_points) && isPlanePrimitive(gauss) )
+        if( isPlanePrimitive(gauss) )
         {
             setPlaneEq(gauss);
 
@@ -42,10 +41,6 @@ struct Match {
 
     bool lisanAlGaib(){ // whether is the chosen one :)
         return good_fit;
-    }
-
-    bool enough_points(const GaussPtr& g, const int& min_n) {
-        return g->count >= min_n;
     }
 
     bool isPlanePrimitive(const GaussPtr& g){
@@ -146,7 +141,7 @@ public:
         std::vector<Match> init_matches;
         init_matches.resize(pc->points.size()-N0);
 
-        #pragma omp parallel for num_threads(this->num_threads_)
+        // #pragma omp parallel for num_threads(this->num_threads_)
         for(std::size_t i = 0; i < pc->points.size()-N0; i++){
             
             Eigen::Vector3f bl_point(pc->points[i].x, pc->points[i].y, pc->points[i].z); // base link point
@@ -170,13 +165,113 @@ private:
     int num_threads_;
     Config config_;
 
-    Match match_plane(Eigen::Vector3f& p, Eigen::Vector3f& bl_p) {
+    /**
+     * @brief Performs plane look-up and matching for a given point
+     * @param p Query point in world coordinates
+     * @param bl_p Query point in body frame 
+     */
+    Match match_plane(Eigen::Vector3f& p, Eigen::Vector3f& bl_p)
+    {
+        // Find nearest gaussian
+        GaussPtr gauss =
+            map_->getPrimitiveAtPoint(Point(p(0), p(1), p(2)));
 
-        // Find k nearest gaussians
-        GaussPtr gauss = this->map_->getPrimitiveAtPoint(Point(p(0), p(1), p(2)));
+        if(gauss == nullptr) return Match(); // no primitive nearby
 
-        // Construct a gaussian match 
-        return Match(p, bl_p, gauss, config_.min_plane_points, config_.max_dist_thresh);
+        if (enough_points(gauss, config_.min_plane_points) )
+        {
+            std::cout << "Matched to plane primitive with " << gauss->count << " points." << std::endl;
+            return Match(
+                p,
+                bl_p,
+                gauss,
+                config_.max_dist_thresh
+            );
+        }
+
+        // Fallback PCA (useful at startup when map is sparse and/or for really small voxel sizes)
+        Eigen::Vector4f plane;
+        if (estimatePlaneFromNeighbors(p, plane))
+        {
+            Match m;
+
+            m.point = p;
+            m.local_point = bl_p;
+
+            m.coeffs = plane.cast<Scalar>();
+            auto norm = m.coeffs.head<3>().norm();
+            m.coeffs /= norm;
+
+            m.dist = m.getDist();
+
+            m.good_fit =
+                std::abs(m.dist) < config_.max_dist_thresh;
+
+            return m;
+        }
+
+        return Match();
+    }
+
+    bool estimatePlaneFromNeighbors(const Eigen::Vector3f& query,
+                                    Eigen::Vector4f& plane )
+    {
+        // std::vector<GaussPtr> neighbors = map_->getNeighborPrimitives(
+        //                                             Point(query(0), query(1), query(2)), 
+        //                                             1 ); // get neighbors in 1-voxel radius
+
+        std::vector<GaussPtr> neighbors = map_->getKNearestPrimitives(
+                                                    Point(query(0), query(1), query(2)), 
+                                                    config_.min_plane_points, 
+                                                    2 /* max radius in voxel units for neighbors search */  
+                                                );
+
+        std::vector<Eigen::Vector3f> pts;
+        for (auto& g : neighbors) {
+            if (!g) continue;
+
+            pts.push_back(g->mean.cast<float>());
+        }
+
+        if(pts.size() < config_.min_plane_points) return false;
+
+        Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+        for (auto& p : pts)
+            centroid += p;
+
+        centroid /= pts.size();
+
+        Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+
+        for (auto& p : pts)
+        {
+            Eigen::Vector3f d = p - centroid;
+            cov += d * d.transpose();
+        }
+
+        cov /= pts.size();
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(cov);
+
+        auto evals = solver.eigenvalues();
+        float l0 = std::max(evals(0), 0.0f);
+        if(l0 > config_.planarity_thresh) return false; // not planar enough
+
+        Eigen::Vector3f normal =
+            solver.eigenvectors().col(0);
+        normal.normalize();
+
+        float d = -normal.dot(centroid);
+
+        plane << normal, d;
+
+        // Plane evaluation check (optional, can be removed for speed)
+        for (int j = 0; j < pts.size(); j++) {
+            float r = plane.head<3>().dot(pts[j]) + plane(3);
+            if (std::fabs(r) > config_.max_dist_thresh) return false;
+        }
+
+        return true;
     }
 
 
@@ -240,6 +335,10 @@ private:
             // --- Store result ---
             out.push_back({p_world, cov_world});
         }
+    }
+
+    bool enough_points(const GaussPtr& g, const int& min_n) {
+        return g->count >= min_n;
     }
 };
 

@@ -293,7 +293,6 @@ void gilda_lio::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::P
         in order to update the measurement stage of the KF with the computed point-to-plane distances*/
         }        
 
-
             // Get output state from iESEKF
         gilda_lio::State corrected_state;
         corrected_state.time = this->scan_stamp_;

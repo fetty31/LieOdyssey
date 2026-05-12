@@ -2,6 +2,7 @@
 
 #include "lio_ros/map.hpp"
 #include "lio_ros/ekf.hpp"
+#include "lio_ros/profiler.hpp"
 
 namespace lio_ros {
 
@@ -55,6 +56,10 @@ public:
     // Get covariance (6x6 pose + 6x6 twist flattened row-major)
     std::vector<double> getPoseCovariance() const;
     std::vector<double> getTwistCovariance() const;
+
+    // Get profiler
+    Profiler& getProfiler() { return profiler_; }
+    
 private:
     void initFilter();
     void initState();
@@ -97,6 +102,9 @@ private:
 
     // Point map (octree)
     std::unique_ptr<Map> map_;
+
+    // Profiler (if enabled)
+    lio_ros::Profiler profiler_{"ODOMETRY_CORE"};
 
     // Timing
     double scan_stamp_ = 0.0;

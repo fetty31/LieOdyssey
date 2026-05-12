@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <shared_mutex>
 #include <memory>
@@ -327,6 +328,165 @@ public:
         UnionFindNode* root = node->find();
 
         return root->gauss_ptr;
+    }
+
+    /**
+     * @brief Retrieves neighboring Gaussian primitives around a query point
+     * @param p Query point in world coordinates
+     * @param radius Neighborhood radius in voxel units
+     * @return Vector of neighboring Gaussian primitives
+    */
+    std::vector<GaussPtr> getNeighborPrimitives(const Point& p,
+                                                int radius = 1) const
+    {
+        std::vector<GaussPtr> neighbors;
+
+        Eigen::Vector3i center_key =
+            (p * inv_v_size_).array().floor().cast<int>();
+
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+
+        // Reserve approximate neighborhood size
+        int side = 2 * radius + 1;
+        neighbors.reserve(side * side * side);
+
+        for (int dx = -radius; dx <= radius; ++dx)
+        {
+            for (int dy = -radius; dy <= radius; ++dy)
+            {
+                for (int dz = -radius; dz <= radius; ++dz)
+                {
+                    Eigen::Vector3i neighbor_key =
+                        center_key + Eigen::Vector3i(dx, dy, dz);
+
+                    auto it = map_.find(neighbor_key);
+
+                    if (it == map_.end())
+                        continue;
+
+                    UnionFindNode* node = it->second;
+
+                    if (!node)
+                        continue;
+
+                    UnionFindNode* root = node->find();
+
+                    if (!root)
+                        continue;
+
+                    GaussPtr g = root->gauss_ptr;
+
+                    if (!g)
+                        continue;
+
+                    // Skip empty primitives
+                    if (g->count <= 0)
+                        continue;
+
+                    neighbors.push_back(g);
+                }
+            }
+        }
+
+        return neighbors;
+    }
+
+    /**
+     * @brief Retrieves K-Nearest Neighbor primitives around a query point
+     * @param p Query point in world coordinates
+     * @param k Number of nearest neighbors to retrieve
+     * @param max_radius Maximum search radius in voxel units (upper search limit to avoid excessive search in sparse maps)
+     * @return Vector of neighboring Gaussian primitives
+    */
+    std::vector<GaussPtr> getKNearestPrimitives(const Point& p,
+                                                size_t k,
+                                                int max_radius = 2) const
+    {
+        std::vector<std::pair<Scalar, GaussPtr>> candidates;
+
+        Eigen::Vector3i center_key =
+            (p * inv_v_size_).array().floor().cast<int>();
+
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+
+        std::unordered_set<UnionFindNode*> visited_roots;
+
+        // Progressive radius expansion
+        for (int radius = 1; radius <= max_radius; ++radius)
+        {
+            for (int dx = -radius; dx <= radius; ++dx)
+            {
+                for (int dy = -radius; dy <= radius; ++dy)
+                {
+                    for (int dz = -radius; dz <= radius; ++dz)
+                    {
+                        Eigen::Vector3i neighbor_key =
+                            center_key + Eigen::Vector3i(dx, dy, dz);
+
+                        auto it = map_.find(neighbor_key);
+
+                        if (it == map_.end())
+                            continue;
+
+                        UnionFindNode* node = it->second;
+
+                        if (!node)
+                            continue;
+
+                        UnionFindNode* root = node->find();
+
+                        if (!root)
+                            continue;
+
+                        // Avoid duplicates from DSU
+                        if (visited_roots.count(root))
+                            continue;
+
+                        visited_roots.insert(root);
+
+                        GaussPtr g = root->gauss_ptr;
+
+                        if (!g)
+                            continue;
+
+                        if (g->count <= 0)
+                            continue;
+
+                        // Distance to Gaussian mean
+                        Scalar dist =
+                            (g->mean - p).squaredNorm();
+
+                        candidates.emplace_back(dist, g);
+                    }
+                }
+            }
+
+            // Stop once enough candidates found
+            if (candidates.size() >= k)
+                break;
+        }
+
+        // Sort by distance
+        std::sort(
+            candidates.begin(),
+            candidates.end(),
+            [](const auto& a, const auto& b)
+            {
+                return a.first < b.first;
+            });
+
+        // Keep only k nearest
+        std::vector<GaussPtr> result;
+
+        size_t n =
+            std::min(k, candidates.size());
+
+        result.reserve(n);
+
+        for (size_t i = 0; i < n; ++i)
+            result.push_back(candidates[i].second);
+
+        return result;
     }
 
     /**
