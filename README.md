@@ -90,7 +90,7 @@ By combining preintegration with Lie-theoretic estimation, we achieve **robust, 
 
 ## 🛡 Roadmap  
 - [X] ESEKF Filter.  
-- [ ] Invariant Filter.  
+- [X] Invariant Filter.  
 - [ ] Pose-Graph on general manifolds.  
 - [ ] Example demos (VIO, drone INS).  
 

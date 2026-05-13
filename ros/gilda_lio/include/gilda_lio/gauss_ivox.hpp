@@ -240,10 +240,14 @@ public:
                 std::size_t max_buffer_size = 50,
                 Scalar planarity_thresh = 0.1, 
                 Scalar chi_square_thresh = 7.815,
-                Scalar sensor_noise = 0.01) 
+                Scalar sensor_noise = 0.01,
+                int reserve_size = 200000) 
         : v_size_(v_sz), inv_v_size_(1.0 / v_sz), update_threshold_(upd_thresh), max_buffer_size_(max_buffer_size),
           planarity_threshold_(planarity_thresh), chi_square_threshold_(chi_square_thresh), 
-          noise_(sensor_noise) { }
+          noise_(sensor_noise) 
+        {
+            map_.reserve(reserve_size); // Reserve initial capacity to reduce rehashing
+        }
 
     /**
      * @brief Destructor: cleans up all union-find nodes

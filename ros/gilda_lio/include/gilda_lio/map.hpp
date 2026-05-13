@@ -180,7 +180,6 @@ private:
 
         if (enough_points(gauss, config_.min_plane_points) )
         {
-            std::cout << "Matched to plane primitive with " << gauss->count << " points." << std::endl;
             return Match(
                 p,
                 bl_p,
