@@ -1,13 +1,14 @@
 #pragma once
 
 #include <Eigen/Dense>
-#include <memory>
-#include <atomic>
-#include <shared_mutex>
-#include <vector>
+#include <unordered_map>
 #include <unordered_set>
-
-#include "bonxai/bonxai.hpp"
+#include <vector>
+#include <shared_mutex>
+#include <memory>
+#include <mutex>
+#include <atomic>
+#include <cmath>
 
 namespace gauss_mapping {
 
@@ -15,9 +16,28 @@ using Scalar = double;
 using Point  = Eigen::Matrix<Scalar, 3, 1>;
 using Mat3   = Eigen::Matrix<Scalar, 3, 3>;
 
-using Scalar = double;
-using Point  = Eigen::Matrix<Scalar, 3, 1>;
-using Mat3   = Eigen::Matrix<Scalar, 3, 3>;
+/**
+ * @brief Combines two hash values using FNV-like mixing.
+ * @param seed Initial hash seed
+ * @param v Value to combine
+ */
+inline size_t hash_combine(size_t seed, size_t v) {
+    return seed ^ (v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+struct HashVec3i {
+    /**
+     * @brief Hash function for 3D integer vectors
+     * @param v 3D vector to hash
+     */
+    size_t operator()(const Eigen::Vector3i& v) const {
+        size_t seed = 0;
+        seed = hash_combine(seed, std::hash<int>()(v[0]));
+        seed = hash_combine(seed, std::hash<int>()(v[1]));
+        seed = hash_combine(seed, std::hash<int>()(v[2]));
+        return seed;
+    }
+};
 
 /**
  * @brief Computes the adjugate (adjoint) matrix of a 3x3 matrix
@@ -176,88 +196,110 @@ struct GaussianPrimitive
 
 using GaussPtr = std::shared_ptr<GaussianPrimitive>;
 
-/**
- * @brief Node for Union-Find, stored inside Bonxai cells.
- */
-struct UnionFindNode {
+class UnionFindNode {
+public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    std::shared_ptr<GaussianPrimitive> gauss_ptr;
-    UnionFindNode* parent = nullptr; // DSU Parent
-    Point voxel_center;
+    GaussPtr gauss_ptr;
+    UnionFindNode *rootNode;
+    Point voxel_center; // Center of the voxel for relative point storage
+    std::atomic<size_t> points_since_update = 0;
+    std::vector<pointWithCov> points_buffer; // Buffer to store points for covariance computation
+    bool buffer_full = false; // Flag to indicate if buffer has reached capacity
     
-    std::atomic<size_t> points_since_update{0};
-    std::vector<pointWithCov> points_buffer;
-    bool buffer_full = false;
-
+    /**
+     * @brief Constructs a union-find node for a voxel
+     * @param center Center coordinates of the voxel
+     */
     UnionFindNode(const Point& center) : voxel_center(center) {
         gauss_ptr = std::make_shared<GaussianPrimitive>();
-        parent = this;
+        rootNode = this;
     }
 
-    // DSU Find with Path Compression
+    /**
+     * @brief Finds root node with path compression
+     */
     UnionFindNode* find() {
-        if (parent == this) return this;
-        return parent = parent->find();
+        if (rootNode == this) return this;
+        return rootNode = rootNode->find();
     }
 };
 
 class GaussianIVox {
 public:
+
     /**
-     * @param v_sz Voxel resolution
-     * @param leaf_bits Bonxai leaf size (3 = 8x8x8 block)
+     * @brief Constructs a GaussianIVox map with specified parameters
+     * @param v_sz Voxel size (resolution)
+     * @param upd_thresh Update threshold (points to accumulate before geometry recomputation)
+     * @param planarity_thresh Threshold for plane vs volume classification
+     * @param chi_square_thresh Mahalanobis distance threshold for merging
+     * @param sensor_noise Sensor noise floor for covariance regularization
      */
     GaussianIVox(Scalar v_sz, 
                 std::size_t upd_thresh, 
                 std::size_t max_buffer_size = 50,
                 Scalar planarity_thresh = 0.1, 
                 Scalar chi_square_thresh = 7.815,
-                Scalar sensor_noise = 0.01) 
-        : v_size_(v_sz), 
-          update_threshold_(upd_thresh), 
-          max_buffer_size_(max_buffer_size),
-          planarity_threshold_(planarity_thresh), 
-          chi_square_threshold_(chi_square_thresh), 
-          noise_(sensor_noise),
-          map_(v_sz) // Initialize Bonxai Grid
-    {}
+                Scalar sensor_noise = 0.01,
+                int reserve_size = 200000) 
+        : v_size_(v_sz), inv_v_size_(1.0 / v_sz), update_threshold_(upd_thresh), max_buffer_size_(max_buffer_size),
+          planarity_threshold_(planarity_thresh), chi_square_threshold_(chi_square_thresh), 
+          noise_(sensor_noise) 
+        {
+            map_.reserve(reserve_size); // Reserve initial capacity to reduce rehashing
+        }
 
     /**
-     * @brief Update using Bonxai Accessor for O(1) cached lookup
+     * @brief Destructor: cleans up all union-find nodes
+     */
+    ~GaussianIVox() {
+        for (auto& pair : map_) {
+            delete pair.second;
+        }
+        map_.clear();
+    }
+
+    /**
+     * @brief Updates the map with a new point, triggers geometry computation and neighbor merging
+     * @param point Point to insert into the map (world-frame coordinates)
      */
     void update(const pointWithCov& point_cov) {
+        auto &point = point_cov.p;
+        Eigen::Vector3i key = (point * inv_v_size_).array().floor().cast<int>();
 
-        auto& p = point_cov.p;
-        auto coord = map_.posToCoord(p.x(), p.y(), p.z());
-
+        Point voxel_center;
+        voxel_center[0] = (key.x() + 0.5) * v_size_;
+        voxel_center[1] = (key.y() + 0.5) * v_size_;
+        voxel_center[2] = (key.z() + 0.5) * v_size_;
+        
         UnionFindNode* node = nullptr;
         {
-            auto accessor = map_.createAccessor();
-            
-            // getCell returns DataT*, we store unique_ptr to UnionFindNode
-            auto cell_ptr = accessor.value(coord, /*create_if_missing=*/true); 
-            
-            if (!(*cell_ptr)) {
-                Point center = Bonxai::ConvertPoint<Point>(map_.coordToPos(coord));
-                *cell_ptr = std::make_unique<UnionFindNode>(center);
+            std::unique_lock<std::shared_mutex> lock(map_mtx_);
+            auto it = map_.find(key);
+            if (it == map_.end()) {
+                node = new UnionFindNode(voxel_center);
+                map_[key] = node;
+            } else {
+                node = it->second;
             }
-            node = cell_ptr->get();
         }
 
         UnionFindNode* root = node->find();
 
-        if (root->buffer_full) {
-            checkNeighbors(root, coord);
+        if(root->buffer_full) {
+            checkNeighbors(root, key);
             return;
         }
 
-        root->gauss_ptr->addPoint(p);
+        root->gauss_ptr->addPoint(point);
         root->points_buffer.push_back(point_cov);
         root->points_since_update++;
         total_points_++;
 
+        // Trigger geometry update incrementally
         if (root->points_since_update >= update_threshold_) {
             computeGeometry(root);
+            // checkNeighbors(root, key);
         }
     }
 
@@ -272,81 +314,45 @@ public:
     }
 
     /**
-     * @brief Clears the map and resets all data
-     */
-    void clear() {
-        map_.clear(Bonxai::ClearOption::CLEAR_MEMORY);
-        total_points_ = 0;
-    }
-
-    /**
-     * @brief Returns the total number of points inserted into the map
-     * @return Total number of points
-     */
-    size_t getTotalPoints() const {
-        return total_points_.load();
-    }
-
-    /**
-     * @brief Returns the total number of active voxels
-     * @return Total number of active voxels
-     */
-    size_t size() const {
-        return map_.activeCellsCount();
-    }
-
-    /**
-     * @brief Returns the memory usage (Bonxai provides this directly)
-     * @return memory usage in bytes 
-     */
-    size_t memory() const {
-        return map_.memUsage();
-    }
-
-    /**
-     * @brief Returns the voxel resolution
-     * @return Voxel resolution
-     */
-    Scalar getVoxelResolution() const {
-        return v_size_;
-    }
-
-    const Bonxai::VoxelGrid<std::unique_ptr<UnionFindNode>>& getRawGrid() const { return map_; }
-
-    /**
      * @brief Retrieves the Gaussian primitive at a given point location
      * @param p Query point in world coordinates
      * @return Shared pointer to the root Gaussian primitive, or nullptr if not found
      */
     GaussPtr getPrimitiveAtPoint(const Point& p) const
     {
-        auto coord = map_.posToCoord(p.x(), p.y(), p.z());
-        auto accessor = map_.createConstAccessor();
-        
-        if (auto* cell_ptr = accessor.value(coord)) {
-            if (*cell_ptr) {
-                UnionFindNode* root = (*cell_ptr)->find();
-                return root->gauss_ptr;
-            }
-        }
-        return nullptr;
+        Eigen::Vector3i key = (p * inv_v_size_).array().floor().cast<int>();
+
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+
+        auto it = map_.find(key);
+        if (it == map_.end())
+            return nullptr;
+
+        UnionFindNode* node = it->second;
+        UnionFindNode* root = node->find();
+
+        return root->gauss_ptr;
     }
 
     /**
      * @brief Retrieves neighboring Gaussian primitives around a query point
      * @param p Query point in world coordinates
      * @param radius Neighborhood radius in voxel units
-     * @return Vector of neighboring Gaussian primitives (uniquified)
+     * @return Vector of neighboring Gaussian primitives
     */
-    std::vector<GaussPtr> getNeighborPrimitives(const Point& p, int radius = 1) const
+    std::vector<GaussPtr> getNeighborPrimitives(const Point& p,
+                                                int radius = 1) const
     {
         std::vector<GaussPtr> neighbors;
-        auto center_coord = map_.posToCoord(p.x(), p.y(), p.z());
-        auto accessor = map_.createConstAccessor();
 
-        // Using a set to ensure we return unique primitives even if 
-        // multiple neighboring voxels point to the same root due to DSU merging
-        std::unordered_set<UnionFindNode*> visited_roots;
+        Eigen::Vector3i center_key =
+            (p * inv_v_size_).array().floor().cast<int>();
+
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+
+        // Reserve approximate neighborhood size
+        int side = 2 * radius + 1;
+        neighbors.reserve(side * side * side);
 
         for (int dx = -radius; dx <= radius; ++dx)
         {
@@ -354,25 +360,34 @@ public:
             {
                 for (int dz = -radius; dz <= radius; ++dz)
                 {
-                    Bonxai::CoordT neighbor_coord = {
-                        center_coord.x + dx, 
-                        center_coord.y + dy, 
-                        center_coord.z + dz
-                    };
+                    Eigen::Vector3i neighbor_key =
+                        center_key + Eigen::Vector3i(dx, dy, dz);
 
-                    if (auto* cell_ptr = accessor.value(neighbor_coord)) {
-                        if (*cell_ptr) {
-                            UnionFindNode* root = (*cell_ptr)->find();
-                            
-                            if (visited_roots.count(root)) continue;
-                            visited_roots.insert(root);
+                    auto it = map_.find(neighbor_key);
 
-                            GaussPtr g = root->gauss_ptr;
-                            if (g && g->count > 0) {
-                                neighbors.push_back(g);
-                            }
-                        }
-                    }
+                    if (it == map_.end())
+                        continue;
+
+                    UnionFindNode* node = it->second;
+
+                    if (!node)
+                        continue;
+
+                    UnionFindNode* root = node->find();
+
+                    if (!root)
+                        continue;
+
+                    GaussPtr g = root->gauss_ptr;
+
+                    if (!g)
+                        continue;
+
+                    // Skip empty primitives
+                    if (g->count <= 0)
+                        continue;
+
+                    neighbors.push_back(g);
                 }
             }
         }
@@ -384,14 +399,19 @@ public:
      * @brief Retrieves K-Nearest Neighbor primitives around a query point
      * @param p Query point in world coordinates
      * @param k Number of nearest neighbors to retrieve
-     * @param max_radius Maximum search radius in voxel units
+     * @param max_radius Maximum search radius in voxel units (upper search limit to avoid excessive search in sparse maps)
      * @return Vector of neighboring Gaussian primitives
     */
-    std::vector<GaussPtr> getKNearestPrimitives(const Point& p, size_t k, int max_radius = 2) const
+    std::vector<GaussPtr> getKNearestPrimitives(const Point& p,
+                                                size_t k,
+                                                int max_radius = 2) const
     {
         std::vector<std::pair<Scalar, GaussPtr>> candidates;
-        auto center_coord = map_.posToCoord(p.x(), p.y(), p.z());
-        auto accessor = map_.createConstAccessor();
+
+        Eigen::Vector3i center_key =
+            (p * inv_v_size_).array().floor().cast<int>();
+
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
 
         std::unordered_set<UnionFindNode*> visited_roots;
 
@@ -404,47 +424,71 @@ public:
                 {
                     for (int dz = -radius; dz <= radius; ++dz)
                     {
-                        // Check shell boundary for true progressive growth
-                        if (std::abs(dx) != radius && std::abs(dy) != radius && std::abs(dz) != radius)
+                        Eigen::Vector3i neighbor_key =
+                            center_key + Eigen::Vector3i(dx, dy, dz);
+
+                        auto it = map_.find(neighbor_key);
+
+                        if (it == map_.end())
                             continue;
 
-                        Bonxai::CoordT neighbor_coord = {
-                            center_coord.x + dx, 
-                            center_coord.y + dy, 
-                            center_coord.z + dz
-                        };
+                        UnionFindNode* node = it->second;
 
-                        if (auto* cell_ptr = accessor.value(neighbor_coord)) {
-                            if (*cell_ptr) {
-                                UnionFindNode* root = (*cell_ptr)->find();
+                        if (!node)
+                            continue;
 
-                                if (visited_roots.count(root)) continue;
-                                visited_roots.insert(root);
+                        UnionFindNode* root = node->find();
 
-                                GaussPtr g = root->gauss_ptr;
-                                if (g && g->count > 0) {
-                                    Scalar dist = (g->mean - p).squaredNorm();
-                                    candidates.emplace_back(dist, g);
-                                }
-                            }
-                        }
+                        if (!root)
+                            continue;
+
+                        // Avoid duplicates from DSU
+                        if (visited_roots.count(root))
+                            continue;
+
+                        visited_roots.insert(root);
+
+                        GaussPtr g = root->gauss_ptr;
+
+                        if (!g)
+                            continue;
+
+                        if (g->count <= 0)
+                            continue;
+
+                        // Distance to Gaussian mean
+                        Scalar dist =
+                            (g->mean - p).squaredNorm();
+
+                        candidates.emplace_back(dist, g);
                     }
                 }
             }
 
-            if (candidates.size() >= k) break;
+            // Stop once enough candidates found
+            if (candidates.size() >= k)
+                break;
         }
 
-        std::sort(candidates.begin(), candidates.end(), 
-            [](const auto& a, const auto& b) { return a.first < b.first; });
+        // Sort by distance
+        std::sort(
+            candidates.begin(),
+            candidates.end(),
+            [](const auto& a, const auto& b)
+            {
+                return a.first < b.first;
+            });
 
+        // Keep only k nearest
         std::vector<GaussPtr> result;
-        size_t n = std::min(k, candidates.size());
+
+        size_t n =
+            std::min(k, candidates.size());
+
         result.reserve(n);
 
-        for (size_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < n; ++i)
             result.push_back(candidates[i].second);
-        }
 
         return result;
     }
@@ -453,25 +497,13 @@ public:
      * @brief Thread-safe retrieval of all unique root Gaussian primitives
      * @return Vector of shared pointers to all root Gaussians in the map
      */
-    std::vector<GaussPtr> getGaussians() const 
-    {
+    std::vector<GaussPtr> getGaussians() const {
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
         std::vector<GaussPtr> result;
-        std::unordered_set<UnionFindNode*> visited_roots;
-
-        // Bonxai allows grid cell iterations using functional callbacks
-        map_.forEachCell([&result, &visited_roots](const std::unique_ptr<UnionFindNode>& cell, const Bonxai::CoordT&) {
-            if (cell) {
-                UnionFindNode* root = cell->find();
-                // Check if this root has already been collected from another voxel link
-                if (visited_roots.count(root) == 0) {
-                    visited_roots.insert(root);
-                    if (root->gauss_ptr && root->gauss_ptr->count > 0) {
-                        result.push_back(root->gauss_ptr);
-                    }
-                }
-            }
-        });
-
+        for (auto const& [_, node] : map_) {
+            if (node->rootNode != node) continue; // only roots
+            result.push_back(node->gauss_ptr);
+        }
         return result;
     }
 
@@ -480,43 +512,141 @@ public:
      * @param type Primitive type to filter (PLANE, VOLUME, etc.)
      * @return Vector of shared pointers to Gaussians of the specified type
      */
-    std::vector<GaussPtr> getByType(PrimitiveType type) const 
-    {
+    std::vector<GaussPtr> getByType(PrimitiveType type) const {
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
         std::vector<GaussPtr> result;
-        std::unordered_set<UnionFindNode*> visited_roots;
+        for (const auto& [_, node] : map_) {
+            if (node->rootNode != node) continue; // only roots
 
-        map_.forEachCell([&result, &visited_roots, type](const std::unique_ptr<UnionFindNode>& cell, const Bonxai::CoordT&) {
-            if (cell) {
-                UnionFindNode* root = cell->find();
-                if (visited_roots.count(root) == 0) {
-                    visited_roots.insert(root);
-                    const auto& g = root->gauss_ptr;
-                    if (g && g->type == type && g->count > 0) {
-                        result.push_back(g);
-                    }
-                }
+            const auto& g = node->gauss_ptr;
+            if (g && g->type == type) {
+                result.push_back(g);
             }
-        });
+        }
 
         return result;
     }
 
-    // --- Search Logic using Bonxai bit-offsets ---
-    void checkNeighbors(UnionFindNode* root, const Bonxai::CoordT& coord) {
-        auto accessor = map_.createConstAccessor();
+    /**
+     * @brief Clears the map and resets all data
+     */
+    void clear() {
+        std::unique_lock<std::shared_mutex> lock(map_mtx_);
+        for (auto& pair : map_) {
+            delete pair.second;
+        }
+        map_.clear();
+        total_points_ = 0;
+    }
 
-        // Check 6-neighbors
-        static const int offsets[6][3] = {{1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}};
+    /**
+     * @brief Returns the total number of points inserted into the map
+     * @return Total number of points
+     */
+    size_t getTotalPoints() const {
+        return total_points_.load();
+    }
+
+    /**
+     * @brief Returns the total number of voxels
+     * @return Total number of voxels
+     */
+    size_t size() const {
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+        return map_.size();
+    }
+
+    /**
+     * @brief Returns the voxel resolution
+     * @return Voxel resolution
+     */
+    Scalar getVoxelResolution() const {
+        return v_size_;
+    }
+
+    /**
+     * @brief Apply a function to each voxel in a thread-safe manner
+     * @param f Function to apply, taking (key, node) as arguments
+     */
+    template<typename Func>
+    void forEachVoxel(Func&& f) const {
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+        for (const auto& [key, node] : map_) {
+            f(key, node);
+        }
+    }
+
+    /**
+     * @brief Computes Gaussian geometry from scatter matrix, classifies primitive type via PCA
+     * @param node Union-find node containing the point statistics
+     */
+    void computeGeometry(UnionFindNode* node) {
+
+        auto& g = node->gauss_ptr;
+        if (g->count < 5) return;
+
+        Scalar n = static_cast<Scalar>(g->count);
+
+        // World Mean
+        g->mean << (g->x / n),
+                    (g->y / n),
+                    (g->z / n);
+
+        // Unbiased covariance estimation using the scatter matrix and mean
+        Scalar inv = 1.0 / (n - 1); // Sample covariance normalization
+
+        Scalar mx = g->x / n;
+        Scalar my = g->y / n;
+        Scalar mz = g->z / n;
+
+        g->cov <<
+            (g->xx - n*mx*mx) * inv, (g->xy - n*mx*my) * inv, (g->xz - n*mx*mz) * inv,
+            (g->xy - n*mx*my) * inv, (g->yy - n*my*my) * inv, (g->yz - n*my*mz) * inv,
+            (g->xz - n*mx*mz) * inv, (g->yz - n*my*mz) * inv, (g->zz - n*mz*mz) * inv;
+
+        Eigen::SelfAdjointEigenSolver<Mat3> es(g->cov);
+        Point evals = es.eigenvalues();
+
+        // PCA classification
+        Scalar l0 = std::max(evals(0), 0.0);
+
+        // Primitive classification
+        if (l0 < planarity_threshold_) {
+            g->type = PrimitiveType::PLANE;
+
+            if(!solvePlaneAdjugate(node, es.eigenvectors().col(0)))
+                g->type = PrimitiveType::UNKNOWN; // Degenerate case, keep as UNKNOWN
+        }
+        else {
+            g->type = PrimitiveType::VOLUME;
+
+            // For volumes, nothing extra needed — mean and cov already store 3D Gaussian
+        }
+
+        node->points_since_update = 0;
+        if(node->points_buffer.size() >= max_buffer_size_) {
+            node->buffer_full = true;
+            std::vector<pointWithCov>().swap(node->points_buffer); // Clear buffer to save memory
+        }
+    }
+
+    /**
+     * @brief Checks 6-neighbor voxels and attempts merging with same-type primitives
+     * @param root Root union-find node of current voxel
+     * @param key Voxel grid key of current location
+     */
+    void checkNeighbors(UnionFindNode* root, const Eigen::Vector3i& key) {
         
-        for (const auto& off : offsets) {
-            Bonxai::CoordT neighbor_coord = {coord.x + off[0], coord.y + off[1], coord.z + off[2]};
-            if (auto* neighbor_cell = accessor.value(neighbor_coord)) {
-                if (*neighbor_cell) {
-                    UnionFindNode* neighbor_root = (*neighbor_cell)->find();
-                    if (neighbor_root != root) {
-                        tryMerge(root, neighbor_root);
-                    }
-                }
+        // 6-Neighbor Search for Merging (DSU)
+        std::shared_lock<std::shared_mutex> lock(map_mtx_);
+        int offsets[6][3] = {{-1,0,0}, {1,0,0}, {0,-1,0}, {0,1,0}, {0,0,1}, {0,0,-1}};
+
+        for (auto& off : offsets) {
+            Eigen::Vector3i neighbor_key(key.x() + off[0], key.y() + off[1], key.z() + off[2]);
+            auto it = map_.find(neighbor_key);
+            if (it != map_.end()) {
+                UnionFindNode* neighbor_root = it->second->find();
+                if (neighbor_root != root) tryMerge(root, neighbor_root);
             }
         }
     }
@@ -587,7 +717,7 @@ public:
 
         if(!merge) return;
 
-        b->parent = a; // DSU Union: root of b points to root of a
+        b->rootNode = a; // DSU Union: root of b points to root of a
 
         ga->mergeSums(*(gb)); // Merge incremental sums for accurate geometry update
 
@@ -616,57 +746,6 @@ public:
         }
 
         b->gauss_ptr.reset(); // Clear merged primitive to save memory, only root holds valid Gaussian
-    }
-
-    void computeGeometry(UnionFindNode* node) {
-
-        auto& g = node->gauss_ptr;
-        if (g->count < 5) return;
-
-        Scalar n = static_cast<Scalar>(g->count);
-
-        // World Mean
-        g->mean << (g->x / n),
-                    (g->y / n),
-                    (g->z / n);
-
-        // Unbiased covariance estimation using the scatter matrix and mean
-        Scalar inv = 1.0 / (n - 1); // Sample covariance normalization
-
-        Scalar mx = g->x / n;
-        Scalar my = g->y / n;
-        Scalar mz = g->z / n;
-
-        g->cov <<
-            (g->xx - n*mx*mx) * inv, (g->xy - n*mx*my) * inv, (g->xz - n*mx*mz) * inv,
-            (g->xy - n*mx*my) * inv, (g->yy - n*my*my) * inv, (g->yz - n*my*mz) * inv,
-            (g->xz - n*mx*mz) * inv, (g->yz - n*my*mz) * inv, (g->zz - n*mz*mz) * inv;
-
-        Eigen::SelfAdjointEigenSolver<Mat3> es(g->cov);
-        Point evals = es.eigenvalues();
-
-        // PCA classification
-        Scalar l0 = std::max(evals(0), 0.0);
-
-        // Primitive classification
-        if (l0 < planarity_threshold_) {
-            g->type = PrimitiveType::PLANE;
-
-            if(!solvePlaneAdjugate(node, es.eigenvectors().col(0)))
-                g->type = PrimitiveType::UNKNOWN; // Degenerate case, keep as UNKNOWN
-        }
-        else {
-            g->type = PrimitiveType::VOLUME;
-
-            // For volumes, nothing extra needed — mean and cov already store 3D Gaussian
-        }
-
-        node->points_since_update = 0;
-        if (node->points_buffer.size() >= max_buffer_size_) {
-            node->buffer_full = true;
-            node->points_buffer.clear();
-            node->points_buffer.shrink_to_fit();
-        }
     }
 
     /**
@@ -808,19 +887,15 @@ public:
         return true;
     }
 
-// private:
-
-    Scalar v_size_;
+    mutable std::shared_mutex map_mtx_;
+    std::unordered_map<Eigen::Vector3i, UnionFindNode*, HashVec3i> map_;
+    Scalar v_size_, inv_v_size_;
     std::size_t update_threshold_;
     std::size_t max_buffer_size_;
-    Scalar planarity_threshold_;
-    Scalar chi_square_threshold_;
-    Scalar noise_;
     std::atomic<size_t> total_points_{0};
-
-    // We store a unique_ptr to the Node inside Bonxai
-    Bonxai::VoxelGrid<std::unique_ptr<UnionFindNode>> map_;
-
+    Scalar planarity_threshold_;  // Tunable threshold for plane classification
+    Scalar chi_square_threshold_; // Tunable threshold for plane merging
+    Scalar noise_;                // Sensor noise floor for covariance estimation
 };
 
 } // namespace gauss_mapping

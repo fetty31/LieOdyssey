@@ -260,21 +260,23 @@ visualization_msgs::msg::MarkerArray makeGaussianMarkers(
     const std::string frame_id)
 {
     visualization_msgs::msg::MarkerArray arr;
-    std::shared_lock lock(ivox.map_mtx_); // safe map access
 
     std::mt19937 gen(12345); // fixed seed for consistent cluster colors
     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
     std::unordered_map<gauss_mapping::UnionFindNode*, std::tuple<float,float,float>> parent_colors;
-    std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
+    std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Bonxai::CoordT>> clusters;
 
-    // Build clusters based on Union-Find parents and assign colors
-    for (const auto& [key, node] : ivox.map_) {
-        auto root = node->find();
-        clusters[root].push_back(key);
-        if (parent_colors.find(root) == parent_colors.end()) {
-            parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
+    // Build clusters based on Union-Find parents and assign colors using Bonxai cell loop
+    const auto& map = ivox.getRawGrid();
+    map.forEachCell([&clusters, &parent_colors, &gen, &dis](const std::unique_ptr<gauss_mapping::UnionFindNode>& cell, const Bonxai::CoordT& coord) {
+        if (cell) {
+            gauss_mapping::UnionFindNode* root = cell->find();
+            clusters[root].push_back(coord);
+            if (parent_colors.find(root) == parent_colors.end()) {
+                parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
+            }
         }
-    }
+    });
 
     auto resolution = ivox.getVoxelResolution();
 
@@ -283,38 +285,100 @@ visualization_msgs::msg::MarkerArray makeGaussianMarkers(
     for (auto& [root, voxels] : clusters) {
 
         auto& gaus = root->gauss_ptr;
-        if (!gaus) continue; // safety check, should always have a Gaussian
+        if (!gaus || gaus->count <= 0) continue; // safety check and skip empty primitives
 
-        for (const auto& key : voxels) {
+        for (const auto& coord : voxels) {
 
-            gauss_mapping::Point voxel_center;
-            voxel_center[0] = (key.x() + 0.5) * resolution;
-            voxel_center[1] = (key.y() + 0.5) * resolution;
-            voxel_center[2] = (key.z() + 0.5) * resolution;
+        gauss_mapping::Point voxel_center;
+        // You can also use Bonxai's native position conversion:
+        // auto pos = map.coordToPos(coord);
+        // voxel_center << pos.x, pos.y, pos.z;
+        voxel_center[0] = (coord.x + 0.5) * resolution;
+        voxel_center[1] = (coord.y + 0.5) * resolution;
+        voxel_center[2] = (coord.z + 0.5) * resolution;
 
-            visualization_msgs::msg::Marker m;
+        visualization_msgs::msg::Marker m;
 
-            switch (gaus->type) {
-                case gauss_mapping::PrimitiveType::PLANE:
-                    m = makePlaneMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id, parent_colors[root]);
-                    arr.markers.push_back(m);
-                    break;
+        switch (gaus->type) {
+            case gauss_mapping::PrimitiveType::PLANE:
+                m = makePlaneMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id, parent_colors[root]);
+                arr.markers.push_back(m);
+                break;
 
-                case gauss_mapping::PrimitiveType::VOLUME:
-                    m = makeVolumeMarker(*gaus, id++, stamp, frame_id, parent_colors[root]);
-                    arr.markers.push_back(m);
-                    break;
+            case gauss_mapping::PrimitiveType::VOLUME:
+                m = makeVolumeMarker(*gaus, id++, stamp, frame_id, parent_colors[root]);
+                arr.markers.push_back(m);
+                break;
 
-                default:
-                    break;
-            }
-
+            default:
+                break;
         }
-
+    }
     }
     
     return arr;
 }
+
+// visualization_msgs::msg::MarkerArray makeGaussianMarkers(
+//     const gauss_mapping::GaussianIVox& ivox,
+//     const rclcpp::Time& stamp,
+//     const std::string frame_id)
+// {
+//     visualization_msgs::msg::MarkerArray arr;
+
+//     std::mt19937 gen(12345); // fixed seed for consistent cluster colors
+//     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+//     std::unordered_map<gauss_mapping::UnionFindNode*, std::tuple<float,float,float>> parent_colors;
+//     std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
+
+//     // Build clusters based on Union-Find parents and assign colors
+//     for (const auto& [key, node] : ivox.map_) {
+//         auto root = node->find();
+//         clusters[root].push_back(key);
+//         if (parent_colors.find(root) == parent_colors.end()) {
+//             parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
+//         }
+//     }
+
+//     auto resolution = ivox.getVoxelResolution();
+
+//     // Visualize each voxel Gaussian primitive
+//     int id = 0;
+//     for (auto& [root, voxels] : clusters) {
+
+//         auto& gaus = root->gauss_ptr;
+//         if (!gaus) continue; // safety check, should always have a Gaussian
+
+//         for (const auto& key : voxels) {
+
+//             gauss_mapping::Point voxel_center;
+//             voxel_center[0] = (key.x() + 0.5) * resolution;
+//             voxel_center[1] = (key.y() + 0.5) * resolution;
+//             voxel_center[2] = (key.z() + 0.5) * resolution;
+
+//             visualization_msgs::msg::Marker m;
+
+//             switch (gaus->type) {
+//                 case gauss_mapping::PrimitiveType::PLANE:
+//                     m = makePlaneMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id, parent_colors[root]);
+//                     arr.markers.push_back(m);
+//                     break;
+
+//                 case gauss_mapping::PrimitiveType::VOLUME:
+//                     m = makeVolumeMarker(*gaus, id++, stamp, frame_id, parent_colors[root]);
+//                     arr.markers.push_back(m);
+//                     break;
+
+//                 default:
+//                     break;
+//             }
+
+//         }
+
+//     }
+    
+//     return arr;
+// }
 
 visualization_msgs::msg::MarkerArray makeUncertaintyMarkers(
     const gauss_mapping::GaussianIVox& ivox,
@@ -322,15 +386,17 @@ visualization_msgs::msg::MarkerArray makeUncertaintyMarkers(
     const std::string frame_id)
 {
     visualization_msgs::msg::MarkerArray arr;
-    std::shared_lock lock(ivox.map_mtx_); // safe map access
 
-    std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
+    std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Bonxai::CoordT>> clusters;
 
-    // Build clusters based on Union-Find parents and assign colors
-    for (const auto& [key, node] : ivox.map_) {
-        auto root = node->find();
-        clusters[root].push_back(key);
-    }
+    // Build clusters based on Union-Find parents using Bonxai cell loop
+    const auto& map = ivox.getRawGrid();
+    map.forEachCell([&clusters](const std::unique_ptr<gauss_mapping::UnionFindNode>& cell, const Bonxai::CoordT& coord) {
+        if (cell) {
+            gauss_mapping::UnionFindNode* root = cell->find();
+            clusters[root].push_back(coord);
+        }
+    });
 
     auto resolution = ivox.getVoxelResolution();
 
@@ -339,32 +405,80 @@ visualization_msgs::msg::MarkerArray makeUncertaintyMarkers(
     for (auto& [root, voxels] : clusters) {
 
         auto& gaus = root->gauss_ptr;
-        if (!gaus) continue; // safety check, should always have a Gaussian
+        if (!gaus || gaus->count <= 0) continue; 
 
-        for (const auto& key : voxels) {
+        for (const auto& coord : voxels) {
 
-            gauss_mapping::Point voxel_center;
-            voxel_center[0] = (key.x() + 0.5) * resolution;
-            voxel_center[1] = (key.y() + 0.5) * resolution;
-            voxel_center[2] = (key.z() + 0.5) * resolution;
+        gauss_mapping::Point voxel_center;
+        voxel_center[0] = (coord.x + 0.5) * resolution;
+        voxel_center[1] = (coord.y + 0.5) * resolution;
+        voxel_center[2] = (coord.z + 0.5) * resolution;
 
-            visualization_msgs::msg::Marker m;
+        visualization_msgs::msg::Marker m;
 
-            switch (gaus->type) {
-                case gauss_mapping::PrimitiveType::PLANE:
-                    m = makePlaneUncertaintyMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id);
-                    arr.markers.push_back(m);
-                    break;
+        switch (gaus->type) {
+            case gauss_mapping::PrimitiveType::PLANE:
+                m = makePlaneUncertaintyMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id);
+                arr.markers.push_back(m);
+                break;
 
-                default:
-                    break;
-            }
+            default:
+                break;
         }
-
+    }
     }
     
     return arr;
 }
+
+// visualization_msgs::msg::MarkerArray makeUncertaintyMarkers(
+//     const gauss_mapping::GaussianIVox& ivox,
+//     const rclcpp::Time& stamp,
+//     const std::string frame_id)
+// {
+//     visualization_msgs::msg::MarkerArray arr;
+
+//     std::unordered_map<gauss_mapping::UnionFindNode*, std::vector<Eigen::Vector3i>> clusters;
+
+//     // Build clusters based on Union-Find parents and assign colors
+//     for (const auto& [key, node] : ivox.map_) {
+//         auto root = node->find();
+//         clusters[root].push_back(key);
+//     }
+
+//     auto resolution = ivox.getVoxelResolution();
+
+//     // Visualize each voxel Gaussian primitive
+//     int id = 0;
+//     for (auto& [root, voxels] : clusters) {
+
+//         auto& gaus = root->gauss_ptr;
+//         if (!gaus) continue; // safety check, should always have a Gaussian
+
+//         for (const auto& key : voxels) {
+
+//             gauss_mapping::Point voxel_center;
+//             voxel_center[0] = (key.x() + 0.5) * resolution;
+//             voxel_center[1] = (key.y() + 0.5) * resolution;
+//             voxel_center[2] = (key.z() + 0.5) * resolution;
+
+//             visualization_msgs::msg::Marker m;
+
+//             switch (gaus->type) {
+//                 case gauss_mapping::PrimitiveType::PLANE:
+//                     m = makePlaneUncertaintyMarker(*gaus, voxel_center, resolution, id++, stamp, frame_id);
+//                     arr.markers.push_back(m);
+//                     break;
+
+//                 default:
+//                     break;
+//             }
+//         }
+
+//     }
+    
+//     return arr;
+// }
 
 visualization_msgs::msg::MarkerArray makeVoxelMarkers(
     const gauss_mapping::GaussianIVox& ivox,
@@ -372,7 +486,6 @@ visualization_msgs::msg::MarkerArray makeVoxelMarkers(
     const std::string frame_id)
 {
     visualization_msgs::msg::MarkerArray arr;
-    std::shared_lock lock(ivox.map_mtx_); // safe map access
 
     std::mt19937 gen(12345); // fixed seed for consistent cluster colors
     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
@@ -381,17 +494,23 @@ visualization_msgs::msg::MarkerArray makeVoxelMarkers(
     auto resolution = ivox.getVoxelResolution();
 
     int id = 0;
-    for (const auto& [key, node] : ivox.map_) {
-        auto* root = node->find();
+    
+    // Pulling grid const-reference safely to avoid the deleted copy constructor issue
+    const auto& map = ivox.getRawGrid();
+
+    map.forEachCell([&](const std::unique_ptr<gauss_mapping::UnionFindNode>& cell, const Bonxai::CoordT& coord) {
+        if (!cell) return;
+
+        gauss_mapping::UnionFindNode* root = cell->find();
         if (parent_colors.find(root) == parent_colors.end()) {
             parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
         }
-        auto [r,g,b] = parent_colors[root];
+        auto [r, g, b] = parent_colors[root];
 
         gauss_mapping::Point voxel_center_;
-        voxel_center_[0] = (key.x() + 0.5) * resolution;
-        voxel_center_[1] = (key.y() + 0.5) * resolution;
-        voxel_center_[2] = (key.z() + 0.5) * resolution;
+        voxel_center_[0] = (coord.x + 0.5) * resolution;
+        voxel_center_[1] = (coord.y + 0.5) * resolution;
+        voxel_center_[2] = (coord.z + 0.5) * resolution;
 
         // --- Voxel cube ---
         visualization_msgs::msg::Marker m;
@@ -409,13 +528,62 @@ visualization_msgs::msg::MarkerArray makeVoxelMarkers(
         m.scale.y = resolution;
         m.scale.z = resolution;
         m.color.r = r; m.color.g = g; m.color.b = b; m.color.a = 0.2f;
+        
         arr.markers.push_back(m);
-
-        // --- Optional: Add text marker with point count ---
-    }
+    });
     
     return arr;
 }
+
+// visualization_msgs::msg::MarkerArray makeVoxelMarkers(
+//     const gauss_mapping::GaussianIVox& ivox,
+//     const rclcpp::Time& stamp,
+//     const std::string frame_id)
+// {
+//     visualization_msgs::msg::MarkerArray arr;
+
+//     std::mt19937 gen(12345); // fixed seed for consistent cluster colors
+//     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+//     std::unordered_map<gauss_mapping::UnionFindNode*, std::tuple<float,float,float>> parent_colors;
+
+//     auto resolution = ivox.getVoxelResolution();
+
+//     int id = 0;
+//     for (const auto& [key, node] : ivox.map_) {
+//         auto* root = node->find();
+//         if (parent_colors.find(root) == parent_colors.end()) {
+//             parent_colors[root] = {dis(gen), dis(gen), dis(gen)};
+//         }
+//         auto [r,g,b] = parent_colors[root];
+
+//         gauss_mapping::Point voxel_center_;
+//         voxel_center_[0] = (key.x() + 0.5) * resolution;
+//         voxel_center_[1] = (key.y() + 0.5) * resolution;
+//         voxel_center_[2] = (key.z() + 0.5) * resolution;
+
+//         // --- Voxel cube ---
+//         visualization_msgs::msg::Marker m;
+//         m.header.frame_id = frame_id;
+//         m.header.stamp = stamp;
+//         m.ns = "gilda_voxels";
+//         m.id = id++;
+//         m.type = visualization_msgs::msg::Marker::CUBE;
+//         m.action = visualization_msgs::msg::Marker::ADD;
+//         m.pose.position.x = voxel_center_[0];
+//         m.pose.position.y = voxel_center_[1];
+//         m.pose.position.z = voxel_center_[2];
+//         m.pose.orientation.w = 1.0;
+//         m.scale.x = resolution;
+//         m.scale.y = resolution;
+//         m.scale.z = resolution;
+//         m.color.r = r; m.color.g = g; m.color.b = b; m.color.a = 0.2f;
+//         arr.markers.push_back(m);
+
+//         // --- Optional: Add text marker with point count ---
+//     }
+    
+//     return arr;
+// }
 
 
 } // namespace ros_visuals
