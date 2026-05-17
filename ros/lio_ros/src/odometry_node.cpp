@@ -380,7 +380,7 @@ class LIOwrapper : public rclcpp::Node
 
         void fromLimoToROS(const lio_ros::State& in, nav_msgs::msg::Odometry& out){
             out.header.stamp = this->get_clock()->now();
-            out.header.frame_id = "map";
+            out.header.frame_id = world_frame;
 
             // Pose/Attitude
             Eigen::Vector3d pos = in.p.cast<double>();
