@@ -147,11 +147,17 @@ public:
     // Access filter covariance
     MatDoF getCovariance() const { return P_; }
 
+    // Access process noise
+    NoiseMatrix getProcessNoise() const { return Q_; }
+
     // Access state
     Group getState() const { return X_; }
 
     // Set filter covariance
     void setCovariance(const MatDoF& P) { P_ = P; }
+
+    // Set propagation noise
+    void setProcessNoise(const NoiseMatrix& Q) { Q_ = Q; }
 
     // Set state
     void setState(const Group& X) { X_ = X; }

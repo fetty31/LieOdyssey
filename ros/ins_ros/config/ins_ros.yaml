@@ -1,0 +1,27 @@
+# Config
+
+ins_ros_node:
+  ros__parameters:
+    topics:
+      input:
+        gps: /input/gps
+        imu: /input/imu
+        wheel_odom: /input/wheel_odom
+        pose: /input/pose
+        mag: /input/mag
+        baro: /input/baro
+
+    frames: # output frames (the transform between frames will be broadcasted)
+      world: map
+      body: base_link
+      tf_pub: true
+
+    iESEKF:  # Iterative Error-State Kalman Filter on Manifolds
+      MAX_NUM_ITERS: 3                # max num of iterations of the KF (limits comp. load)
+      TOLERANCE: 0.001                     
+
+      covariance:
+        gyro: 0.015
+        accel: 0.15
+        bias_gyro: 1.54e-5
+        bias_accel: 3.38e-4

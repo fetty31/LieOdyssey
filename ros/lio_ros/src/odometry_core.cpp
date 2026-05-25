@@ -59,6 +59,24 @@ void lio_ros::OdometryCore::initialize(const lio_ros::Config& config)
     }
 }
 
+// Get current state (baselink) in world frame
+lio_ros::State lio_ros::OdometryCore::getState() const {
+    auto state = state_; // copy
+    state.v = state.q.toRotationMatrix().transpose() * state.v; // body-centered velocity
+    return state;
+}
+
+// Get current state (lidar) in world frame 
+lio_ros::State lio_ros::OdometryCore::getLiDARState() const {
+    auto state = state_; // copy
+
+    state.p -= this->config_.lidar_extr.translation();                      // position in LiDAR frame
+    state.q = this->config_.lidar_extr.rotation().transpose() * state.q;    // attitude in LiDAR frame
+    state.v = state.q.toRotationMatrix().transpose() * state.v;             // body-centered velocity
+
+    return state;
+} 
+
 // Process IMU measurement (propagate state)
 void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
 {

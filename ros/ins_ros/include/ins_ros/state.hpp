@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Dense>
+
 namespace ins_ros {
 
 struct State {
@@ -7,7 +9,7 @@ struct State {
     using Scalar = double;
     using V3 = Eigen::Matrix<Scalar, 3, 1>;
     using Quat = Eigen::Quaternion<Scalar>;
-    using Isometry = Eigen::Isometry<Scalar, 3>;
+    using Isometry = Eigen::Transform<Scalar, 3, Eigen::Isometry>;
 
     V3 p{V3::Zero()};            // position (world)
     Quat q{Quat::Identity()};    // orientation (world)

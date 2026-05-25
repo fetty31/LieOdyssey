@@ -99,6 +99,8 @@ typename Filter::Tangent ins_ros::iESEKF::f_state(const ins_ros::State& state)
 	// xi = [ rho(3); nu(3); theta(3); s(1) ] 
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
+	auto R = state.q.toRotationMatrix(); // orientation estimate
+
 	// nu (linear acceleration contribution)
 	t.template segment<3>(3) = (state.a - state.bias.a /* -n_a */) - R.transpose() * state.g;
 

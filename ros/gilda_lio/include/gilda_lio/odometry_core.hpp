@@ -30,10 +30,10 @@ public:
     void pointToPlaneResidual(const iESEKF::Group& X_now, iESEKF::Measurement& z, iESEKF::HMat& H);
 
     // Get current state (baselink) in world frame
-    State getState() const { return state_; }
+    State getState() const;
 
     // Get current state (lidar) in world frame 
-    State getLiDARState() const { return state_; } // To-Do: take into account extrinsics
+    State getLiDARState() const;
 
     // Get last processed scan transformed to world frame
     pcl::PointCloud<LioPointType>::Ptr getWorldScan() const { return world_scan_; }

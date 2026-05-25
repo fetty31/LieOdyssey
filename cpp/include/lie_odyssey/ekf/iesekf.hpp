@@ -88,7 +88,7 @@ public:
                 std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
     {
 
-        Group X_now = X_;   // predicted state (reference frame)
+        Group X_now = X_;     // predicted state (reference frame)
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
         
@@ -307,6 +307,9 @@ public:
     // Access filter covariance
     MatDoF getCovariance() const { return P_; }
 
+    // Access process noise
+    NoiseMatrix getProcessNoise() const { return Q_; }
+
     // Access state
     Group getState() const { return X_; }
 
@@ -318,6 +321,9 @@ public:
 
     // Set filter covariance
     void setCovariance(const MatDoF& P) { P_ = P; }
+
+    // Set propagation noise
+    void setProcessNoise(const NoiseMatrix& Q) { Q_ = Q; }
 
     // Set state
     void setState(const Group& X) { X_ = X; }
