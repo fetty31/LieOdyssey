@@ -35,6 +35,10 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     filter_.setMaxIters(5);
     filter_.setTolerance(1e-9);
 
+    // Set buffer capacity
+    this->imu_buffer_.set_capacity(2000);
+    this->state_buffer_.set_capacity(2000);
+
     // Initialize state 
     initState();
 
@@ -85,6 +89,9 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
 
     filter_.reset();
 
+    state_buffer_.clear();
+    imu_buffer_.clear();
+
     RCLCPP_INFO(get_logger(), "INSEstimator cleaned up");
     return CallbackReturn::SUCCESS;
 }
@@ -119,6 +126,9 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+
+    state_buffer_.clear();
+    imu_buffer_.clear();
 
     return CallbackReturn::SUCCESS;
 }
@@ -155,29 +165,49 @@ void INSEstimator::load_parameters()
 
 void INSEstimator::setup_subscriptions()
 {
+    if(imu_topic_.empty())
+    {
+        RCLCPP_ERROR(get_logger(), "IMU topic is not set. Please set 'topics.input.imu' parameter.");
+        throw std::runtime_error("IMU topic not set");
+    }
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         imu_topic_, 1000,
         std::bind(&INSEstimator::imu_callback, this, std::placeholders::_1));
 
-    gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
-        gps_topic_, 10,
-        std::bind(&INSEstimator::gps_callback, this, std::placeholders::_1));
+    if(!gps_topic_.empty())
+    {
+        gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
+            gps_topic_, 10,
+            std::bind(&INSEstimator::gps_callback, this, std::placeholders::_1));
+    }
 
-    wheel_odom_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-        wheel_odom_topic_, 10,
-        std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
+    if(!wheel_odom_topic_.empty())
+    {
+        wheel_odom_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
+            wheel_odom_topic_, 10,
+            std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
+    }
 
-    pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-        pose_topic_, 10,
-        std::bind(&INSEstimator::pose_callback, this, std::placeholders::_1));
+    if(!pose_topic_.empty())
+    {
+        pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+            pose_topic_, 10,
+            std::bind(&INSEstimator::pose_callback, this, std::placeholders::_1));
+    }
 
-    mag_sub_ = create_subscription<sensor_msgs::msg::MagneticField>(
-        mag_topic_, 10,
-        std::bind(&INSEstimator::mag_callback, this, std::placeholders::_1));
+    if(!mag_topic_.empty())
+    {
+        mag_sub_ = create_subscription<sensor_msgs::msg::MagneticField>(
+            mag_topic_, 10,
+            std::bind(&INSEstimator::mag_callback, this, std::placeholders::_1));
+    }
 
+    if(!baro_topic_.empty())
+    {   
     baro_sub_ = create_subscription<sensor_msgs::msg::FluidPressure>(
         baro_topic_, 10,
         std::bind(&INSEstimator::baro_callback, this, std::placeholders::_1));
+    }
 }
 
 void INSEstimator::setup_publishers()
@@ -190,8 +220,6 @@ void INSEstimator::initState()
 {
     iESEKF::Group group;
     iESEKF::state_to_group(this->state_, group);
-
-    group_ = group; // store initial group state (debugging)
 
     this->filter_.setState(group); // set initial state
 }
@@ -215,12 +243,10 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     last_imu_stamp_ = imu.stamp;
 
     // Filter prediction
-    // filter_.predict(imu);
-    group_.plus(iESEKF::f(filter_, imu) * imu.dt ); // manual integration for debugging
+    filter_.predict(imu);
 
     // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    iESEKF::group_to_state(group_, state_);
+    iESEKF::group_to_state(filter_.getState(), state_);
     state_.time = imu.stamp;
 
     // Publish
@@ -237,22 +263,47 @@ void INSEstimator::gps_callback(const sensor_msgs::msg::NavSatFix& msg)
 {
     (void)msg;
 
+    // To-Do: convert GPS measurement to filter frame (e.g., ENU) and store in iESEKF::Measurement format
+    iESEKF::Measurement meas = iESEKF::Measurement::Zero(3); // placeholder, replace with actual conversion
+
     // GPS measurement update
-    Eigen::MatrixXd R_gps    = Eigen::Matrix3d::Identity() * gps_noise_;
+    Eigen::MatrixXd R_gps    = Eigen::Matrix3d::Identity() * gps_noise_ * gps_noise_;
     Eigen::MatrixXd R_gps_inv= R_gps.inverse();
 
-    filter_.update<iESEKF::Measurement, iESEKF::HMat>(
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
         R_gps, R_gps_inv,
         ins_ros::iESEKF::gps::H_fun);
 
     // Update local state
     iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
 {
-    (void)msg;
-    // To-Do: implement wheel odometry update
+    iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
+    meas(0) = msg.twist.linear.x;
+    meas(1) = msg.twist.linear.y;
+    // meas(2) = msg.twist.linear.z;
+
+    // Wheel odometry measurement update
+    Eigen::MatrixXd R_w     = Eigen::Matrix3d::Identity() * gps_noise_ * gps_noise_; // example noise, adjust as needed
+    Eigen::MatrixXd R_w_inv = R_w.inverse();
+
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
+        R_w, R_w_inv,
+        ins_ros::iESEKF::wheel::H_fun);
+
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
+
+    // Publish
+    nav_msgs::msg::Odometry state_msg;
+    from_ins_to_ros(state_, state_msg);
+    state_pub_->publish(state_msg);
 }
 
 void INSEstimator::pose_callback(const geometry_msgs::msg::PoseStamped& msg)

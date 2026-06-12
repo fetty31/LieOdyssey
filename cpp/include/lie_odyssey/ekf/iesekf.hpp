@@ -78,13 +78,13 @@ public:
     // R_inv: measurement noise inverse
     // h_fun: measurement function returning residual (y-ypred)
     // H_fun: Jacobian of measurement w.r.t tangent function
-    template <typename Measurement, typename HMat>
+    template <typename Measurement, typename Residual, typename HMat>
     void update(const Measurement& y,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
-                std::function<Measurement(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
+                std::function<Residual(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
                 std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
     {
 
@@ -106,7 +106,82 @@ public:
             HMat H = H_fun(*this, X_now);     // (Eigen::Dynamic x DoF) = (N measurements x DoF)
 
             // Residual at this point
-            Measurement r = h_fun(*this, X_now, y);   // y - h(X ⊕ dx)
+            Residual r = h_fun(*this, X_now, y);   // y - h(X ⊕ dx)
+
+            // Update covariance
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();           // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
+
+            K = aux * H.transpose() * R_inv;
+            KH = K*H;
+
+            // Update error state
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
+
+            // Update state
+            X_now.plus(dx);
+
+            // Check convergence
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        // Apply final correction
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // R: measurement noise
+    // R_inv: measurement noise inverse
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename Residual, typename HMat>
+    void update(const Measurement& y,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
+                std::function<void(const iESEKF<Group>&, const Group&, const Measurement&, Residual&, HMat&)> H_fun)
+    {
+
+        Group X_now = X_;   // predicted state (reference frame)
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+        
+
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+
+        for(int iter=0; iter < max_iters_; ++iter) {
+
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
+            X_now.plus(dx);                   // new linearization point X ⊕ dx
+
+            // Get residual and linearized measurement model
+            Residual r;
+            HMat H;
+            H_fun(*this, X_now, y, r, H);    // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             // Update covariance
             Jacobian J_inv = J.inverse();

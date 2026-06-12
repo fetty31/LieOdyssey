@@ -35,6 +35,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/circular_buffer.hpp>
+
 #include <Eigen/Geometry>
 
 namespace ins_ros {
@@ -97,10 +99,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // EKF
         iESEKF::Filter filter_;
 
-        iESEKF::Group   group_; // debugging
-
         // State
         ins_ros::State state_;
+
+        // Buffers
+        boost::circular_buffer<ins_ros::State> state_buffer_;
+        boost::circular_buffer<lie_odyssey::IMUmeas> imu_buffer_;
 
         // Parameters
         std::string world_frame_;
