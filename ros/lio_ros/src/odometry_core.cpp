@@ -1,6 +1,14 @@
 #include "lio_ros/odometry_core.hpp"
 
-lio_ros::OdometryCore::OdometryCore() 
+lio_ros::OdometryCore::OdometryCore() : 
+    selection_mat_([] {
+        Eigen::Matrix<iESEKF::Scalar,
+                      iESEKF::MeasDoF,
+                      iESEKF::Bundle::DoF> m;
+        m.setZero();
+        m.template block<10,10>(0,0).setIdentity();
+        return m;
+    }())
 {
     this->deskewed_scan_  = pcl::PointCloud<LioPointType>::ConstPtr (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
     this->world_scan_     = pcl::PointCloud<LioPointType>::Ptr (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
@@ -297,6 +305,7 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
         this->filter_->update
                 <iESEKF::Measurement, 
                 iESEKF::HMat> (static_cast<iESEKF::Scalar>(config_.lidar_noise),
+                                selection_mat_,
                                 iESEKF::H_fun /*Measurement function*/);
         /*NOTE: update() will trigger the matching procedure
         in order to update the measurement stage of the KF with the computed point-to-plane distances*/
@@ -380,7 +389,7 @@ void lio_ros::OdometryCore::pointToPlaneResidual(const iESEKF::Group& X_now, iES
     std::size_t N = (matches.size() > max_matches) ? 
                     max_matches : matches.size();
 
-    H = iESEKF::HMat::Zero(N, iESEKF::Bundle::DoF);
+    H = iESEKF::HMat::Zero(N, iESEKF::MeasDoF);
     z.resize(N);
 
     // For each match, calculate its derivative and distance

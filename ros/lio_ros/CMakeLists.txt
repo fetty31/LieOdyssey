@@ -9,7 +9,7 @@ endif()
 
 option(USE_PROFILING "Activate profiling" OFF)
 
-set(CMAKE_BUILD_TYPE "Release")
+# set(CMAKE_BUILD_TYPE "Release")
 
 find_package( PCL 1.12 REQUIRED )
 include_directories(${PCL_INCLUDE_DIRS})

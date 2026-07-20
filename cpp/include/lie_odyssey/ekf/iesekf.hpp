@@ -308,7 +308,7 @@ public:
 
         using MatDyn = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
 
-        Group X_now = X_;   // predicted state (reference frame)
+        Group X_now = X_;     // predicted state (reference frame)
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
 
@@ -368,9 +368,113 @@ public:
 
         // Enforce symmetry
         P_ = 0.5 * (P_ + P_.transpose());
+    }
 
-        // Covariance update
-        // P_ = (MatDoF::Identity() - KH) * P_now;
+    // -------------------- Measurement Update --------------------
+    // R: scalar measurement noise (same for all measurements)
+    // S: selection matrix (select which DoF to update)
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename HMat>
+    void update(Scalar R,
+                const Eigen::Matrix<Scalar, Eigen::Dynamic, DoF>& S,
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+    {
+        using MatDyn = Eigen::Matrix<Scalar,Eigen::Dynamic,Eigen::Dynamic>;
+        using HFull  = Eigen::Matrix<Scalar,Eigen::Dynamic,DoF>;
+
+        int subDoF = S.rows();
+        MatDyn Rmatsub = MatDyn::Identity(subDoF, subDoF) * R;
+        MatDoF Rmat = MatDoF::Identity() * R;
+
+        Group X_now = X_;  // predicted state (reference frame)
+
+        MatDoF P_pred = P_; // fixed predicted covariance (P̂_k)
+        MatDoF P_now;       // transformed covariance (P^κ)
+
+        Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K;
+        MatDyn K_sub; 
+        MatDoF KH;
+
+        for(int iter = 0; iter < max_iters_; ++iter)
+        {
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);
+
+            X_now.plus(dx);
+
+            // User supplies Jacobian only wrt active state
+            Measurement r;
+            HMat H_sub; 
+
+            H_fun(*this, X_now, r, H_sub);  // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
+                                            // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Reduced covariance
+            MatDyn Pss = S * P_now * S.transpose(); // active block (subDoF x subDoF)
+
+            // Cross covariance
+            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> Pxs = P_now * S.transpose(); // (DoF x subDoF)
+
+// // Kalman gain
+// auto innovation =
+//     (H_sub * Pss * H_sub.transpose()).eval() + Rmatsub;
+
+// K = Pxs * H_sub.transpose() * innovation.inverse();
+
+// // Full-state Jacobian
+// HFull H_full = H_sub * S;
+
+// KH = K * H_full;
+
+// // IEKF correction
+// dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDyn HRH = H_sub.transpose() * H_sub / R;   // (HT R^−1 H)
+            MatDyn aux = Pss.inverse();                   // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                          // (HT R^−1 H + P^−1)^−1
+
+            // Full-state Jacobian
+            HFull H_full = H_sub * S;
+            
+            // Reduced gain
+            K_sub = aux * H_sub.transpose() / R;
+            // K_sub = aux * Pxs * H_sub.transpose() / R;
+
+            // Full gain
+            K = S.transpose() * K_sub;
+            KH = K * H_full;
+
+            // Update error state
+            dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            degeneracy_callback_(
+                *this,
+                dx,
+                H_full.transpose() * H_full / R
+            );
+
+            X_now.plus(dx);
+
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * Rmat * K.transpose();
+
+        P_ = Scalar(0.5) * (P_ + P_.transpose());
     }
 
     void reset() 

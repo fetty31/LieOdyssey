@@ -183,7 +183,7 @@ void lio_ros::iESEKF::fill_H_point_to_plane(const Group& group,
 	SGal3_s.act(point, J_dX);
 
 	// Fill H with state part
-	H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
+	H = (normal.transpose() * J_dX).eval();
 }
 
 void lio_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)

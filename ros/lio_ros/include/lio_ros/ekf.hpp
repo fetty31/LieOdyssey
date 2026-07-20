@@ -24,7 +24,8 @@ using Tangent = Filter::Tangent;
 using MatDoF  = Filter::MatDoF;
 
 using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
-using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
+constexpr int MeasDoF = 10;                                  // Measured Group DoF (SGal3 DoF)
+using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, MeasDoF>; // Measurement Jacobian (N measurement x Measured Group DoF)
 
 // Type-conversion helper
 void group_to_state(const Group& g, lio_ros::State& state);
