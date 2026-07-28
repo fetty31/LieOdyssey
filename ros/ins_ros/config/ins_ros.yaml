@@ -12,7 +12,7 @@ ins_ros_node:
         baro: /input/baro
 
     frames: # output frames (the transform between frames will be broadcasted)
-      world: map
+      world: odom
       body: base_link
       tf_pub: true
 

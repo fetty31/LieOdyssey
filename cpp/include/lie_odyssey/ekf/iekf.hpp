@@ -27,9 +27,9 @@ public:
     using MappingMatrix = Eigen::Matrix<Scalar, DoF, 12>;
 
     // User-defined dynamics (Invariant dynamics: \dot{X} = f(X, u))
-    using TangentFunction = std::function<Tangent(const InvariantEKF<Group>&, const IMUmeas&)>;
-    using JacobianXFun  = std::function<Jacobian(const InvariantEKF<Group>&, const IMUmeas&)>;
-    using JacobianWFun  = std::function<MappingMatrix(const InvariantEKF<Group>&, const IMUmeas&)>;
+    using TangentFunction = std::function<Tangent(const InvariantEKF<Group>&, const IMUmeas<Scalar>&)>;
+    using JacobianXFun  = std::function<Jacobian(const InvariantEKF<Group>&, const IMUmeas<Scalar>&)>;
+    using JacobianWFun  = std::function<MappingMatrix(const InvariantEKF<Group>&, const IMUmeas<Scalar>&)>;
     using DegeneracyCallback = std::function<void(const InvariantEKF<Group>&, Tangent&, const MatDoF&)>;
 
     InvariantEKF(
@@ -44,13 +44,13 @@ public:
     {
         // Provide safe defaults (identity dynamics)
         if (!f_) {
-            f_ = [](const InvariantEKF<Group>&, const IMUmeas&) { return VecTangent::Zero(); }; // cast
+            f_ = [](const InvariantEKF<Group>&, const IMUmeas<Scalar>&) { return VecTangent::Zero(); }; // cast
         }
         if (!f_dx_) {
-            f_dx_ = [](const InvariantEKF<Group>&, const IMUmeas&) { return Jacobian::Identity(); };
+            f_dx_ = [](const InvariantEKF<Group>&, const IMUmeas<Scalar>&) { return Jacobian::Identity(); };
         }
         if (!f_dw_) {
-            f_dw_ = [](const InvariantEKF<Group>&, const IMUmeas&) { return MappingMatrix::Zero(); };
+            f_dw_ = [](const InvariantEKF<Group>&, const IMUmeas<Scalar>&) { return MappingMatrix::Zero(); };
         }
 
         // Safe callback, do not handle degeneracy
@@ -60,7 +60,7 @@ public:
     }
 
     // -------------------- Prediction --------------------
-    virtual void predict(const IMUmeas& imu) 
+    virtual void predict(const IMUmeas<Scalar>& imu) 
     {
         // 1. Predict State: \hat{X}_{k+1} = \hat{X}_k \exp(f(u) * dt)
         // In RI-EKF, we usually integrate the group element directly

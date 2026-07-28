@@ -90,10 +90,10 @@ struct PreintegrationTraits<SGal3<Scalar>> {
         G.setZero();
         
         // nu: ∂nu/∂n_a = dt * I
-        G.template block<3,3>(3,3) = Mat3::Identity() * dt;
+        G.template block<3,3>(3,0) = Mat3::Identity() * dt;
 
         // theta: ∂theta/∂n_g = dt * I
-        G.template block<3,3>(6,0) = Mat3::Identity() * dt;
+        G.template block<3,3>(6,3) = Mat3::Identity() * dt;
 
         // rho: ∂rho/∂n_g = 0, ∂rho/∂n_a = 0
         // s: zeros
@@ -148,7 +148,7 @@ struct PreintegrationTraits<SO3<Scalar>> {
     {
         G.setZero();
         // rotation affected by gyro noise
-        G.template block<3,3>(3,0) = Mat3::Identity() * dt; // ∂θ/∂n_g = dt * I
+        G.template block<3,3>(0,3) = Mat3::Identity() * dt; // ∂θ/∂n_g = dt * I
     }
 
     // correction from small bias deltas
@@ -204,9 +204,9 @@ struct PreintegrationTraits<SE3<Scalar>> {
     {
         G.setZero();
         // translation affected by accel noise
-        G.template block<3,3>(0,3) = Scalar(0.5) * Mat3::Identity() * dt * dt;
+        G.template block<3,3>(0,0) = Scalar(0.5) * Mat3::Identity() * dt * dt;
         // rotation affected by gyro noise
-        G.template block<3,3>(3,0) = Mat3::Identity() * dt;
+        G.template block<3,3>(3,3) = Mat3::Identity() * dt;
     }
 
     static Tangent get_correction(const Eigen::Matrix<Scalar,6,3>& J_ba,
@@ -234,14 +234,15 @@ struct PreintegrationTraits<SE2_3<Scalar>> {
     {
         VecTangent tangent = VecTangent::Zero();
 
-        // translation increment 
-        tangent.template segment<3>(0) = Scalar(0.5) * acc_unbiased * dt * dt;
-
-        // velocity increment
-        tangent.template segment<3>(3) = acc_unbiased * dt;
+        // translation increment:
+        tangent.template segment<3>(0) = dX.impl().v() * dt
+                                        + Scalar(0.5) * acc_unbiased * dt * dt;
 
         // rotation increment
-        tangent.template segment<3>(6) = omega_unbiased * dt;
+        tangent.template segment<3>(3) = omega_unbiased * dt;
+
+        // velocity increment
+        tangent.template segment<3>(6) = acc_unbiased * dt;
 
         return tangent;
     }
@@ -250,28 +251,36 @@ struct PreintegrationTraits<SE2_3<Scalar>> {
                              Eigen::Matrix<Scalar,9,3>& dxi_dbg,
                              Scalar dt)
     {
+        /* Note: in manif the tangent elements order in SE23 
+        is not consistent with SGal3:
+            - SE23: [position, rotation, velocity]
+            - SGal3: [position, velocity, rotation, time]
+        */
         dxi_dba.setZero();
         dxi_dbg.setZero();
 
         // rotation bias affects rotation
-        dxi_dbg.template block<3,3>(6,0) = -Mat3::Identity() * dt;
+        dxi_dbg.template block<3,3>(3,0) = -Mat3::Identity() * dt;
 
-        // accel bias affects velocity and translation
-        dxi_dba.template block<3,3>(3,0) = -Mat3::Identity() * dt;
+        // accel bias affects position
         dxi_dba.template block<3,3>(0,0) = -Scalar(0.5) * Mat3::Identity() * dt * dt;
+
+        // accel bias affects velocity
+        dxi_dba.template block<3,3>(6,0) = -Mat3::Identity() * dt;
     }
 
     static void get_meas_noise(Eigen::Matrix<Scalar,9,6>& G, Scalar dt)
     {
         G.setZero();
-        // translation rho: 0.5*dt^2 * I (acc)
-        G.template block<3,3>(0,3) = Scalar(0.5) * Mat3::Identity() * dt * dt;
+        // translation rho: 
+        G.template block<3,3>(0,0) =
+            Scalar(0.5) * Mat3::Identity() * dt * dt;
 
         // velocity nu: dt * I (acc)
-        G.template block<3,3>(3,3) = Mat3::Identity() * dt;
+        G.template block<3,3>(6,0) = Mat3::Identity() * dt;
 
         // rotation theta: dt * I (gyro)
-        G.template block<3,3>(6,0) = Mat3::Identity() * dt;
+        G.template block<3,3>(3,3) = Mat3::Identity() * dt;
     }
 
     static Tangent get_correction(const Eigen::Matrix<Scalar,9,3>& J_ba,

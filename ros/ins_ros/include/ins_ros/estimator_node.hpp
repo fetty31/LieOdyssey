@@ -87,7 +87,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void setup_publishers();
 
         // --- ROS <-> Library conversion helpers ---
-        void from_ros_to_ins(const sensor_msgs::msg::Imu& in, lie_odyssey::IMUmeas& out);
+        void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
         void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
         void from_ins_to_ros_pose(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
         void broadcast_tf(const ins_ros::State& in, bool now = true);
@@ -104,7 +104,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Buffers
         boost::circular_buffer<ins_ros::State> state_buffer_;
-        boost::circular_buffer<lie_odyssey::IMUmeas> imu_buffer_;
+        boost::circular_buffer<iESEKF::IMUmeas> imu_buffer_;
 
         // Parameters
         std::string world_frame_;

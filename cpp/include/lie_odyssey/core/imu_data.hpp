@@ -3,26 +3,28 @@
 
 namespace lie_odyssey {
 
+template <typename Scalar>
 struct IMUbias // IMU bias in base_link/body frame 
 { 
-    Eigen::Vector3d gyro;
-    Eigen::Vector3d accel;
+    Eigen::Matrix<Scalar,3,1> gyro;
+    Eigen::Matrix<Scalar,3,1> accel;
 
-    IMUbias() : gyro(Eigen::Vector3d::Zero()),
-                accel(Eigen::Vector3d::Zero())
+    IMUbias() : gyro(Eigen::Matrix<Scalar,3,1>::Zero()),
+                accel(Eigen::Matrix<Scalar,3,1>::Zero())
                 { }
 };                    
 
+template <typename Scalar>
 struct IMUmeas // IMU measurement
 { 
     double stamp;
     double dt; // defined as the difference between the current and the previous measurement
-    Eigen::Vector3d gyro;
-    Eigen::Vector3d accel;
-    IMUbias bias;
+    Eigen::Matrix<Scalar,3,1> gyro;
+    Eigen::Matrix<Scalar,3,1> accel;
+    IMUbias<Scalar> bias;
 
-    IMUmeas() : gyro(Eigen::Vector3d::Zero()),
-                accel(Eigen::Vector3d::Zero()),
+    IMUmeas() : gyro(Eigen::Matrix<Scalar,3,1>::Zero()),
+                accel(Eigen::Matrix<Scalar,3,1>::Zero()),
                 dt(0.0),
                 stamp(-1.0)
                 { }

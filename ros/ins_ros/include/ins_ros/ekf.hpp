@@ -7,8 +7,10 @@ namespace ins_ros::iESEKF {
 
 using Scalar = ins_ros::State::Scalar;
 
+using IMUmeas = lie_odyssey::IMUmeas<Scalar>;
+
 using Bundle = lie_odyssey::BundleManif<Scalar, 
-                                    manif::SGal3,   // pose + velocity 
+                                    manif::SGal3,   // pose + velocity + time 
                                     manif::R3,      // angular velocity bias
                                     manif::R3,      // acceleration bias
                                     manif::R3       // gravity 
@@ -32,13 +34,13 @@ std::vector<double> get_pose_covariance(const MatDoF& P);
 std::vector<double> get_velocity_covariance(const MatDoF& P);
 
 // Propagation model (IMU dynamics)
-typename Filter::Tangent f(const Filter& kf, const lie_odyssey::IMUmeas& imu);
+typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
 typename Filter::Tangent f_state(const ins_ros::State& state);
 
 // Jacobians of the dynamics
-typename Filter::Jacobian df_dx(const Filter& kf, const lie_odyssey::IMUmeas& imu);
+typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
 
-typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const lie_odyssey::IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
 
 // Degeneracy handler
 void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);

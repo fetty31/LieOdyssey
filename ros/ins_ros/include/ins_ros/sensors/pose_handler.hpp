@@ -18,7 +18,11 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     using Tangent = SGal3::Tangent;
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
 
-    // Build dummy measurement SGal3 element
+    using SGal3 = manif::SGal3<iESEKF::Scalar>;
+    using Tangent = SGal3::Tangent;
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    
+    // Build measurement SGal3 element
     // State::Quat q_meas = State::Quat::Identity(); // example orientation measurement
     // State::V3 p_meas = State::V3::Zero(); // example position measurement
     // State::V3 v_dummy = State::V3::Zero();

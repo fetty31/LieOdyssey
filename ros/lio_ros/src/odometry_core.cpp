@@ -86,7 +86,7 @@ lio_ros::State lio_ros::OdometryCore::getLiDARState() const {
 } 
 
 // Process IMU measurement (propagate state)
-void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::processIMU(iESEKF::IMUmeas& imu)
 {
     LIO_PROFILE_FUNCTION(profiler_);
 
@@ -466,7 +466,7 @@ void lio_ros::OdometryCore::initState() {
     this->filter_->setState(group); // set initial state
 }
 
-void lio_ros::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::imuToBody(iESEKF::IMUmeas& imu)
 {
     double dt = imu.stamp - this->last_imu_stamp_;
     
@@ -495,7 +495,7 @@ void lio_ros::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
     this->last_imu_stamp_ = imu.stamp;
 }
 
-void lio_ros::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::propagateIMU(const iESEKF::IMUmeas& imu)
 {
     // Propagate IMU measurement
     this->mtx_filter.lock();

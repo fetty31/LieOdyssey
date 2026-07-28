@@ -64,7 +64,7 @@ std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P)
     return cov;
 }
 
-typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const lie_odyssey::IMUmeas& imu) 
+typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -107,8 +107,7 @@ typename Filter::Tangent ins_ros::iESEKF::f_state(const ins_ros::State& state)
 	// theta (angular velocity contribution)
 	t.template segment<3>(6) = (state.w - state.bias.w /* -n_w */);
 
-	// rho (position): 
-	t.template segment<3>(0) = state.v; // p ⊞ v*dt
+	// rho (position): zero
 
 	// s (time)
 	t(9) = Scalar(1);
@@ -116,7 +115,7 @@ typename Filter::Tangent ins_ros::iESEKF::f_state(const ins_ros::State& state)
     return t; // cast to Tangent
 }
 
-typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const lie_odyssey::IMUmeas& /*imu*/) 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas& /*imu*/) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -140,7 +139,7 @@ typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const lie_ody
     return Jx;
 }
 
-typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, const lie_odyssey::IMUmeas& /*imu*/) 
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();

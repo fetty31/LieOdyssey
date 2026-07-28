@@ -87,7 +87,7 @@ gilda_lio::State gilda_lio::OdometryCore::getLiDARState() const {
 } 
 
 // Process IMU measurement (propagate state)
-void gilda_lio::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::processIMU(iESEKF::IMUmeas& imu)
 {
     GILDA_PROFILE_FUNCTION(profiler_);
 
@@ -472,7 +472,7 @@ void gilda_lio::OdometryCore::initState() {
     this->filter_->setState(group); // set initial state
 }
 
-void gilda_lio::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::imuToBody(iESEKF::IMUmeas& imu)
 {
     double dt = imu.stamp - this->last_imu_stamp_;
     
@@ -501,7 +501,7 @@ void gilda_lio::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
     this->last_imu_stamp_ = imu.stamp;
 }
 
-void gilda_lio::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::propagateIMU(const iESEKF::IMUmeas& imu)
 {
     // Propagate IMU measurement
     this->mtx_filter.lock();

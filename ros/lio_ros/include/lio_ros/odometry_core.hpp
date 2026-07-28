@@ -21,7 +21,7 @@ public:
     void initialize(const lio_ros::Config& config);
 
     // Process IMU measurement (propagate state)
-    void processIMU(lie_odyssey::IMUmeas& imu);
+    void processIMU(iESEKF::IMUmeas& imu);
 
     // Process LiDAR scan (update state with plane constraints)
     void processScan(const pcl::PointCloud<LioPointType>::Ptr& scan, double stamp);
@@ -63,8 +63,8 @@ public:
 private:
     void initFilter();
     void initState();
-    void imuToBody(lie_odyssey::IMUmeas& imu);
-    void propagateIMU(const lie_odyssey::IMUmeas& imu);
+    void imuToBody(iESEKF::IMUmeas& imu);
+    void propagateIMU(const iESEKF::IMUmeas& imu);
     std::vector<State> integrateImu(double start_time, double end_time);
     bool propagatedFromTimeRange(double start_time, double end_time,
                                 boost::circular_buffer<State>::reverse_iterator& begin_prop_it,
@@ -89,7 +89,7 @@ private:
     std::mutex mtx_filter;
 
     // Buffers
-    boost::circular_buffer<lie_odyssey::IMUmeas> imu_buffer_;
+    boost::circular_buffer<iESEKF::IMUmeas> imu_buffer_;
     boost::circular_buffer<State> state_buffer_;
     std::condition_variable cv_prop_stamp;
     std::mutex mtx_state_buf; // mutex for avoiding multiple thread access to the buffer
