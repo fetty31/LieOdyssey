@@ -43,7 +43,7 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     iESEKF::Scalar p_expected = pressure_at_altitude(z);
 
     // Residual: difference between expected and actual pressure
-    r(0) = (y * EXP_COEFFICIENT) - p_expected; // Convert sensor reading (hPa) to Pa
+    r(0) = y - p_expected; 
 
     H = iESEKF::HMat::Zero(1, DoF);
 

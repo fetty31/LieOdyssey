@@ -46,10 +46,7 @@ State::V3 lla_to_enu(const State::V3& llh, const State::V3& llh_origin) {
     State::V3 enu;
     
     // Convert degrees to radians
-    double lat = llh.x() * M_PI / 180.0;
-    double lon = llh.y() * M_PI / 180.0;
     double lat0 = llh_origin.x() * M_PI / 180.0;
-    double lon0 = llh_origin.y() * M_PI / 180.0;
     
     // Earth radius at latitude
     double R = WGS84_A;

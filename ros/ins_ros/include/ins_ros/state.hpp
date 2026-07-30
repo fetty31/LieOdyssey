@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <mutex>
 
 namespace ins_ros {
 
@@ -27,6 +28,8 @@ struct State {
     } bias;
 
     State() = default;
+
+    void update(double t);
 
     Isometry get_transform() const;
     Isometry get_inv_transform() const;

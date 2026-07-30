@@ -149,6 +149,7 @@ public:
     }
 
     // -------------------- Measurement Update --------------------
+    // y: measurement
     // R: measurement noise
     // R_inv: measurement noise inverse
     // H_fun: measurement function -> fills residual z and measurement jacobian H

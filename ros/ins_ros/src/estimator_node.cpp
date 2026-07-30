@@ -261,154 +261,141 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
 
 void INSEstimator::gps_callback(const sensor_msgs::msg::NavSatFix& msg)
 {
-    // using ins_ros::iESEKF::gps::WGS84_A;
+    using ins_ros::iESEKF::gps::WGS84_A;
 
-    // // Convert GPS message to latitude, longitude, altitude (lla)
-    // State::V3 llh;
-    // llh.x() = msg.latitude;
-    // llh.y() = msg.longitude;
-    // llh.z() = msg.altitude;
+    // Convert GPS message to latitude, longitude, altitude (lla)
+    State::V3 llh;
+    llh.x() = msg.latitude;
+    llh.y() = msg.longitude;
+    llh.z() = msg.altitude;
 
-    // // Convert LLA to ENU (relative to origin at state position)
-    // // Reference point: use state position as origin
-    // State::V3 llh_origin;
-    // // Convert state position (ENU) to LLA approximation
-    // // Note: This is a simplified conversion - use proper LLA conversion for accuracy
-    // llh_origin.x() = state_.p.y() / WGS84_A; // North (radians)
-    // llh_origin.y() = state_.p.x() / (WGS84_A * std::cos(llh_origin.x())); // East (radians)
-    // llh_origin.z() = -state_.p.z(); // Altitude (meters)
+    // Convert LLA to ENU (relative to origin at state position)
+    // Reference point: use state position as origin
+    State::V3 llh_origin;
+    // Convert state position (ENU) to LLA approximation
+    // Note: This is a simplified conversion - use proper LLA conversion for accuracy
+    llh_origin.x() = state_.p.y() / WGS84_A; // North (radians)
+    llh_origin.y() = state_.p.x() / (WGS84_A * std::cos(llh_origin.x())); // East (radians)
+    llh_origin.z() = -state_.p.z(); // Altitude (meters)
 
-    // State::V3 enu = ins_ros::iESEKF::gps::ecef_to_enu(
-    //     ins_ros::iESEKF::gps::llh_to_ecef(llh),
-    //     ins_ros::iESEKF::gps::llh_to_ecef(llh_origin)
-    // );
+    State::V3 enu = ins_ros::iESEKF::gps::ecef_to_enu(
+        ins_ros::iESEKF::gps::llh_to_ecef(llh),
+        ins_ros::iESEKF::gps::llh_to_ecef(llh_origin)
+    );
 
-    // // GPS measurement update (using meter covariance)
-    // iESEKF::Measurement meas(enu);
+    // GPS measurement update (using meter covariance)
+    iESEKF::Measurement meas(enu);
 
-    // // Measurement noise covariance (example values)
-    // Eigen::Matrix3d R_gps = Eigen::Matrix3d::Identity() * 1.0; // 1m variance
-    // Eigen::Matrix3d R_gps_inv = R_gps.inverse();
+    // Measurement noise covariance (example values)
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    Mat3 R_gps = Mat3::Identity() * 1.0; // 1m variance
+    Mat3 R_gps_inv = R_gps.inverse();
 
-    // filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-    //     meas,
-    //     R_gps, R_gps_inv,
-    //     ins_ros::iESEKF::gps::H_fun);
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
+        R_gps, R_gps_inv,
+        ins_ros::iESEKF::gps::H_fun);
 
-    // // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    // state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
 {
-    // iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
-    // meas(0) = msg.twist.linear.x;
-    // meas(1) = msg.twist.linear.y;
-    // // meas(2) = msg.twist.linear.z;
+    iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
+    meas(0) = msg.twist.linear.x;
+    meas(1) = msg.twist.linear.y;
+    // meas(2) = msg.twist.linear.z;
 
-    // // Wheel odometry measurement update
-    // Eigen::MatrixXd R_w     = Eigen::Matrix3d::Identity() * gps_noise_ * gps_noise_; // example noise, adjust as needed
-    // Eigen::MatrixXd R_w_inv = R_w.inverse();
+    // Wheel odometry measurement update
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    Mat3 R_w     = Mat3::Identity() * gps_noise_ * gps_noise_; // example noise, adjust as needed
+    Mat3 R_w_inv = R_w.inverse();
 
-    // filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-    //     meas,
-    //     R_w, R_w_inv,
-    //     ins_ros::iESEKF::wheel::H_fun);
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
+        R_w, R_w_inv,
+        ins_ros::iESEKF::wheel::H_fun);
 
-    // // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    // state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 
-    // // Publish
-    // nav_msgs::msg::Odometry state_msg;
-    // from_ins_to_ros(state_, state_msg);
-    // state_pub_->publish(state_msg);
+    // Publish
+    nav_msgs::msg::Odometry state_msg;
+    from_ins_to_ros(state_, state_msg);
+    state_pub_->publish(state_msg);
 }
 
 void INSEstimator::pose_callback(const geometry_msgs::msg::PoseStamped& msg)
 {
-    // // Convert ROS pose message to manifold group (SGal3 - pose + velocity)
-    // using SGal3 = manif::SGal3<State::Scalar>;
-    // using Tangent = SGal3::Tangent;
-    
-    // SGal3 pose_meas;
-    // pose_meas.translation()(0) = msg.pose.position.x;
-    // pose_meas.translation()(1) = msg.pose.position.y;
-    // pose_meas.translation()(2) = msg.pose.position.z;
-    
-    // pose_meas.quat().x() = msg.pose.orientation.x;
-    // pose_meas.quat().y() = msg.pose.orientation.y;
-    // pose_meas.quat().z() = msg.pose.orientation.z;
-    // pose_meas.quat().w() = msg.pose.orientation.w;
-    
-    // // Velocity assumed zero for this measurement
-    // pose_meas.linearVelocity() = manif::R3<State::Scalar>::Zero();
+    // Convert ROS pose message to manifold bundle (SGal3 + biases + gravity)
+    State pose_meas;
+    from_ros_to_ins(msg, pose_meas);
 
-    // // Pose measurement update (using meter covariance)
-    // iESEKF::Measurement meas(pose_meas);
+    iESEKF::Group group_meas;
+    iESEKF::state_to_group(pose_meas, group_meas);
 
-    // // Measurement noise covariance (example values)
-    // // For pose measurement, we need to compute 6xDoF matrix
-    // Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
-    // Eigen::MatrixXd R_pose_inv = R_pose.inverse();
+    // Measurement noise covariance (example values)
+    // For pose measurement, we need to compute 6xDoF matrix
+    Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
+    Eigen::MatrixXd R_pose_inv = R_pose.inverse();
 
-    // filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-    //     meas,
-    //     R_pose, R_pose_inv,
-    //     ins_ros::iESEKF::pose::H_fun);
+    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
+        group_meas,
+        R_pose, R_pose_inv,
+        ins_ros::iESEKF::pose::H_fun);
 
-    // // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    // state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
 {
-    // // Convert ROS magnetic field message to vector (Tesla)
-    // State::V3 mag_vector;
-    // mag_vector.x() = msg.magnetic_field.x;
-    // mag_vector.y() = msg.magnetic_field.y;
-    // mag_vector.z() = msg.magnetic_field.z;
+    // Convert ROS magnetic field message to vector (Tesla)
+    State::V3 mag_vector;
+    mag_vector.x() = msg.magnetic_field.x;
+    mag_vector.y() = msg.magnetic_field.y;
+    mag_vector.z() = msg.magnetic_field.z;
 
-    // // Magnetic field measurement update
-    // iESEKF::Measurement meas(mag_vector);
+    // Magnetic field measurement update
+    iESEKF::Measurement meas(mag_vector);
 
-    // // Measurement noise covariance (example values)
-    // Eigen::Matrix3d R_mag = Eigen::Matrix3d::Identity() * 0.05; // 0.05 Tesla variance
-    // Eigen::Matrix3d R_mag_inv = R_mag.inverse();
+    // Measurement noise covariance (example values)
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    Mat3 R_mag = Mat3::Identity() * 0.05; // 0.05 Tesla variance
+    Mat3 R_mag_inv = R_mag.inverse();
 
-    // filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-    //     meas,
-    //     R_mag, R_mag_inv,
-    //     ins_ros::iESEKF::magnetometer::H_fun);
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
+        R_mag, R_mag_inv,
+        ins_ros::iESEKF::magnetometer::H_fun);
 
-    // // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    // state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
 {
-    // // Convert ROS pressure message to pressure in Pa (from hPa)
-    // iESEKF::Scalar pressure = msg.fluid_pressure * 100.0; // hPa to Pa
+    // Get ROS pressure measurement
+    iESEKF::Scalar pressure = msg.fluid_pressure; 
 
-    // // Barometer measurement update
-    // iESEKF::Measurement meas(pressure);
+    // Measurement noise covariance (example values)
+    Eigen::MatrixXd R_baro = Eigen::MatrixXd::Identity(1,1);
+    R_baro(0, 0) = 2.0; // height measurement variance (2 meters equivalent)
+    Eigen::MatrixXd R_baro_inv = R_baro.inverse();
 
-    // // Measurement noise covariance (example values)
-    // Eigen::MatrixXd R_baro = Eigen::MatrixXd::Identity();
-    // R_baro(0, 0) = 2.0; // height measurement variance (2 meters equivalent)
-    // Eigen::MatrixXd R_baro_inv = R_baro.inverse();
+    filter_.update<iESEKF::Scalar, iESEKF::Measurement, iESEKF::HMat>(
+        pressure,
+        R_baro, R_baro_inv,
+        ins_ros::iESEKF::barometer::H_fun);
 
-    // filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-    //     meas,
-    //     R_baro, R_baro_inv,
-    //     ins_ros::iESEKF::barometer::H_fun);
-
-    // // Update local state
-    // iESEKF::group_to_state(filter_.getState(), state_);
-    // state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
+    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 /* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -426,6 +413,20 @@ void INSEstimator::from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUm
     out.accel(0) = in.linear_acceleration.x;
     out.accel(1) = in.linear_acceleration.y;
     out.accel(2) = in.linear_acceleration.z;
+}
+
+void INSEstimator::from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out)
+{
+    // Position
+    out.p.x() = in.pose.position.x;
+    out.p.y() = in.pose.position.y;
+    out.p.z() = in.pose.position.z;
+
+    // Orientation
+    out.q.x() = static_cast<State::Scalar>(in.pose.orientation.x);
+    out.q.y() = static_cast<State::Scalar>(in.pose.orientation.y);
+    out.q.z() = static_cast<State::Scalar>(in.pose.orientation.z);
+    out.q.w() = static_cast<State::Scalar>(in.pose.orientation.w);
 }
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out)
@@ -465,7 +466,7 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
     out.twist.covariance[25] = gyro_noise_;
 }
 
-void INSEstimator::from_ins_to_ros_pose(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out)
+void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out)
 {
     // Position
     out.pose.pose.position.x = in.p(0);

@@ -88,8 +88,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // --- ROS <-> Library conversion helpers ---
         void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
+        void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
         void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
-        void from_ins_to_ros_pose(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
+        void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
         void broadcast_tf(const ins_ros::State& in, bool now = true);
 
     // VARIABLES
