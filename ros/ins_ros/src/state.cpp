@@ -1,9 +1,15 @@
 #include "ins_ros/state.hpp"
 #include "ins_ros/ekf.hpp"
 
-void ins_ros::State::update(double t) {
+void ins_ros::State::progress(double t) {
+    if (this->time <= 0.0) {
+        this->time = t;
+        return;
+    }
     double dt = t - this->time;
     if (dt <= 0.0) return;  
+
+    this->time = t;
 
     ins_ros::iESEKF::Tangent 
         dx = ins_ros::iESEKF::f_state(*this);
@@ -16,16 +22,16 @@ void ins_ros::State::update(double t) {
     ins_ros::iESEKF::group_to_state(group, *this);
 }   
 
-Eigen::Isometry3f ins_ros::State::get_transform() const {
-    Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
+ins_ros::State::Isometry ins_ros::State::get_transform() const {
+    ins_ros::State::Isometry T = ins_ros::State::Isometry::Identity();
     T.translate(p);
     T.rotate(q);
     return T;
 }
 
-Eigen::Isometry3f ins_ros::State::get_inv_transform() const {
-    Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
-    Eigen::Matrix3f R = q.toRotationMatrix();
+ins_ros::State::Isometry ins_ros::State::get_inv_transform() const {
+    ins_ros::State::Isometry T = ins_ros::State::Isometry::Identity();
+    Eigen::Matrix<ins_ros::State::Scalar, 3, 3> R = q.toRotationMatrix();
     T.translate(-R.transpose()*p);
     T.rotate(R.transpose());
     return T;

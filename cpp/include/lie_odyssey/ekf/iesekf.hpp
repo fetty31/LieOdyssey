@@ -475,6 +475,8 @@ public:
         MatDyn K_sub; 
         MatDoF KH;
 
+        auto R_inv = R.inverse();
+
         for(int iter = 0; iter < max_iters_; ++iter)
         {
             // Current error state
@@ -501,7 +503,7 @@ public:
             MatDyn Lambda =
                 Pss.inverse() +
                 H_sub.transpose() *
-                R.inverse() *
+                R_inv *
                 H_sub;
 
             // Invert once
@@ -512,7 +514,7 @@ public:
                 Pxs *
                 Lambda.inverse() *
                 H_sub.transpose() *
-                R.inverse();
+                R_inv;
 
             // Full-state Jacobian
             HFull H_full = H_sub * S;
@@ -524,7 +526,7 @@ public:
             degeneracy_callback_(
                 *this,
                 dx,
-                H_full.transpose() * H_full / R
+                H_full.transpose() * R_inv * H_full
             );
 
             X_now.plus(dx);

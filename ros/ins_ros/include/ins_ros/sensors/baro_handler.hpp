@@ -48,7 +48,7 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     H = iESEKF::HMat::Zero(1, DoF);
 
     // Jacobian: derivative of residual w.r.t position z
-    H(0, 2) = -dp_dh(z);
+    H(0, 2) = dp_dh(z);
 }
 
 } // namespace ins_ros::iESEKF::barometer

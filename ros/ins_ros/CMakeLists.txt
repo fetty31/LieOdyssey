@@ -15,6 +15,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(GeographicLib REQUIRED)
 
 find_package( lie_odyssey REQUIRED )
 include_directories(${LIE_ODYSSEY_INCLUDE_DIRS})
@@ -22,6 +23,8 @@ include_directories(${LIE_ODYSSEY_INCLUDE_DIRS})
 # Library (filter dynamics & helpers)
 add_library(${PROJECT_NAME}_core SHARED
   src/ekf.cpp
+  src/state.cpp
+  src/geo/enu_converter.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core

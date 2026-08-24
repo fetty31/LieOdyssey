@@ -29,7 +29,7 @@ struct State {
 
     State() = default;
 
-    void update(double t);
+    void progress(double t);
 
     Isometry get_transform() const;
     Isometry get_inv_transform() const;

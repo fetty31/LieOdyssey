@@ -4,6 +4,8 @@
 #include "ins_ros/state.hpp"
 #include "ins_ros/ekf.hpp"
 
+#include "ins_ros/geo/enu_converter.hpp"
+
 #include "ins_ros/sensors/baro_handler.hpp"
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
@@ -79,7 +81,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void initState();
 
         // --- Automatic calibration utils ---
-        // To-Do: add functions for online IMU bias estimation, gravity estimation, etc
+        // To-Do: add functions for online IMU bias estimation, gravity estimation, etc (same as Fast-LIMO)
 
         // --- Setup helpers (called during configure) ---
         void load_parameters();
@@ -106,6 +108,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // Buffers
         boost::circular_buffer<ins_ros::State> state_buffer_;
         boost::circular_buffer<iESEKF::IMUmeas> imu_buffer_;
+
+        // GPS / ENU converter
+        ENUConverter enu_converter_;
 
         // Parameters
         std::string world_frame_;

@@ -42,6 +42,9 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     // Initialize state 
     initState();
 
+    // Reset ENU frame
+    enu_converter_ = ENUConverter();
+
     // TF
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -218,6 +221,8 @@ void INSEstimator::setup_publishers()
 
 void INSEstimator::initState() 
 {
+    this->state_ = ins_ros::State();
+
     iESEKF::Group group;
     iESEKF::state_to_group(this->state_, group);
 
@@ -242,6 +247,16 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     imu.dt = imu.stamp - last_imu_stamp_;
     last_imu_stamp_ = imu.stamp;
 
+    if (!enu_converter_.initialized())
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Local ENU frame not initialized. Skipping IMU propagation.");
+        return;
+    }
+
     // Filter prediction
     filter_.predict(imu);
 
@@ -259,46 +274,87 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         broadcast_tf(state_);
 }
 
-void INSEstimator::gps_callback(const sensor_msgs::msg::NavSatFix& msg)
+void INSEstimator::gps_callback(
+    const sensor_msgs::msg::NavSatFix& msg)
 {
-    using ins_ros::iESEKF::gps::WGS84_A;
+    if (msg.status.status <
+        sensor_msgs::msg::NavSatStatus::STATUS_FIX)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Ignoring GPS measurement without valid fix");
 
-    // Convert GPS message to latitude, longitude, altitude (lla)
-    State::V3 llh;
-    llh.x() = msg.latitude;
-    llh.y() = msg.longitude;
-    llh.z() = msg.altitude;
+        return;
+    }
 
-    // Convert LLA to ENU (relative to origin at state position)
-    // Reference point: use state position as origin
-    State::V3 llh_origin;
-    // Convert state position (ENU) to LLA approximation
-    // Note: This is a simplified conversion - use proper LLA conversion for accuracy
-    llh_origin.x() = state_.p.y() / WGS84_A; // North (radians)
-    llh_origin.y() = state_.p.x() / (WGS84_A * std::cos(llh_origin.x())); // East (radians)
-    llh_origin.z() = -state_.p.z(); // Altitude (meters)
+    // First valid GPS fixes the ENU datum.
+    if (!enu_converter_.initialized())
+    {
+        enu_converter_.set_origin(
+            msg.latitude,
+            msg.longitude,
+            msg.altitude);
 
-    State::V3 enu = ins_ros::iESEKF::gps::ecef_to_enu(
-        ins_ros::iESEKF::gps::llh_to_ecef(llh),
-        ins_ros::iESEKF::gps::llh_to_ecef(llh_origin)
-    );
+        RCLCPP_INFO(
+            get_logger(),
+            "ENU origin initialized at "
+            "lat=%.8f lon=%.8f alt=%.3f",
+            msg.latitude,
+            msg.longitude,
+            msg.altitude);
 
-    // GPS measurement update (using meter covariance)
-    iESEKF::Measurement meas(enu);
+        return;
+    }
 
-    // Measurement noise covariance (example values)
-    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_gps = Mat3::Identity() * 1.0; // 1m variance
-    Mat3 R_gps_inv = R_gps.inverse();
+    // GPS LLA -> local ENU
+    const Eigen::Vector3d p_gps_enu =
+        enu_converter_.to_enu(
+            msg.latitude,
+            msg.longitude,
+            msg.altitude);
 
-    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-        meas,
-        R_gps, R_gps_inv,
-        ins_ros::iESEKF::gps::H_fun);
+    iESEKF::Measurement meas(p_gps_enu);
 
-    // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
-    state_.time = rclcpp::Time(msg.header.stamp).seconds();
+    using Mat3 =
+        Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+
+    Mat3 R_gps;
+
+    if (msg.position_covariance_type !=
+        sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN)
+    {
+        R_gps <<
+            msg.position_covariance[0],
+            msg.position_covariance[1],
+            msg.position_covariance[2],
+
+            msg.position_covariance[3],
+            msg.position_covariance[4],
+            msg.position_covariance[5],
+
+            msg.position_covariance[6],
+            msg.position_covariance[7],
+            msg.position_covariance[8];
+    }
+    else
+    {
+        R_gps =
+            Mat3::Identity() * gps_noise_;
+    }
+
+    const Mat3 R_gps_inv =
+        R_gps.inverse();
+
+    filter_.update<
+        iESEKF::Measurement,
+        iESEKF::Measurement,
+        iESEKF::HMat>(
+            meas,
+            R_gps,
+            R_gps_inv,
+            ins_ros::iESEKF::gps::H_fun);
 }
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
@@ -317,15 +373,6 @@ void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& m
         meas,
         R_w, R_w_inv,
         ins_ros::iESEKF::wheel::H_fun);
-
-    // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
-    state_.time = rclcpp::Time(msg.header.stamp).seconds();
-
-    // Publish
-    nav_msgs::msg::Odometry state_msg;
-    from_ins_to_ros(state_, state_msg);
-    state_pub_->publish(state_msg);
 }
 
 void INSEstimator::pose_callback(const geometry_msgs::msg::PoseStamped& msg)
@@ -346,10 +393,6 @@ void INSEstimator::pose_callback(const geometry_msgs::msg::PoseStamped& msg)
         group_meas,
         R_pose, R_pose_inv,
         ins_ros::iESEKF::pose::H_fun);
-
-    // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
-    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
@@ -372,10 +415,6 @@ void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
         meas,
         R_mag, R_mag_inv,
         ins_ros::iESEKF::magnetometer::H_fun);
-
-    // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
-    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
@@ -392,10 +431,6 @@ void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
         pressure,
         R_baro, R_baro_inv,
         ins_ros::iESEKF::barometer::H_fun);
-
-    // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
-    state_.time = rclcpp::Time(msg.header.stamp).seconds();
 }
 
 /* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
