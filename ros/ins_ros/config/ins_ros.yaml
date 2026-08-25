@@ -2,26 +2,82 @@
 
 ins_ros_node:
   ros__parameters:
-    topics:
-      input:
-        gps: /input/gps
-        imu: /input/imu
-        wheel_odom: /input/wheel_odom
-        pose: /input/pose
-        mag: /input/mag
-        baro: /input/baro
 
-    frames: # output frames (the transform between frames will be broadcasted)
+    # ============================================================
+    # General
+    # ============================================================
+    frames:
       world: odom
       body: base_link
-      tf_pub: true
 
-    iESEKF:  # Iterative Error-State Kalman Filter on Manifolds
-      MAX_NUM_ITERS: 3                # max num of iterations of the KF (limits comp. load)
-      TOLERANCE: 0.001                     
+    tf:
+      publish: true
 
-      covariance:
+    # ============================================================
+    # Filter
+    # ============================================================
+    filter:
+      type: iESEKF
+
+      iterations:
+        max: 3
+        tolerance: 0.001
+
+      process_noise:
         gyro: 0.015
         accel: 0.15
-        bias_gyro: 1.54e-5
-        bias_accel: 3.38e-4
+        gyro_bias: 1.54e-5
+        accel_bias: 3.38e-4
+
+    # ============================================================
+    # Sensors
+    # ============================================================
+    sensors:
+
+      imu:
+        type: imu
+        enabled: true
+
+        topic: /ona2/sensors/imu_front/imu_uncalib
+
+      gps:
+        type: gps
+        enabled: true
+
+        topic: /fix
+
+        covariance:
+          position: 1.0
+          velocity: 0.1
+
+        lever_arm:
+          x: 1.2
+          y: 0.0
+          z: 0.8
+
+      pose:
+        type: pose
+        enabled: false
+
+        topic: /input/pose
+
+      wheel_odom:
+        type: wheel_odom
+        enabled: false
+
+        topic: /input/wheel_odom
+
+      baro:
+        type: barometer
+        enabled: false
+
+        topic: /input/baro
+
+        covariance:
+          altitude: 2.0
+
+      mag:
+        type: magnetometer
+        enabled: false
+
+        topic: /input/mag

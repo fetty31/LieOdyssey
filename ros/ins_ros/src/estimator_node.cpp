@@ -12,6 +12,7 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::df_dx,
               iESEKF::df_dw,
               iESEKF::degeneracy_callback)
+    , using_gps_enu_(false)
     , last_imu_stamp_(-1.0)
 {
 }
@@ -31,9 +32,16 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     // Reset filter
     filter_.reset();
     filter_.setCovariance(iESEKF::MatDoF::Identity() * 1e-3);
-    filter_.setProcessNoise(iESEKF::Filter::NoiseMatrix::Identity() * 1e-3);
-    filter_.setMaxIters(5);
-    filter_.setTolerance(1e-9);
+
+    iESEKF::Filter::NoiseMatrix Q = iESEKF::Filter::NoiseMatrix::Identity();
+    Q.block<3, 3>(0, 0) = static_cast<iESEKF::Scalar>(gyro_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(3, 3) = static_cast<iESEKF::Scalar>(accel_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(6, 6) = static_cast<iESEKF::Scalar>(gyro_bias_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(9, 9) = static_cast<iESEKF::Scalar>(accel_bias_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    filter_.setProcessNoise(Q);
+
+    filter_.setMaxIters(max_iters_);
+    filter_.setTolerance(tolerance_);
 
     // Set buffer capacity
     this->imu_buffer_.set_capacity(2000);
@@ -145,71 +153,141 @@ void INSEstimator::load_parameters()
     // Frames
     world_frame_ = get_parameter("frames.world").as_string();
     body_frame_  = get_parameter("frames.body").as_string();
-    publish_tf_  = get_parameter("frames.tf_pub").as_bool();
+    publish_tf_  = get_parameter("tf.publish").as_bool();
 
-    // Topics
-    imu_topic_ = get_parameter("topics.input.imu").as_string();
-    gps_topic_ = get_parameter("topics.input.gps").as_string();
-    wheel_odom_topic_ = get_parameter("topics.input.wheel_odom").as_string();
-    pose_topic_ = get_parameter("topics.input.pose").as_string();
-    mag_topic_ = get_parameter("topics.input.mag").as_string();
-    baro_topic_ = get_parameter("topics.input.baro").as_string();
+    // Filter
+    // filter_type_ = get_parameter("filter.type").as_string();
+    max_iters_ = get_parameter("filter.iterations.max").as_int();
+    tolerance_ = get_parameter("filter.iterations.tolerance").as_double();
+
+    // Sensors
+        // IMU
+    bool imu_enabled = get_parameter("sensors.imu.enabled").as_bool();
+    if (!imu_enabled)
+    {
+        RCLCPP_ERROR(get_logger(), "IMU is disabled. This estimator requires an IMU. Please enable the IMU in the parameters.");
+        throw std::runtime_error("IMU is disabled");
+    }
+    imu_topic_ = get_parameter("sensors.imu.topic").as_string();
+
+        // GPS
+    bool gps_enabled = get_parameter("sensors.gps.enabled").as_bool();
+    if (!gps_enabled)
+    {
+        RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
+        using_gps_enu_ = false;
+    }else{
+        gps_topic_ = get_parameter("sensors.gps.topic").as_string();
+        // gps_p_noise_ = get_parameter("sensors.gps.covariance.position").as_double();
+        // gps_v_noise_ = get_parameter("sensors.gps.covariance.velocity").as_double();
+    }
+    gps_noise_ = 0.01; // example value, adjust as needed
+    
+        // Wheel odometry
+    bool wheel_odom_enabled = get_parameter("sensors.wheel_odom.enabled").as_bool();
+    if (wheel_odom_enabled)
+    {
+        wheel_odom_topic_ = get_parameter("sensors.wheel_odom.topic").as_string();
+    }
+    
+        // 3D Pose
+    bool pose_enabled = get_parameter("sensors.pose.enabled").as_bool();
+    if (pose_enabled)
+    {
+        pose_topic_ = get_parameter("sensors.pose.topic").as_string();
+    }
+    
+        // Magnetometer
+    bool mag_enabled = get_parameter("sensors.mag.enabled").as_bool();
+    if (mag_enabled)
+    {
+        mag_topic_ = get_parameter("sensors.mag.topic").as_string();
+    }
+
+        // Barometer
+    bool baro_enabled = get_parameter("sensors.baro.enabled").as_bool();
+    if (baro_enabled)
+    {
+        baro_topic_ = get_parameter("sensors.baro.topic").as_string();
+    }
 
     // Process noise (IMU)
-    gyro_noise_      = get_parameter("iESEKF.covariance.gyro").as_double();
-    accel_noise_     = get_parameter("iESEKF.covariance.accel").as_double();
-    gyro_bias_noise_ = get_parameter("iESEKF.covariance.bias_gyro").as_double();
-    accel_bias_noise_= get_parameter("iESEKF.covariance.bias_accel").as_double();
+    gyro_noise_      = get_parameter("filter.process_noise.gyro").as_double();
+    accel_noise_     = get_parameter("filter.process_noise.accel").as_double();
+    gyro_bias_noise_ = get_parameter("filter.process_noise.gyro_bias").as_double();
+    accel_bias_noise_= get_parameter("filter.process_noise.accel_bias").as_double();
 
-    // Measurement noise
-    // gps_noise_ = get_parameter("iESEKF.covariance.gps").as_double();
-    gps_noise_ = 0.01; // example value, adjust as needed
+    RCLCPP_INFO(get_logger(), "Parameters loaded.");
 }
 
 void INSEstimator::setup_subscriptions()
 {
+    RCLCPP_INFO(get_logger(), "Subscribed to:");
+
+    const auto imu_qos = rclcpp::QoS(rclcpp::KeepLast(1000))
+        .reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT)
+        .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
+
+    const auto sensor_qos = rclcpp::QoS(rclcpp::KeepLast(10))
+        .reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT)
+        .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
+
     if(imu_topic_.empty())
     {
         RCLCPP_ERROR(get_logger(), "IMU topic is not set. Please set 'topics.input.imu' parameter.");
         throw std::runtime_error("IMU topic not set");
     }
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-        imu_topic_, 1000,
+        imu_topic_,
+        imu_qos,
         std::bind(&INSEstimator::imu_callback, this, std::placeholders::_1));
+    
+    RCLCPP_INFO(get_logger(), "  IMU:        %s", imu_topic_.c_str());
 
     if(!gps_topic_.empty())
     {
         gps_sub_ = create_subscription<sensor_msgs::msg::NavSatFix>(
-            gps_topic_, 10,
+            gps_topic_,
+            sensor_qos,
             std::bind(&INSEstimator::gps_callback, this, std::placeholders::_1));
+        using_gps_enu_ = true;
+        RCLCPP_INFO(get_logger(), "  GPS:        %s", gps_topic_.c_str());
     }
 
     if(!wheel_odom_topic_.empty())
     {
         wheel_odom_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-            wheel_odom_topic_, 10,
+            wheel_odom_topic_, 
+            sensor_qos,
             std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
+        RCLCPP_INFO(get_logger(), "  Wheel odom: %s", wheel_odom_topic_.c_str());
     }
 
     if(!pose_topic_.empty())
     {
         pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-            pose_topic_, 10,
+            pose_topic_, 
+            sensor_qos,
             std::bind(&INSEstimator::pose_callback, this, std::placeholders::_1));
+        RCLCPP_INFO(get_logger(), "  Pose:       %s", pose_topic_.c_str());
     }
 
     if(!mag_topic_.empty())
     {
         mag_sub_ = create_subscription<sensor_msgs::msg::MagneticField>(
-            mag_topic_, 10,
+            mag_topic_, 
+            sensor_qos,
             std::bind(&INSEstimator::mag_callback, this, std::placeholders::_1));
+        RCLCPP_INFO(get_logger(), "  Magnetometer: %s", mag_topic_.c_str());
     }
 
     if(!baro_topic_.empty())
     {   
         baro_sub_ = create_subscription<sensor_msgs::msg::FluidPressure>(
-            baro_topic_, 10,
+            baro_topic_, 
+            sensor_qos,
             std::bind(&INSEstimator::baro_callback, this, std::placeholders::_1));
+        RCLCPP_INFO(get_logger(), "  Barometer:  %s", baro_topic_.c_str());
     }
 }
 
@@ -247,17 +325,23 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     imu.dt = imu.stamp - last_imu_stamp_;
     last_imu_stamp_ = imu.stamp;
 
-    if (!enu_converter_.initialized())
-    {
-        RCLCPP_WARN_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            5000,
-            "Local ENU frame not initialized. Skipping IMU propagation.");
-        return;
+    // If the GPS is active, the filter state will be expressed in a local ENU frame
+    // we need to ensure that the ENU origin has been initialized before propagating
+    if (using_gps_enu_){
+        if (!enu_converter_.initialized())
+        {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                5000,
+                "Local ENU frame not initialized. Skipping IMU propagation.");
+            return;
+        }
     }
 
     // Filter prediction
+    imu.accel(1) = 0.0; // Zero out Y acceleration for testing
+    imu.accel(2) = 9.81; // Set Z acceleration to gravity for testing
     filter_.predict(imu);
 
     // Update local state
@@ -315,7 +399,8 @@ void INSEstimator::gps_callback(
             msg.longitude,
             msg.altitude);
 
-    iESEKF::Measurement meas(p_gps_enu);
+    iESEKF::gps::GPSMeasurement meas;
+    meas.position_enu = p_gps_enu;
 
     using Mat3 =
         Eigen::Matrix<iESEKF::Scalar, 3, 3>;
@@ -325,6 +410,7 @@ void INSEstimator::gps_callback(
     if (msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN)
     {
+        // Assuming covariance expressed in ENU frame (ROS convention)
         R_gps <<
             msg.position_covariance[0],
             msg.position_covariance[1],
@@ -348,13 +434,43 @@ void INSEstimator::gps_callback(
         R_gps.inverse();
 
     filter_.update<
-        iESEKF::Measurement,
+        iESEKF::gps::GPSMeasurement,
         iESEKF::Measurement,
         iESEKF::HMat>(
             meas,
             R_gps,
             R_gps_inv,
             ins_ros::iESEKF::gps::H_fun);
+    
+    // DEBUG 
+    const auto rpy = state_.q.toRotationMatrix().eulerAngles(2, 1, 0).reverse();
+
+    RCLCPP_INFO(
+        get_logger(),
+        "\n"
+        "Estimated state:\n"
+        "  time:       %.6f\n"
+        "  position:   [%.6f, %.6f, %.6f] m\n"
+        "  velocity:   [%.6f, %.6f, %.6f] m/s\n"
+        "  RPY:        [%.3f, %.3f, %.3f] deg\n"
+        "  quaternion: [%.6f, %.6f, %.6f, %.6f]\n"
+        "  gravity:    [%.6f, %.6f, %.6f] m/s²\n"
+        "  angular vel:[%.6f, %.6f, %.6f] rad/s\n"
+        "  accel:      [%.6f, %.6f, %.6f] m/s²\n"
+        "  gyro bias:  [%.6f, %.6f, %.6f] rad/s\n"
+        "  accel bias: [%.6f, %.6f, %.6f] m/s²",
+        state_.time,
+        state_.p.x(), state_.p.y(), state_.p.z(),
+        state_.v.x(), state_.v.y(), state_.v.z(),
+        rpy.x() * 180.0 / M_PI,
+        rpy.y() * 180.0 / M_PI,
+        rpy.z() * 180.0 / M_PI,
+        state_.q.w(), state_.q.x(), state_.q.y(), state_.q.z(),
+        state_.g.x(), state_.g.y(), state_.g.z(),
+        state_.w.x(), state_.w.y(), state_.w.z(),
+        state_.a.x(), state_.a.y(), state_.a.z(),
+        state_.bias.w.x(), state_.bias.w.y(), state_.bias.w.z(),
+        state_.bias.a.x(), state_.bias.a.y(), state_.bias.a.z());
 }
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)

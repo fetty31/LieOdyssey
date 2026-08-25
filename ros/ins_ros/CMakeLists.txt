@@ -15,7 +15,10 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(Eigen3 REQUIRED)
+
 find_package(GeographicLib REQUIRED)
+include_directories(${GeographicLib_INCLUDE_DIRS})
+message(STATUS "GeographicLib VERSION: ${GeographicLib_VERSION}")
 
 find_package( lie_odyssey REQUIRED )
 include_directories(${LIE_ODYSSEY_INCLUDE_DIRS})
@@ -36,6 +39,7 @@ target_include_directories(${PROJECT_NAME}_core
 target_link_libraries(${PROJECT_NAME}_core
   PUBLIC
     lie_odyssey::lie_odyssey_cpp
+    ${GeographicLib_LIBRARIES}
 )
 
 # Node executable

@@ -101,6 +101,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // EKF
         iESEKF::Filter filter_;
+        int max_iters_;
+        double tolerance_;
 
         // State
         ins_ros::State state_;
@@ -111,18 +113,19 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // GPS / ENU converter
         ENUConverter enu_converter_;
+        bool using_gps_enu_;
 
         // Parameters
         std::string world_frame_;
         std::string body_frame_;
         bool publish_tf_;
 
-        std::string imu_topic_;
-        std::string gps_topic_;
-        std::string wheel_odom_topic_;
-        std::string pose_topic_;
-        std::string mag_topic_;
-        std::string baro_topic_;
+        std::string imu_topic_{""};
+        std::string gps_topic_{""};
+        std::string wheel_odom_topic_{""};
+        std::string pose_topic_{""};
+        std::string mag_topic_{""};
+        std::string baro_topic_{""};
 
         // Noise parameters
         double gyro_noise_;
