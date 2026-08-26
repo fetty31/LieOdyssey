@@ -33,6 +33,7 @@ struct State {
 
     Isometry get_transform() const;
     Isometry get_inv_transform() const;
+    V3 get_body_velocity() const;
 };
 
 } // namespace ins_ros

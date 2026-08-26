@@ -14,6 +14,7 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::degeneracy_callback)
     , using_gps_enu_(false)
     , last_imu_stamp_(-1.0)
+    , tf_buffer_(this->get_clock())
 {
 }
 
@@ -23,7 +24,7 @@ INSEstimator::INSEstimator(const std::string& node_name)
 
 INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "Configuring INSEstimator");
+    RCLCPP_DEBUG(get_logger(), "Configuring...");
 
     load_parameters();
     setup_subscriptions();
@@ -55,38 +56,40 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
 
     // TF
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    tf_listener_ =
+        std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
     last_imu_stamp_ = -1.0;
 
-    RCLCPP_INFO(get_logger(), "INSEstimator configured");
+    RCLCPP_INFO(get_logger(), "Configured");
     return CallbackReturn::SUCCESS;
 }
 
 INSEstimator::CallbackReturn INSEstimator::on_activate(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "Activating INSEstimator");
+    RCLCPP_DEBUG(get_logger(), "Activating...");
 
     state_pub_->on_activate();
     pose_pub_->on_activate();
 
-    RCLCPP_INFO(get_logger(), "INSEstimator activated");
+    RCLCPP_INFO(get_logger(), "Activated");
     return CallbackReturn::SUCCESS;
 }
 
 INSEstimator::CallbackReturn INSEstimator::on_deactivate(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "Deactivating INSEstimator");
+    RCLCPP_DEBUG(get_logger(), "Deactivating...");
 
     state_pub_->on_deactivate();
     pose_pub_->on_deactivate();
 
-    RCLCPP_INFO(get_logger(), "INSEstimator deactivated");
+    RCLCPP_INFO(get_logger(), "Deactivated");
     return CallbackReturn::SUCCESS;
 }
 
 INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "Cleaning up INSEstimator");
+    RCLCPP_DEBUG(get_logger(), "Cleaning up...");
 
     imu_sub_.reset();
     gps_sub_.reset();
@@ -103,13 +106,13 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     state_buffer_.clear();
     imu_buffer_.clear();
 
-    RCLCPP_INFO(get_logger(), "INSEstimator cleaned up");
+    RCLCPP_INFO(get_logger(), "Cleaned up");
     return CallbackReturn::SUCCESS;
 }
 
 INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "Shutting down INSEstimator");
+    RCLCPP_DEBUG(get_logger(), "Shutting down...");
 
     imu_sub_.reset();
     gps_sub_.reset();
@@ -126,7 +129,7 @@ INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::S
 
 INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::State&)
 {
-    RCLCPP_INFO(get_logger(), "INSEstimator error - cleaning up");
+    RCLCPP_DEBUG(get_logger(), "Error occurred - cleaning up...");
 
     imu_sub_.reset();
     gps_sub_.reset();
@@ -320,13 +323,25 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     if (last_imu_stamp_ < 0.0)
     {
         last_imu_stamp_ = imu.stamp;
+        previous_omega_base_ = imu.gyro;
         return;
     }
     imu.dt = imu.stamp - last_imu_stamp_;
     last_imu_stamp_ = imu.stamp;
 
+    // Transform IMU measurements into base_link frame if necessary.
+    if (!transform_imu_to_base_link(msg, imu))
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "Skipping IMU propagation.");
+        return;
+    }
+
     // If the GPS is active, the filter state will be expressed in a local ENU frame
-    // we need to ensure that the ENU origin has been initialized before propagating
+    // for now, we need to ensure that the ENU origin has been initialized before propagating
     if (using_gps_enu_){
         if (!enu_converter_.initialized())
         {
@@ -340,12 +355,12 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     }
 
     // Filter prediction
-    imu.accel(1) = 0.0; // Zero out Y acceleration for testing
-    imu.accel(2) = 9.81; // Set Z acceleration to gravity for testing
     filter_.predict(imu);
 
     // Update local state
     iESEKF::group_to_state(filter_.getState(), state_);
+    state_.w = imu.gyro;
+    state_.a = imu.accel;
     state_.time = imu.stamp;
 
     // Publish
@@ -400,7 +415,14 @@ void INSEstimator::gps_callback(
             msg.altitude);
 
     iESEKF::gps::GPSMeasurement meas;
-    meas.position_enu = p_gps_enu;
+    meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
+
+    RCLCPP_DEBUG(
+        get_logger(),
+        "GPS measurement in ENU frame: [%.3f, %.3f, %.3f] m",
+        meas.position_enu.x(),
+        meas.position_enu.y(),
+        meas.position_enu.z());
 
     using Mat3 =
         Eigen::Matrix<iESEKF::Scalar, 3, 3>;
@@ -444,14 +466,16 @@ void INSEstimator::gps_callback(
     
     // DEBUG 
     const auto rpy = state_.q.toRotationMatrix().eulerAngles(2, 1, 0).reverse();
+    const auto v_body = state_.get_body_velocity();
 
-    RCLCPP_INFO(
+    RCLCPP_DEBUG(
         get_logger(),
         "\n"
         "Estimated state:\n"
         "  time:       %.6f\n"
         "  position:   [%.6f, %.6f, %.6f] m\n"
         "  velocity:   [%.6f, %.6f, %.6f] m/s\n"
+        "  body velocity:   [%.6f, %.6f, %.6f] m/s\n"
         "  RPY:        [%.3f, %.3f, %.3f] deg\n"
         "  quaternion: [%.6f, %.6f, %.6f, %.6f]\n"
         "  gravity:    [%.6f, %.6f, %.6f] m/s²\n"
@@ -462,6 +486,7 @@ void INSEstimator::gps_callback(
         state_.time,
         state_.p.x(), state_.p.y(), state_.p.z(),
         state_.v.x(), state_.v.y(), state_.v.z(),
+        v_body.x(), v_body.y(), v_body.z(),
         rpy.x() * 180.0 / M_PI,
         rpy.y() * 180.0 / M_PI,
         rpy.z() * 180.0 / M_PI,
@@ -655,6 +680,118 @@ void INSEstimator::broadcast_tf(const ins_ros::State& in, bool now)
     tf_msg.transform.rotation.w = in.q.w();
 
     tf_broadcaster_->sendTransform(tf_msg);
+}
+
+bool INSEstimator::transform_imu_to_base_link(
+    const sensor_msgs::msg::Imu & msg,
+    iESEKF::IMUmeas & imu)
+{
+    const std::string & imu_frame = msg.header.frame_id;
+
+    if (imu_frame.empty())
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "IMU message has an empty frame_id. Assuming base_link.");
+        return true;
+    }
+
+    // Already expressed at base_link.
+    if (imu_frame == body_frame_)
+        return true;
+
+    geometry_msgs::msg::TransformStamped tf_imu_to_base;
+
+    try
+    {
+        tf_imu_to_base = tf_buffer_.lookupTransform(
+            body_frame_,          // target
+            imu_frame,            // source
+            msg.header.stamp,
+            tf2::durationFromSec(0.1));
+    }
+    catch (const tf2::TransformException & ex)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "Could not transform IMU from '%s' to '%s': %s",
+            imu_frame.c_str(),
+            body_frame_.c_str(),
+            ex.what());
+
+        return false;
+    }
+
+    // Rotation: IMU -> base_link
+    const auto & q = tf_imu_to_base.transform.rotation;
+    Eigen::Quaternion<State::Scalar> q_imu_to_base(
+        q.w,
+        q.x,
+        q.y,
+        q.z);
+    q_imu_to_base.normalize();
+
+    const Eigen::Matrix<State::Scalar, 3, 3> R_imu_to_base =
+        q_imu_to_base.toRotationMatrix();
+
+    // Translation: IMU origin expressed in base_link
+    const auto & t = tf_imu_to_base.transform.translation;
+
+    const State::V3 t_imu_in_base(
+        t.x,
+        t.y,
+        t.z);
+
+    // We need the vector from the IMU to base_link.
+    const State::V3 r_imu_to_base =
+        -t_imu_in_base;
+
+    // Angular velocity
+    const State::V3 omega_base =
+        R_imu_to_base * imu.gyro;
+
+    // Linear acceleration
+    const State::V3 accel_base =
+        R_imu_to_base * imu.accel;
+
+    State::V3 accel_base_corrected = accel_base;
+
+    // Need angular acceleration for the lever-arm correction.
+    const double dt = imu.dt;
+
+    if (dt > 0.0 && dt < 0.1)
+    {
+        const State::V3 alpha_base =
+            (omega_base - previous_omega_base_) / dt;
+
+        // a_B = a_I + alpha x r + omega x (omega x r)
+        accel_base_corrected +=
+            alpha_base.cross(r_imu_to_base);
+
+        accel_base_corrected +=
+            omega_base.cross(
+                omega_base.cross(r_imu_to_base));
+    }else{
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "IMU dt is too large or negative (dt=%.6f). Skipping lever-arm correction.",
+            dt);
+    }
+
+    // Store values for next measurement.
+    previous_omega_base_ = omega_base;
+
+    // Output
+    imu.gyro = omega_base;
+    imu.accel = accel_base_corrected;
+
+    return true;
 }
 
 } // namespace ins_ros

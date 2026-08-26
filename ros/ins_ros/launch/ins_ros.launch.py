@@ -32,7 +32,12 @@ def generate_launch_description():
         executable='ins_ros_node',
         name='ins_ros_node',
         output='screen',
-        parameters=[param_config]
+        parameters=[param_config],
+        arguments=[
+            '--ros-args',
+            '--log-level',
+            'ins_ros_node:=debug'
+        ]
     )
 
     rviz_conditioned = ExecuteProcess(

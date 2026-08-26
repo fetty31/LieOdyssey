@@ -75,9 +75,9 @@ Visualization Manager:
               Color: 204; 51; 204
               Scale: 1
               Value: true
-            Value: false
+            Value: true
           Enabled: true
-          Keep: 100
+          Keep: 1000000
           Name: Odometry
           Position Tolerance: 0.10000000149011612
           Shape:
@@ -181,7 +181,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 21.486665725708008
+      Distance: 30.187217712402344
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -196,10 +196,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9403979182243347
+      Pitch: 0.925397515296936
       Target Frame: <Fixed Frame>
       Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 3.0985662937164307
+      Yaw: 3.088562488555908
     Saved: ~
 Window Geometry:
   Displays:

@@ -8,7 +8,7 @@ ins_ros_node:
     # ============================================================
     frames:
       world: odom
-      body: base_link
+      body: ona2/imu_front
 
     tf:
       publish: true
@@ -20,8 +20,8 @@ ins_ros_node:
       type: iESEKF
 
       iterations:
-        max: 3
-        tolerance: 0.001
+        max: 5
+        tolerance: 1.e-5
 
       process_noise:
         gyro: 0.015

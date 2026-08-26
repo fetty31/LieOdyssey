@@ -36,3 +36,9 @@ ins_ros::State::Isometry ins_ros::State::get_inv_transform() const {
     T.rotate(R.transpose());
     return T;
 }
+
+ins_ros::State::V3 ins_ros::State::get_body_velocity() const {
+    // Transform world velocity to body frame
+    Eigen::Matrix<ins_ros::State::Scalar, 3, 3> R = q.toRotationMatrix();
+    return R.transpose() * v;
+}

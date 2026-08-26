@@ -31,6 +31,10 @@
 
 // TF
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2/transform_datatypes.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 // Utilities
 #include <memory>
@@ -94,6 +98,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
         void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
         void broadcast_tf(const ins_ros::State& in, bool now = true);
+        bool transform_imu_to_base_link(const sensor_msgs::msg::Imu & msg, iESEKF::IMUmeas & imu);
 
     // VARIABLES
 
@@ -106,6 +111,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // State
         ins_ros::State state_;
+        State::V3 previous_omega_base_;
 
         // Buffers
         boost::circular_buffer<ins_ros::State> state_buffer_;
@@ -152,7 +158,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // TF
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-
+        tf2_ros::Buffer tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };
 
 } // namespace ins_ros
