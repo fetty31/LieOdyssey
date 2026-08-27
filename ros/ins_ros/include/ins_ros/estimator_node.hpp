@@ -6,6 +6,9 @@
 
 #include "ins_ros/geo/enu_converter.hpp"
 
+#include "ins_ros/init/imu_orientation_initializer.hpp"
+#include "ins_ros/init/gps_orientation_initializer.hpp"
+
 #include "ins_ros/sensors/baro_handler.hpp"
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
@@ -81,8 +84,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void mag_callback(const sensor_msgs::msg::MagneticField& msg);
         void baro_callback(const sensor_msgs::msg::FluidPressure& msg);
 
-        // --- Init Filter ----
-        void initState();
+        void setState();
 
         // --- Automatic calibration utils ---
         // To-Do: add functions for online IMU bias estimation, gravity estimation, etc (same as Fast-LIMO)
@@ -97,8 +99,14 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
         void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
         void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
+
+        // Additional helpers
+        void publish_odom();
+        void publish_pose();
         void broadcast_tf(const ins_ros::State& in, bool now = true);
-        bool transform_imu_to_base_link(const sensor_msgs::msg::Imu & msg, iESEKF::IMUmeas & imu);
+        bool initialize_imu_extrinsics(const std::string& imu_frame);
+        bool transform_imu_to_base_link(const sensor_msgs::msg::Imu& msg, iESEKF::IMUmeas& imu);
+        void initialize_orientation();
 
     // VARIABLES
 
@@ -111,7 +119,18 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // State
         ins_ros::State state_;
-        State::V3 previous_omega_base_;
+
+        // IMU extrinsics
+        bool imu_extrinsics_initialized_{false};
+        Eigen::Matrix<State::Scalar, 3, 3> R_imu_to_base_;
+        State::V3 t_imu_to_base_;
+
+        State::V3 previous_omega_base_{State::V3::Zero()};
+
+        // Orientation initializers
+        std::unique_ptr<init::IMUOrientationInitializer> imu_orientation_initializer_;
+        std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_initializer_;
+        bool orientation_initialized_{false};
 
         // Buffers
         boost::circular_buffer<ins_ros::State> state_buffer_;
@@ -120,6 +139,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // GPS / ENU converter
         ENUConverter enu_converter_;
         bool using_gps_enu_;
+        State::V3 gps_lever_arm_{State::V3::Zero()};
 
         // Parameters
         std::string world_frame_;

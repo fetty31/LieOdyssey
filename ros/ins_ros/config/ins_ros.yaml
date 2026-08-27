@@ -51,9 +51,9 @@ ins_ros_node:
           velocity: 0.1
 
         lever_arm:
-          x: 1.2
+          x: -0.4
           y: 0.0
-          z: 0.8
+          z: 0.5
 
       pose:
         type: pose
