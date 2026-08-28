@@ -83,7 +83,6 @@ public:
             path_segment_.push_back(current_position);
 
             last_time_ = timestamp;
-            last_time_valid_ = true;
 
             return false;
         }
@@ -92,36 +91,34 @@ public:
         const Eigen::Vector2d delta =
             current_position - last_position_;
 
-        const double delta_distance =
-            delta.norm();
+        const double delta_distance = delta.norm();
 
         // Validate GPS speed
-        if (last_time_valid_)
-        {
-            const double delta_time =
-                timestamp - last_time_;
+        const double delta_time =
+            timestamp - last_time_;
 
-            if (delta_time <= 0.0)
-                return false;
-
-            const double speed =
-                delta_distance / delta_time;
-
-            if (speed > params_.max_speed)
-            {
-                // Don't update the reference point.
-                // This measurement is considered invalid.
-                return false;
-            }
+        if (delta_time <= 0.0){
+            last_position_valid_ = false;
+            return false;
         }
 
-        // Update timestamp even if the displacement is small.
-        last_time_ = timestamp;
-        last_time_valid_ = true;
+        const double speed =
+            delta_distance / delta_time;
+
+        if (speed > params_.max_speed)
+        {
+            // Don't update the reference point.
+            // This measurement is considered invalid.
+            last_position_valid_ = false;
+            return false;
+        }
 
         // Ignore very small movements
         if (delta_distance < params_.delta_distance_threshold)
             return false;
+
+        // Update
+        last_time_ = timestamp;
 
         distance_traveled_ += delta_distance;
 

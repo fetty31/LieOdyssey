@@ -107,6 +107,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         bool initialize_imu_extrinsics(const std::string& imu_frame);
         bool transform_imu_to_base_link(const sensor_msgs::msg::Imu& msg, iESEKF::IMUmeas& imu);
         void initialize_orientation();
+        State::V3 get_euler_representation(const State::Quat& q);
 
     // VARIABLES
 
@@ -138,8 +139,13 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // GPS / ENU converter
         ENUConverter enu_converter_;
-        bool using_gps_enu_;
+        bool using_gps_enu_{false};
+        bool trust_gps_covariance_{false};
         State::V3 gps_lever_arm_{State::V3::Zero()};
+        State::V3 gps_noise_{State::V3::Zero()};
+
+        // Wheel odom
+        State::V3 wheel_odom_noise_{State::V3::Zero()};
 
         // Parameters
         std::string world_frame_;
@@ -153,13 +159,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::string mag_topic_{""};
         std::string baro_topic_{""};
 
-        // Noise parameters
+        // Process noise parameters
         double gyro_noise_;
         double accel_noise_;
         double gyro_bias_noise_;
         double accel_bias_noise_;
-        double gps_noise_;
-
+        
         // IMU tracking
         double last_imu_stamp_;
 

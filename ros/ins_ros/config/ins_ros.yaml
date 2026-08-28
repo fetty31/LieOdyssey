@@ -46,9 +46,13 @@ ins_ros_node:
 
         topic: /fix
 
-        covariance:
-          position: 1.0
-          velocity: 0.1
+        trust_covariance: true # whether to trust the covariance from the GPS message or not
+
+        covariance: # fixed covariance if trust_covariance is false
+          position:
+            x: 0.01
+            y: 0.01
+            z: 10.0
 
         lever_arm:
           x: -0.4
@@ -61,11 +65,21 @@ ins_ros_node:
 
         topic: /input/pose
 
+        covariance:
+          position: 0.1
+          orientation: 0.1
+
       wheel_odom:
         type: wheel_odom
         enabled: false
 
         topic: /input/wheel_odom
+
+        covariance:
+          velocity:
+            x: 0.1
+            y: 0.1
+            z: 0.01
 
       baro:
         type: barometer
@@ -81,3 +95,6 @@ ins_ros_node:
         enabled: false
 
         topic: /input/mag
+
+        covariance:
+          heading: 0.1

@@ -109,10 +109,6 @@ public:
                 params_.gravity);
 
         // Gyroscope bias
-        //
-        // At rest:
-        //
-        //   omega_meas = b_g
         gyro_bias_ = gyro_mean;
 
         initialized_ = true;

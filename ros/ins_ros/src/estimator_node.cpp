@@ -12,7 +12,6 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::df_dx,
               iESEKF::df_dw,
               iESEKF::degeneracy_callback)
-    , using_gps_enu_(false)
     , last_imu_stamp_(-1.0)
     , tf_buffer_(this->get_clock())
 {
@@ -186,16 +185,21 @@ void INSEstimator::load_parameters()
 
         // GPS
     bool gps_enabled = get_parameter("sensors.gps.enabled").as_bool();
+    trust_gps_covariance_ = get_parameter("sensors.gps.trust_covariance").as_bool();
     if (!gps_enabled)
     {
         RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
         using_gps_enu_ = false;
     }else{
         gps_topic_ = get_parameter("sensors.gps.topic").as_string();
-        gps_noise_ = get_parameter("sensors.gps.covariance.position").as_double();
-        // gps_v_noise_ = get_parameter("sensors.gps.covariance.velocity").as_double();
-        std::vector<double> lever_arm = get_parameter("sensors.gps.lever_arm").as_double_array();
-        gps_lever_arm_ = State::V3(lever_arm[0], lever_arm[1], lever_arm[2]);
+        double gps_noise_x = get_parameter("sensors.gps.covariance.position.x").as_double();
+        double gps_noise_y = get_parameter("sensors.gps.covariance.position.y").as_double();
+        double gps_noise_z = get_parameter("sensors.gps.covariance.position.z").as_double();
+        gps_noise_ = State::V3(gps_noise_x, gps_noise_y, gps_noise_z);
+        double lever_arm_x = get_parameter("sensors.gps.lever_arm.x").as_double();
+        double lever_arm_y = get_parameter("sensors.gps.lever_arm.y").as_double();
+        double lever_arm_z = get_parameter("sensors.gps.lever_arm.z").as_double();
+        gps_lever_arm_ = State::V3(lever_arm_x, lever_arm_y, lever_arm_z);
     }
     
         // Wheel odometry
@@ -203,6 +207,10 @@ void INSEstimator::load_parameters()
     if (wheel_odom_enabled)
     {
         wheel_odom_topic_ = get_parameter("sensors.wheel_odom.topic").as_string();
+        double wheel_odom_noise_x = get_parameter("sensors.wheel_odom.covariance.velocity.x").as_double();
+        double wheel_odom_noise_y = get_parameter("sensors.wheel_odom.covariance.velocity.y").as_double();
+        double wheel_odom_noise_z = get_parameter("sensors.wheel_odom.covariance.velocity.z").as_double();
+        wheel_odom_noise_ = State::V3(wheel_odom_noise_x, wheel_odom_noise_y, wheel_odom_noise_z);
     }
     
         // 3D Pose
@@ -386,7 +394,7 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     }
 
     // If the GPS is active, the filter state will be expressed in a local ENU frame
-    // for now, we need to ensure that the ENU origin has been initialized before propagating
+    // for now, we need to ensure that the ENU origin has been initialized before propagating (to-do: handle this better)
     if (using_gps_enu_)
     {
         if (!enu_converter_.initialized())
@@ -491,6 +499,7 @@ void INSEstimator::gps_callback(
 
     iESEKF::gps::GPSMeasurement meas;
     meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
+    meas.position_enu(2) = 0.0; // ignore altitude for now
     meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
 
     RCLCPP_DEBUG(
@@ -505,8 +514,8 @@ void INSEstimator::gps_callback(
 
     Mat3 R_gps;
 
-    if (msg.position_covariance_type !=
-        sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN)
+    if ((msg.position_covariance_type !=
+        sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {
         // Assuming covariance expressed in ENU frame (ROS convention)
         R_gps <<
@@ -524,8 +533,10 @@ void INSEstimator::gps_callback(
     }
     else
     {
-        R_gps =
-            Mat3::Identity() * gps_noise_;
+        R_gps = Mat3::Zero();
+        R_gps(0, 0) = gps_noise_.x();
+        R_gps(1, 1) = gps_noise_.y();
+        R_gps(2, 2) = gps_noise_.z();
     }
 
     const Mat3 R_gps_inv =
@@ -541,7 +552,7 @@ void INSEstimator::gps_callback(
             ins_ros::iESEKF::gps::H_fun);
     
     // DEBUG 
-    const auto rpy = state_.q.toRotationMatrix().eulerAngles(2, 1, 0);
+    const auto rpy = state_.get_rpy();
     const auto v_body = state_.get_body_velocity();
 
     RCLCPP_DEBUG(
@@ -563,9 +574,9 @@ void INSEstimator::gps_callback(
         state_.p.x(), state_.p.y(), state_.p.z(),
         state_.v.x(), state_.v.y(), state_.v.z(),
         v_body.x(), v_body.y(), v_body.z(),
-        rpy.x() * 180.0 / M_PI,
-        rpy.y() * 180.0 / M_PI,
-        rpy.z() * 180.0 / M_PI,
+        rpy.x(),
+        rpy.y(),
+        rpy.z(),
         state_.q.w(), state_.q.x(), state_.q.y(), state_.q.z(),
         state_.g.x(), state_.g.y(), state_.g.z(),
         state_.w.x(), state_.w.y(), state_.w.z(),
@@ -583,7 +594,10 @@ void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& m
 
     // Wheel odometry measurement update
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_w     = Mat3::Identity() * gps_noise_; // example noise, adjust as needed
+    Mat3 R_w  = Mat3::Zero();
+    R_w(0, 0) = wheel_odom_noise_.x();
+    R_w(1, 1) = wheel_odom_noise_.y();
+    R_w(2, 2) = wheel_odom_noise_.z();
     Mat3 R_w_inv = R_w.inverse();
 
     filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
@@ -947,18 +961,16 @@ void INSEstimator::initialize_orientation()
             "INS orientation initialized taking into account IMU (no GPS available).");
     }
 
-    const auto rpy =
-        state_.q
-            .toRotationMatrix()
-            .eulerAngles(2, 1, 0);
+    const auto rpy = state_.get_rpy();
 
     RCLCPP_INFO(
         get_logger(),
         "Initial RPY: [%.3f, %.3f, %.3f] deg",
-        rpy.x() * 180.0 / M_PI,
-        rpy.y() * 180.0 / M_PI,
-        rpy.z() * 180.0 / M_PI);
+        rpy.x(),
+        rpy.y(),
+        rpy.z());
 }
+
 
 } // namespace ins_ros
 
