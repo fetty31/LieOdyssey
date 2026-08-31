@@ -12,6 +12,8 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::df_dx,
               iESEKF::df_dw,
               iESEKF::degeneracy_callback)
+    , imu_to_base_(tf_buffer_, get_logger())
+    , lio_to_base_(tf_buffer_, get_logger())
     , last_imu_stamp_(-1.0)
     , tf_buffer_(this->get_clock())
 {
@@ -59,11 +61,11 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     tf_listener_ =
         std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
-    // IMU extrinsics
-    R_imu_to_base_ = Eigen::Matrix3d::Identity();
-    t_imu_to_base_ = State::V3::Zero();
+    // Extrinsics
+    imu_to_base_.reset();
+    lio_to_base_.reset();
+    initial_R_enu_base_ = Eigen::Matrix3d::Identity();
     previous_omega_base_ = State::V3::Zero();
-    imu_extrinsics_initialized_ = false;
     last_imu_stamp_ = -1.0;
 
     // Orientation initializers
@@ -104,7 +106,7 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
-    pose_sub_.reset();
+    odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
     state_pub_.reset();
@@ -127,7 +129,7 @@ INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::S
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
-    pose_sub_.reset();
+    odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
     state_pub_.reset();
@@ -144,7 +146,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
-    pose_sub_.reset();
+    odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
     state_pub_.reset();
@@ -184,14 +186,16 @@ void INSEstimator::load_parameters()
     imu_topic_ = get_parameter("sensors.imu.topic").as_string();
 
         // GPS
+    trust_gps_covariance_ = false;
+    gps_topic_.clear();
+
     bool gps_enabled = get_parameter("sensors.gps.enabled").as_bool();
-    trust_gps_covariance_ = get_parameter("sensors.gps.trust_covariance").as_bool();
     if (!gps_enabled)
     {
         RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
-        using_gps_enu_ = false;
     }else{
         gps_topic_ = get_parameter("sensors.gps.topic").as_string();
+        trust_gps_covariance_ = get_parameter("sensors.gps.trust_covariance").as_bool();
         double gps_noise_x = get_parameter("sensors.gps.covariance.position.x").as_double();
         double gps_noise_y = get_parameter("sensors.gps.covariance.position.y").as_double();
         double gps_noise_z = get_parameter("sensors.gps.covariance.position.z").as_double();
@@ -203,6 +207,7 @@ void INSEstimator::load_parameters()
     }
     
         // Wheel odometry
+    wheel_odom_topic_.clear();
     bool wheel_odom_enabled = get_parameter("sensors.wheel_odom.enabled").as_bool();
     if (wheel_odom_enabled)
     {
@@ -214,13 +219,15 @@ void INSEstimator::load_parameters()
     }
     
         // 3D Pose
+    odom_topic_.clear();
     bool pose_enabled = get_parameter("sensors.pose.enabled").as_bool();
     if (pose_enabled)
     {
-        pose_topic_ = get_parameter("sensors.pose.topic").as_string();
+        odom_topic_ = get_parameter("sensors.pose.topic").as_string();
     }
     
         // Magnetometer
+    mag_topic_.clear();
     bool mag_enabled = get_parameter("sensors.mag.enabled").as_bool();
     if (mag_enabled)
     {
@@ -228,6 +235,7 @@ void INSEstimator::load_parameters()
     }
 
         // Barometer
+    baro_topic_.clear();
     bool baro_enabled = get_parameter("sensors.baro.enabled").as_bool();
     if (baro_enabled)
     {
@@ -273,7 +281,6 @@ void INSEstimator::setup_subscriptions()
             gps_topic_,
             sensor_qos,
             std::bind(&INSEstimator::gps_callback, this, std::placeholders::_1));
-        using_gps_enu_ = true;
         RCLCPP_INFO(get_logger(), "  GPS:        %s", gps_topic_.c_str());
     }
 
@@ -286,13 +293,13 @@ void INSEstimator::setup_subscriptions()
         RCLCPP_INFO(get_logger(), "  Wheel odom: %s", wheel_odom_topic_.c_str());
     }
 
-    if(!pose_topic_.empty())
+    if(!odom_topic_.empty())
     {
-        pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-            pose_topic_, 
+        odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+            odom_topic_, 
             sensor_qos,
             std::bind(&INSEstimator::pose_callback, this, std::placeholders::_1));
-        RCLCPP_INFO(get_logger(), "  Pose:       %s", pose_topic_.c_str());
+        RCLCPP_INFO(get_logger(), "  Pose:       %s", odom_topic_.c_str());
     }
 
     if(!mag_topic_.empty())
@@ -318,6 +325,10 @@ void INSEstimator::setup_publishers()
 {
     state_pub_ = create_publisher<nav_msgs::msg::Odometry>("/ins_ros/odom", 1);
     pose_pub_  = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/ins_ros/pose", 1);
+
+    gps_debug_pub_ =
+        create_publisher<visualization_msgs::msg::Marker>(
+            "/ins_ros/debug/gps_position", 10);
 }
 
 void INSEstimator::setState() 
@@ -395,7 +406,7 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
 
     // If the GPS is active, the filter state will be expressed in a local ENU frame
     // for now, we need to ensure that the ENU origin has been initialized before propagating (to-do: handle this better)
-    if (using_gps_enu_)
+    if (!gps_topic_.empty())
     {
         if (!enu_converter_.initialized())
         {
@@ -414,7 +425,7 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         if (!imu_orientation_initializer_->initialized())
             return;
 
-        if ( (!gps_orientation_initializer_->initialized()) && using_gps_enu_ )
+        if ( (!gps_orientation_initializer_->initialized()) && (!gps_topic_.empty()) )
             return;
 
         initialize_orientation();
@@ -478,6 +489,8 @@ void INSEstimator::gps_callback(
             msg.latitude,
             msg.longitude,
             msg.altitude);
+
+    publish_gps_debug(p_gps_enu);
 
     // Initialize GPS orientation if not already done
     if (!gps_orientation_initializer_->initialized())
@@ -606,11 +619,48 @@ void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& m
         ins_ros::iESEKF::wheel::H_fun);
 }
 
-void INSEstimator::pose_callback(const geometry_msgs::msg::PoseStamped& msg)
+void INSEstimator::pose_callback(const nav_msgs::msg::Odometry& msg)
 {
-    // Convert ROS pose message to manifold bundle (SGal3 + biases + gravity)
+    // Initialize LIO/VIO-body -> EKF-body extrinsics
+    if (!lio_to_base_.initialized())
+    {
+        if (!lio_to_base_.initialize(msg.child_frame_id, body_frame_))
+        {
+            RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "Skipping POSE (LIO/VIO) measurement.");
+            return;
+        }
+    }
+
+    // Convert ROS Odometry -> INS State
     State pose_meas;
     from_ros_to_ins(msg, pose_meas);
+
+    // Transform LIO/VIO world -> ENU
+    //
+    // If GPS is active, the incoming LIO/VIO pose is expressed in an
+    // arbitrary LIO/VIO world frame. We need to align that world frame
+    // with the INS ENU frame.
+    //
+    // Assuming:
+    //   - LIO/VIO and INS use the same IMU,
+    //   - LIO/VIO initializes roll/pitch from the IMU,
+    //   - LIO/VIO starts with yaw = 0,
+    //   - the IMU is transformed to the same base_link using known
+    //     extrinsics,
+    // we can determine the initial LIO/VIO-world <-> ENU rotation
+    // from the initial ENU/base orientation.
+    //
+    // In particular, initial_R_enu_base_ gives the initial orientation
+    // of the common base frame in ENU. Combining it with the initial
+    // LIO/VIO base orientation allows us to obtain the LIO/VIO-world
+    // to ENU alignment.
+    //
+    // The resulting transform is then kept fixed because the LIO/VIO
+    // world frame is assumed to be static.
 
     iESEKF::Group group_meas;
     iESEKF::state_to_group(pose_meas, group_meas);
@@ -696,6 +746,25 @@ void INSEstimator::from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, in
     out.q.y() = static_cast<State::Scalar>(in.pose.orientation.y);
     out.q.z() = static_cast<State::Scalar>(in.pose.orientation.z);
     out.q.w() = static_cast<State::Scalar>(in.pose.orientation.w);
+}
+
+void INSEstimator::from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::State& out)
+{
+    // Position
+    out.p.x() = static_cast<State::Scalar>(in.pose.pose.position.x);
+    out.p.y() = static_cast<State::Scalar>(in.pose.pose.position.y);
+    out.p.z() = static_cast<State::Scalar>(in.pose.pose.position.z);
+
+    // Orientation
+    out.q.x() = static_cast<State::Scalar>(in.pose.pose.orientation.x);
+    out.q.y() = static_cast<State::Scalar>(in.pose.pose.orientation.y);
+    out.q.z() = static_cast<State::Scalar>(in.pose.pose.orientation.z);
+    out.q.w() = static_cast<State::Scalar>(in.pose.pose.orientation.w);
+
+    // Velocity
+    out.v.x() = static_cast<State::Scalar>(in.twist.twist.linear.x);
+    out.v.y() = static_cast<State::Scalar>(in.twist.twist.linear.y);
+    out.v.z() = static_cast<State::Scalar>(in.twist.twist.linear.z);
 }
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out)
@@ -793,91 +862,26 @@ void INSEstimator::broadcast_tf(const ins_ros::State& in, bool now)
     tf_broadcaster_->sendTransform(tf_msg);
 }
 
-bool INSEstimator::initialize_imu_extrinsics(
-    const std::string& imu_frame)
-{
-    if (imu_frame.empty() || imu_frame == body_frame_)
-    {
-        RCLCPP_WARN(
-            get_logger(),
-            "IMU message has an empty frame_id. Assuming %s frame.", 
-            body_frame_.c_str());
-
-        R_imu_to_base_.setIdentity();
-        t_imu_to_base_.setZero();
-
-        imu_extrinsics_initialized_ = true;
-        return true;
-    }
-
-    try
-    {
-        const auto tf = tf_buffer_.lookupTransform(
-            body_frame_,
-            imu_frame,
-            tf2::TimePointZero,
-            tf2::durationFromSec(1.0));
-
-        const auto & q = tf.transform.rotation;
-
-        Eigen::Quaternion<State::Scalar> quat(
-            q.w, q.x, q.y, q.z);
-        quat.normalize();
-
-        R_imu_to_base_ = quat.toRotationMatrix();
-
-        const auto & t = tf.transform.translation;
-
-        const State::V3 t_imu_in_base(
-            t.x,
-            t.y,
-            t.z);
-
-        // Vector from IMU origin to base_link origin,
-        // expressed in base_link.
-        t_imu_to_base_ = -t_imu_in_base;
-
-        imu_extrinsics_initialized_ = true;
-
-        RCLCPP_INFO(
-            get_logger(),
-            "Initialized IMU extrinsics: %s -> %s",
-            imu_frame.c_str(),
-            body_frame_.c_str());
-
-        return true;
-    }
-    catch (const tf2::TransformException & ex)
-    {
-        RCLCPP_ERROR(
-            get_logger(),
-            "Failed to initialize IMU extrinsics from '%s' to '%s': %s",
-            imu_frame.c_str(),
-            body_frame_.c_str(),
-            ex.what());
-
-        return false;
-    }
-}
-
 bool INSEstimator::transform_imu_to_base_link(
     const sensor_msgs::msg::Imu & msg,
     iESEKF::IMUmeas& imu)
 {
-    if (!imu_extrinsics_initialized_)
+    if (!imu_to_base_.initialized())
     {
-        if (!initialize_imu_extrinsics(msg.header.frame_id))
+        if (!imu_to_base_.initialize(msg.header.frame_id, body_frame_))
             return false;
     }
 
     // Angular velocity
     const State::V3 omega_base =
-        R_imu_to_base_ * imu.gyro;
+        imu_to_base_.rotate(imu.gyro);
 
     // Linear acceleration
     const State::V3 accel_base =
-        R_imu_to_base_ * imu.accel;
-    State::V3 accel_base_corrected = accel_base;
+        imu_to_base_.rotate(imu.accel);
+
+    State::V3 accel_base_corrected =
+        accel_base;
 
     // Need angular acceleration for the lever-arm correction.
     const double dt = imu.dt;
@@ -889,11 +893,11 @@ bool INSEstimator::transform_imu_to_base_link(
 
         // a_B = a_I + alpha x r + omega x (omega x r)
         accel_base_corrected +=
-            alpha_base.cross(t_imu_to_base_);
+            alpha_base.cross(imu_to_base_.translation());
 
         accel_base_corrected +=
             omega_base.cross(
-                omega_base.cross(t_imu_to_base_));
+                omega_base.cross(imu_to_base_.translation()));
     }else{
         RCLCPP_WARN_THROTTLE(
             get_logger(),
@@ -921,20 +925,22 @@ void INSEstimator::initialize_orientation()
     Eigen::Quaterniond q_tilt = imu_orientation_initializer_->orientation();
     
     Eigen::Quaterniond q_yaw = Eigen::Quaterniond::Identity();
-    if(using_gps_enu_)
+    if(!gps_topic_.empty())
         q_yaw = gps_orientation_initializer_->orientation();
 
     /*
-     * q_tilt contains roll/pitch.
+     * q_tilt contains roll/pitch w.r.t body/base frame.
      * q_yaw contains GPS-derived yaw (if active).
      */
-    Eigen::Quaterniond q_enu_imu =
+    Eigen::Quaterniond q_enu_base =
         q_yaw * q_tilt;
+    q_enu_base.normalize();
 
-    q_enu_imu.normalize();
+    // Save the initial ENU <-> base_link alignment
+    initial_R_enu_base_ = q_enu_base.toRotationMatrix();
 
     state_.q =
-        q_enu_imu.cast<iESEKF::Scalar>();
+        q_enu_base.cast<iESEKF::Scalar>();
     
     setState();
     
@@ -950,7 +956,7 @@ void INSEstimator::initialize_orientation()
 
     orientation_initialized_ = true;
 
-    if(using_gps_enu_)
+    if(!gps_topic_.empty())
     {
         RCLCPP_INFO(
             get_logger(),
@@ -969,6 +975,36 @@ void INSEstimator::initialize_orientation()
         rpy.x(),
         rpy.y(),
         rpy.z());
+}
+
+void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
+{
+    geometry_msgs::msg::Point p;
+    p.x = gps_position.x();
+    p.y = gps_position.y();
+    p.z = gps_position.z();
+
+    gps_debug_points_.push_back(p);
+
+    visualization_msgs::msg::Marker marker;
+
+    marker.header.stamp = this->now();
+    marker.header.frame_id = world_frame_;
+
+    marker.ns = "gps_debug";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+
+    marker.pose.orientation.w = 1.0;
+
+    marker.scale.x = 0.05;
+
+    marker.color.a = 1.0;
+
+    marker.points = gps_debug_points_;
+
+    gps_debug_pub_->publish(marker);
 }
 
 

@@ -9,6 +9,8 @@
 #include "ins_ros/init/imu_orientation_initializer.hpp"
 #include "ins_ros/init/gps_orientation_initializer.hpp"
 
+#include "ins_ros/utils/frame_transform.hpp"
+
 #include "ins_ros/sensors/baro_handler.hpp"
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
@@ -31,6 +33,9 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/magnetic_field.hpp>
 #include <sensor_msgs/msg/fluid_pressure.hpp>
+
+    // debug/visualization
+#include <visualization_msgs/msg/marker.hpp>
 
 // TF
 #include <tf2_ros/transform_broadcaster.h>
@@ -80,7 +85,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void imu_callback(const sensor_msgs::msg::Imu& msg);
         void gps_callback(const sensor_msgs::msg::NavSatFix& msg);
         void wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg);
-        void pose_callback(const geometry_msgs::msg::PoseStamped& msg);
+        void pose_callback(const nav_msgs::msg::Odometry& msg);
         void mag_callback(const sensor_msgs::msg::MagneticField& msg);
         void baro_callback(const sensor_msgs::msg::FluidPressure& msg);
 
@@ -97,6 +102,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // --- ROS <-> Library conversion helpers ---
         void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
         void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
+        void from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::State& out);
         void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
         void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
 
@@ -108,6 +114,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         bool transform_imu_to_base_link(const sensor_msgs::msg::Imu& msg, iESEKF::IMUmeas& imu);
         void initialize_orientation();
         State::V3 get_euler_representation(const State::Quat& q);
+
+        void publish_gps_debug(const Eigen::Vector3d& gps_position);
 
     // VARIABLES
 
@@ -121,10 +129,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // State
         ins_ros::State state_;
 
-        // IMU extrinsics
-        bool imu_extrinsics_initialized_{false};
-        Eigen::Matrix<State::Scalar, 3, 3> R_imu_to_base_;
-        State::V3 t_imu_to_base_;
+        // Extrinsics
+        Eigen::Matrix3d initial_R_enu_base_{Eigen::Matrix3d::Identity()};
+
+        utils::FrameTransform imu_to_base_;
+        utils::FrameTransform lio_to_base_;
 
         State::V3 previous_omega_base_{State::V3::Zero()};
 
@@ -139,7 +148,6 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // GPS / ENU converter
         ENUConverter enu_converter_;
-        bool using_gps_enu_{false};
         bool trust_gps_covariance_{false};
         State::V3 gps_lever_arm_{State::V3::Zero()};
         State::V3 gps_noise_{State::V3::Zero()};
@@ -155,7 +163,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::string imu_topic_{""};
         std::string gps_topic_{""};
         std::string wheel_odom_topic_{""};
-        std::string pose_topic_{""};
+        std::string odom_topic_{""};
         std::string mag_topic_{""};
         std::string baro_topic_{""};
 
@@ -172,7 +180,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr       imu_sub_;
         rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;
         rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr wheel_odom_sub_;
-        rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<sensor_msgs::msg::MagneticField>::SharedPtr mag_sub_;
         rclcpp::Subscription<sensor_msgs::msg::FluidPressure>::SharedPtr baro_sub_;
 
@@ -180,6 +188,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>> state_pub_;
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<
             geometry_msgs::msg::PoseWithCovarianceStamped>> pose_pub_;
+
+        // Publishers (debug/visualization)
+        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr gps_debug_pub_;
+        std::vector<geometry_msgs::msg::Point> gps_debug_points_;
 
         // TF
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
