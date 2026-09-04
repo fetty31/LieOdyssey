@@ -7,8 +7,8 @@ ins_ros_node:
     # General
     # ============================================================
     frames:
-      world: ona2/odom
-      body: ona2/base_footprint
+      world: odom
+      body: imu_link
 
     tf:
       publish: false
@@ -38,13 +38,13 @@ ins_ros_node:
         type: imu
         enabled: true
 
-        topic: /ona2/sensors/imu_front/imu_uncalib
+        topic: /kitti/oxts/imu
 
       gps:
         type: gps
-        enabled: true
+        enabled: false
 
-        topic: /fix
+        topic: /kitti/oxts/gps/fix
 
         trust_covariance: true # whether to trust the covariance from the GPS message or not
 

@@ -12,10 +12,12 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::df_dx,
               iESEKF::df_dw,
               iESEKF::degeneracy_callback)
+    , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
     , lio_to_base_(tf_buffer_, get_logger())
+    , initial_enu_base_(tf_buffer_, get_logger())
+    , lio_to_enu_(tf_buffer_, get_logger())
     , last_imu_stamp_(-1.0)
-    , tf_buffer_(this->get_clock())
 {
 }
 
@@ -61,10 +63,13 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     tf_listener_ =
         std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
-    // Extrinsics
+    // Frame transforms
     imu_to_base_.reset();
     lio_to_base_.reset();
-    initial_R_enu_base_ = Eigen::Matrix3d::Identity();
+    initial_enu_base_.reset();
+    lio_to_enu_.reset();
+
+    // IMU tracking
     previous_omega_base_ = State::V3::Zero();
     last_imu_stamp_ = -1.0;
 
@@ -298,7 +303,7 @@ void INSEstimator::setup_subscriptions()
         odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
             odom_topic_, 
             sensor_qos,
-            std::bind(&INSEstimator::pose_callback, this, std::placeholders::_1));
+            std::bind(&INSEstimator::odom_callback, this, std::placeholders::_1));
         RCLCPP_INFO(get_logger(), "  Pose:       %s", odom_topic_.c_str());
     }
 
@@ -323,12 +328,15 @@ void INSEstimator::setup_subscriptions()
 
 void INSEstimator::setup_publishers()
 {
-    state_pub_ = create_publisher<nav_msgs::msg::Odometry>("/ins_ros/odom", 1);
-    pose_pub_  = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/ins_ros/pose", 1);
+    state_pub_ = create_publisher<nav_msgs::msg::Odometry>("~/odom", 1);
+    pose_pub_  = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("~/pose", 1);
 
-    gps_debug_pub_ =
+    debug_gps_pub_ =
         create_publisher<visualization_msgs::msg::Marker>(
-            "/ins_ros/debug/gps_position", 10);
+            "~/debug/gps_position", 10);
+    debug_odom_pub_ =
+        create_publisher<nav_msgs::msg::Odometry>(
+            "~/debug/lio_odom", 10);
 }
 
 void INSEstimator::setState() 
@@ -431,6 +439,22 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         initialize_orientation();
     }
 
+    RCLCPP_DEBUG_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "Propagating state with corrected IMU measurement: "
+        "accel=[%.3f, %.3f, %.3f] m/s², "
+        "gyro=[%.3f, %.3f, %.3f] rad/s, "
+        "dt=%.6f s",
+        imu.accel.x() - state_.bias.a.x(),
+        imu.accel.y() - state_.bias.a.y(),
+        imu.accel.z() - state_.bias.a.z(),
+        imu.gyro.x() - state_.bias.w.x(),
+        imu.gyro.y() - state_.bias.w.y(),
+        imu.gyro.z() - state_.bias.w.z(),
+        imu.dt);
+
     // Filter prediction
     filter_.predict(imu);
 
@@ -510,6 +534,16 @@ void INSEstimator::gps_callback(
         }
     }
 
+    if(!orientation_initialized_)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Orientation not initialized. Skipping GPS measurement.");
+        return;
+    }
+
     iESEKF::gps::GPSMeasurement meas;
     meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
     meas.position_enu(2) = 0.0; // ignore altitude for now
@@ -563,6 +597,9 @@ void INSEstimator::gps_callback(
             R_gps,
             R_gps_inv,
             ins_ros::iESEKF::gps::H_fun);
+
+    // Update local state
+    iESEKF::group_to_state(filter_.getState(), state_);
     
     // DEBUG 
     const auto rpy = state_.get_rpy();
@@ -619,7 +656,7 @@ void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& m
         ins_ros::iESEKF::wheel::H_fun);
 }
 
-void INSEstimator::pose_callback(const nav_msgs::msg::Odometry& msg)
+void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 {
     // Initialize LIO/VIO-body -> EKF-body extrinsics
     if (!lio_to_base_.initialized())
@@ -630,50 +667,114 @@ void INSEstimator::pose_callback(const nav_msgs::msg::Odometry& msg)
             get_logger(),
             *get_clock(),
             1000,
-            "Skipping POSE (LIO/VIO) measurement.");
+            "Skipping ODOMETRY (LIO/VIO) measurement.");
             return;
         }
     }
 
     // Convert ROS Odometry -> INS State
-    State pose_meas;
-    from_ros_to_ins(msg, pose_meas);
+    //
+    // i.e. the pose of the LIO body expressed in the
+    // arbitrary LIO world frame.
+    State odom_meas;
+    from_ros_to_ins(msg, odom_meas);
 
     // Transform LIO/VIO world -> ENU
     //
-    // If GPS is active, the incoming LIO/VIO pose is expressed in an
-    // arbitrary LIO/VIO world frame. We need to align that world frame
+    // The incoming LIO/VIO pose is expressed in an
+    // arbitrary LIO/VIO world frame. If GPS is active, we need to align that world frame
     // with the INS ENU frame.
     //
     // Assuming:
     //   - LIO/VIO and INS use the same IMU,
     //   - LIO/VIO initializes roll/pitch from the IMU,
     //   - LIO/VIO starts with yaw = 0,
-    //   - the IMU is transformed to the same base_link using known
-    //     extrinsics,
+    //   - the transform from the LIO/VIO body to the INS base frame is known
     // we can determine the initial LIO/VIO-world <-> ENU rotation
     // from the initial ENU/base orientation.
     //
-    // In particular, initial_R_enu_base_ gives the initial orientation
-    // of the common base frame in ENU. Combining it with the initial
+    // In particular, initial_enu_base_ gives the initial transform
+    // of the filter body frame in ENU. Combining it with the initial
     // LIO/VIO base orientation allows us to obtain the LIO/VIO-world
     // to ENU alignment.
     //
     // The resulting transform is then kept fixed because the LIO/VIO
-    // world frame is assumed to be static.
+    // world frame is assumed to be static (inertial frame).
+
+    //  Initialize LIO world -> ENU
+    // ------------------------------------------------------------
+    if ((!gps_topic_.empty()))
+    {
+        if(!lio_to_enu_.initialized())
+        {
+            // We need both:
+            //   - an initialized INS orientation
+            //   - a GPS ENU position
+            //
+            // The GPS position must come from the GPS callback,
+            // NOT from this LIO message.
+            if (!orientation_initialized_ || (!enu_converter_.initialized()))
+            {
+                RCLCPP_WARN_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                1000,
+                "Skipping POSE (LIO/VIO) measurement, missing ENU frame initialization.");
+                return;
+            }
+
+            // INS body frame expressed w.r.t ENU frame
+            auto T_enu_base = initial_enu_base_.isometry();
+
+            // LIO body frame expressed w.r.t INS body frame
+            auto T_base_lio = lio_to_base_.isometry();
+
+            // LIO body frame expressed w.r.t LIO world frame
+            utils::FrameTransform::Isometry3 
+                T_lio_world = Eigen::Isometry3d::Identity();
+            T_lio_world.linear() = odom_meas.q.toRotationMatrix();
+            T_lio_world.translation() = odom_meas.p;
+
+            // ENU <- LIO world
+            auto T_enu_lio_world =
+                T_enu_base * T_base_lio * T_lio_world.inverse();
+
+            lio_to_enu_.setTransform(
+                T_enu_lio_world.linear(),
+                T_enu_lio_world.translation());
+
+            RCLCPP_INFO(
+                get_logger(),
+                "Initialized LIO/VIO world -> ENU alignment.");
+        }
+
+        // Transform LIO pose into ENU frame
+        odom_meas =
+            lio_to_enu_.transform(odom_meas);
+    }else{
+        // If GPS is not active, we assume that the LIO/VIO world frame
+        // is already aligned with the filter frame. In this case, we only need
+        // to transform the LIO/VIO body pose into the INS base frame.
+        odom_meas =
+            lio_to_base_.transform(odom_meas);
+    }
 
     iESEKF::Group group_meas;
-    iESEKF::state_to_group(pose_meas, group_meas);
+    iESEKF::state_to_group(odom_meas, group_meas);
 
     // Measurement noise covariance (example values)
-    // For pose measurement, we need to compute 6xDoF matrix
-    Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
-    Eigen::MatrixXd R_pose_inv = R_pose.inverse();
+    // For odom measurement, we compute 10xDoF matrix
+    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(10, 10) * 0.5; // to-do: set proper covariance
+    Eigen::MatrixXd R_odom_inv = R_odom.inverse();
 
     filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
         group_meas,
-        R_pose, R_pose_inv,
-        ins_ros::iESEKF::pose::H_fun);
+        R_odom, R_odom_inv,
+        ins_ros::iESEKF::odom::H_fun);
+    
+    nav_msgs::msg::Odometry debug_msg;
+    from_ins_to_ros(odom_meas, debug_msg);
+    debug_odom_pub_->publish(debug_msg);
 }
 
 void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
@@ -937,10 +1038,13 @@ void INSEstimator::initialize_orientation()
     q_enu_base.normalize();
 
     // Save the initial ENU <-> base_link alignment
-    initial_R_enu_base_ = q_enu_base.toRotationMatrix();
+    Eigen::Vector3d initial_gps_position_enu = - q_enu_base.toRotationMatrix() * gps_lever_arm_;
+    initial_enu_base_.setTransform(q_enu_base, initial_gps_position_enu);
 
     state_.q =
         q_enu_base.cast<iESEKF::Scalar>();
+    state_.p =
+        initial_gps_position_enu.cast<iESEKF::Scalar>(); 
     
     setState();
     
@@ -979,12 +1083,16 @@ void INSEstimator::initialize_orientation()
 
 void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
 {
-    geometry_msgs::msg::Point p;
-    p.x = gps_position.x();
-    p.y = gps_position.y();
-    p.z = gps_position.z();
+    // Publish GPS position in INS frame (body w.r.t ENU)
+    auto R = state_.q.toRotationMatrix().cast<double>();
+    auto gps_body = gps_position - R * gps_lever_arm_.cast<double>();
 
-    gps_debug_points_.push_back(p);
+    geometry_msgs::msg::Point p;
+    p.x = gps_body.x();
+    p.y = gps_body.y();
+    p.z = gps_body.z();
+
+    debug_gps_points_.push_back(p);
 
     visualization_msgs::msg::Marker marker;
 
@@ -1002,9 +1110,9 @@ void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
 
     marker.color.a = 1.0;
 
-    marker.points = gps_debug_points_;
+    marker.points = debug_gps_points_;
 
-    gps_debug_pub_->publish(marker);
+    debug_gps_pub_->publish(marker);
 }
 
 

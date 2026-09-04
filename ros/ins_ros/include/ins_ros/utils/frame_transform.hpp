@@ -20,6 +20,7 @@ public:
     using Vector3 = Eigen::Vector3d;
     using Matrix3 = Eigen::Matrix3d;
     using Quaternion = Eigen::Quaterniond;
+    using Isometry3 = Eigen::Isometry3d;
 
     FrameTransform() = default;
 
@@ -55,7 +56,8 @@ public:
                     logger_,
                     "Source frame is empty. Assuming '%s' frame.",
                     target_frame.c_str());
-            }else
+            }
+            else
             {
                 RCLCPP_WARN(
                     logger_,
@@ -143,6 +145,48 @@ public:
         return t_;
     }
 
+    void setTransform(
+        const Matrix3& R,
+        const Vector3& t)
+    {
+        R_ = R;
+        t_ = t;
+        initialized_ = true;
+    }
+
+    void setTransform(
+        const Quaternion& q,
+        const Vector3& t)
+    {
+        R_ = q.toRotationMatrix();
+        t_ = t;
+        initialized_ = true;
+    }
+
+    /**
+     * Return the transform as an Eigen Isometry3d.
+     *
+     *     p_target = T * p_source
+     */
+    Isometry3 isometry() const
+    {
+        Isometry3 T = Isometry3::Identity();
+        T.linear() = R_;
+        T.translation() = t_;
+
+        return T;
+    }
+
+    /**
+     * Return the inverse transform as an Eigen Isometry3d.
+     *
+     *     p_source = T.inverse() * p_target
+     */
+    Isometry3 inverseIsometry() const
+    {
+        return isometry().inverse();
+    }
+
     /**
      * Rotate a vector from source to target.
      *
@@ -154,10 +198,11 @@ public:
         return R_ * vector;
     }
 
-    /*
+    /**
      * Transform a vector from source frame to target frame.
      *
-     *     p_target = R_target_source * p_source + t_target_source
+     *     p_target = R_target_source * p_source
+     *                + t_target_source
      */
     Vector3 transform(
         const Vector3& p) const
@@ -166,9 +211,22 @@ public:
     }
 
     /**
+     * Transform a vector from target frame back to source frame.
+     *
+     *     p_source = R_target_source^T
+     *                * (p_target - t_target_source)
+     */
+    Vector3 inverseTransform(
+        const Vector3& p) const
+    {
+        return R_.transpose() * (p - t_);
+    }
+
+    /**
      * Transform state from source to target.
      */
-    ins_ros::State transform(const ins_ros::State& state) const
+    ins_ros::State transform(
+        const ins_ros::State& state) const
     {
         ins_ros::State transformed = state;
 
@@ -179,6 +237,29 @@ public:
         // Orientation
         transformed.q =
             Quaternion(R_) * state.q;
+
+        transformed.q.normalize();
+
+        return transformed;
+    }
+
+    /**
+     * Transform state from target back to source.
+     */
+    ins_ros::State inverseTransform(
+        const ins_ros::State& state) const
+    {
+        ins_ros::State transformed = state;
+
+        const Matrix3 R_inv = R_.transpose();
+
+        // Position
+        transformed.p =
+            R_inv * (state.p - t_);
+
+        // Orientation
+        transformed.q =
+            Quaternion(R_inv) * state.q;
 
         transformed.q.normalize();
 

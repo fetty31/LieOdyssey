@@ -15,6 +15,7 @@
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
 #include "ins_ros/sensors/pose_handler.hpp"
+#include "ins_ros/sensors/odom_handler.hpp"
 #include "ins_ros/sensors/wheel_handler.hpp"
 
 // ROS
@@ -85,7 +86,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void imu_callback(const sensor_msgs::msg::Imu& msg);
         void gps_callback(const sensor_msgs::msg::NavSatFix& msg);
         void wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg);
-        void pose_callback(const nav_msgs::msg::Odometry& msg);
+        void odom_callback(const nav_msgs::msg::Odometry& msg);
         void mag_callback(const sensor_msgs::msg::MagneticField& msg);
         void baro_callback(const sensor_msgs::msg::FluidPressure& msg);
 
@@ -129,11 +130,19 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // State
         ins_ros::State state_;
 
-        // Extrinsics
-        Eigen::Matrix3d initial_R_enu_base_{Eigen::Matrix3d::Identity()};
+        // TF
+        std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+        tf2_ros::Buffer tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
+        // Extrinsics
         utils::FrameTransform imu_to_base_;
         utils::FrameTransform lio_to_base_;
+        utils::FrameTransform initial_enu_base_;
+
+            // Complete transform that maps LIO/VIO poses
+            // (LIO world + LIO body) into the EKF world/body representation (it includes lio_to_base_).
+        utils::FrameTransform lio_to_enu_; 
 
         State::V3 previous_omega_base_{State::V3::Zero()};
 
@@ -190,13 +199,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
             geometry_msgs::msg::PoseWithCovarianceStamped>> pose_pub_;
 
         // Publishers (debug/visualization)
-        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr gps_debug_pub_;
-        std::vector<geometry_msgs::msg::Point> gps_debug_points_;
-
-        // TF
-        std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-        tf2_ros::Buffer tf_buffer_;
-        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_gps_pub_;
+        std::vector<geometry_msgs::msg::Point> debug_gps_points_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr debug_odom_pub_;
 };
 
 } // namespace ins_ros

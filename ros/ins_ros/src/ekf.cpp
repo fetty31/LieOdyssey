@@ -78,17 +78,28 @@ typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu
 	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity vector estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto b_a = X.impl().subgroup<2>().coeffs(); 				// accel bias estimate
+	auto b_w = X.impl().subgroup<1>().coeffs(); 				// gyro bias estimate
 
 	// rho (position): zero
 
 	// nu (linear acceleration contribution)
-	t.template segment<3>(3) = (imu.accel - imu.bias.accel /* -n_a */).cast<Scalar>() - R.transpose() * g;
+	t.template segment<3>(3) = (imu.accel - b_a /* -n_a */).cast<Scalar>() - R.transpose() * g;
 
 	// theta (angular velocity contribution)
-	t.template segment<3>(6) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
+	t.template segment<3>(6) = (imu.gyro - b_w /* -n_w */).cast<Scalar>();
 
 	// s (time)
 	t(9) = Scalar(1);
+
+    return t; // cast to Tangent
+}
+
+typename Filter::Tangent ins_ros::iESEKF::f_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/)
+{
+    typename Filter::VecTangent t = Filter::VecTangent::Zero();
+
+    t(9) = Scalar(1);
 
     return t; // cast to Tangent
 }
@@ -139,6 +150,15 @@ typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas
     return Jx;
 }
 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+{
+	// Constant velocity model (no IMU input):
+
+    Filter::Jacobian Jx = Filter::Jacobian::Zero();
+
+    return Jx;
+}
+
 typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
@@ -148,6 +168,17 @@ typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, cons
     Jw.block<3, 3>(6, 0)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_w
     Jw.block<3, 3>(10, 6) =  Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_{b_w}
     Jw.block<3, 3>(13, 9) =  Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_{b_a}
+    
+    return Jw;
+}
+
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+{
+    // w = (n_w, n_a, n_{b_w}, n_{b_a})
+    Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
+
+    Jw.block<3, 3>(3, 3)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_a
+    Jw.block<3, 3>(6, 0)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_w
     
     return Jw;
 }

@@ -42,17 +42,12 @@ public:
     void reset()
     {
         initialized_ = false;
-
         last_position_valid_ = false;
-        last_time_valid_ = false;
-
         last_position_.setZero();
-
         path_segment_.clear();
 
         distance_traveled_ = 0.0;
         heading_ = 0.0;
-
         last_time_ = 0.0;
     }
 
@@ -98,7 +93,7 @@ public:
             timestamp - last_time_;
 
         if (delta_time <= 0.0){
-            last_position_valid_ = false;
+            reset();
             return false;
         }
 
@@ -109,7 +104,7 @@ public:
         {
             // Don't update the reference point.
             // This measurement is considered invalid.
-            last_position_valid_ = false;
+            reset();
             return false;
         }
 
@@ -134,7 +129,11 @@ public:
             return false;
 
         // Estimate heading using PCA
-        heading_ = compute_pca_heading();
+        if (!compute_pca_heading(heading_))
+        {
+            reset();
+            return false;
+        }
 
         initialized_ = true;
 
@@ -165,7 +164,7 @@ public:
 
 private:
 
-    double compute_pca_heading() const
+    bool compute_pca_heading(double& heading) const
     {
         const std::size_t N =
             path_segment_.size();
@@ -196,7 +195,7 @@ private:
             covariance);
 
         if (solver.info() != Eigen::Success)
-            return 0.0;
+            return false;
 
         // Eigenvalues are sorted in ascending order.
         // Therefore col(1) corresponds to the principal direction.
@@ -222,9 +221,11 @@ private:
             principal_direction = -principal_direction;
         }
 
-        return std::atan2(
+        heading = std::atan2(
             principal_direction.y(),
             principal_direction.x());
+
+        return true;
     }
 
 public:
@@ -232,9 +233,7 @@ public:
     Parameters params_;
 
     bool initialized_ = false;
-
     bool last_position_valid_ = false;
-    bool last_time_valid_ = false;
 
     Eigen::Vector2d last_position_ =
         Eigen::Vector2d::Zero();

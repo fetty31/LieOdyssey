@@ -21,7 +21,7 @@ def generate_launch_description():
         default_value=PathJoinSubstitution([
                 FindPackageShare('ins_ros'),
                 'config',
-                'ins_ros.yaml'
+                'kitti.yaml'
             ]),
         description = 'Path to yaml config'
     )

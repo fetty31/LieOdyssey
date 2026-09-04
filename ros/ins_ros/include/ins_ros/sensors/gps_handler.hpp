@@ -8,7 +8,7 @@ namespace ins_ros::iESEKF::gps {
 struct GPSMeasurement
 {
     State::V3 position_enu = State::V3::Zero(); // GPS position in ENU frame
-    State::V3 lever_arm = State::V3::Zero(); // GPS position relative to base_link, expressed in body frame
+    State::V3 lever_arm = State::V3::Zero(); // GPS position relative to body, expressed in body frame
 };
 
 // Measurement function

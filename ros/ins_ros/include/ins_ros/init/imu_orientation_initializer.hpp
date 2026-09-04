@@ -15,9 +15,9 @@ public:
     struct Parameters
     {
         double gravity = 9.81;
-        double gravity_tolerance = 0.3;
+        double gravity_tolerance = 0.5;
         double gyro_stationary_threshold = 0.1;
-        std::size_t min_samples = 100;
+        std::size_t min_samples = 200;
     };
 
     IMUOrientationInitializer()
@@ -81,14 +81,8 @@ public:
             return false;
 
         // Compute means
-        const double N =
-            static_cast<double>(sample_count_);
-
-        const Eigen::Vector3d accel_mean =
-            accel_sum_ / N;
-
-        const Eigen::Vector3d gyro_mean =
-            gyro_sum_ / N;
+        const Eigen::Vector3d accel_mean = mean_acceleration();
+        const Eigen::Vector3d gyro_mean = mean_gyro();
 
         // Estimate roll/pitch
         orientation_ =

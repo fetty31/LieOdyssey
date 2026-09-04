@@ -35,12 +35,15 @@ std::vector<double> get_velocity_covariance(const MatDoF& P);
 
 // Propagation model (IMU dynamics)
 typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
+typename Filter::Tangent f_cv(const Filter& kf, const IMUmeas& imu);
 typename Filter::Tangent f_state(const ins_ros::State& state);
 
 // Jacobians of the dynamics
 typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
+typename Filter::Jacobian df_dx_cv(const Filter& kf, const IMUmeas& imu);
 
 typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/);
 
 // Degeneracy handler
 void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);
