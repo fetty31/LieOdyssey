@@ -7,6 +7,8 @@ namespace lio_ros::iESEKF {
 
 using Scalar = double;
 
+using IMUmeas = lie_odyssey::IMUmeas<Scalar>;
+
 using V3 = Eigen::Matrix<Scalar, 3, 1>;
 using Quat = Eigen::Quaternion<Scalar>;
 
@@ -24,7 +26,8 @@ using Tangent = Filter::Tangent;
 using MatDoF  = Filter::MatDoF;
 
 using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
-using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
+constexpr int MeasDoF = 10;                                  // Measured Group DoF (SGal3 DoF)
+using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, MeasDoF>; // Measurement Jacobian (N measurement x Measured Group DoF)
 
 // Type-conversion helper
 void group_to_state(const Group& g, lio_ros::State& state);
@@ -35,13 +38,13 @@ std::vector<double> get_pose_covariance(const MatDoF& P);
 std::vector<double> get_velocity_covariance(const MatDoF& P);
 
 // Propagation model (IMU dynamics)
-typename Filter::Tangent f(const Filter& kf, const lie_odyssey::IMUmeas& imu);
+typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
 typename Filter::Tangent f_state(const lio_ros::State& state);
 
 // Jacobians of the dynamics
-typename Filter::Jacobian df_dx(const Filter& kf, const lie_odyssey::IMUmeas& imu);
+typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
 
-typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const lie_odyssey::IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
 
 // Measurement function
 void H_fun(const Filter& /*kf*/, const Group& X_now, Measurement& z, HMat& H);

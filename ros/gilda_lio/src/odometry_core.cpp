@@ -68,8 +68,26 @@ void gilda_lio::OdometryCore::initialize(const gilda_lio::Config& config)
     }
 }
 
+// Get current state (baselink) in world frame
+gilda_lio::State gilda_lio::OdometryCore::getState() const {
+    auto state = state_; // copy
+    state.v = state.q.toRotationMatrix().transpose() * state.v; // body-centered velocity
+    return state;
+}
+
+// Get current state (lidar) in world frame 
+gilda_lio::State gilda_lio::OdometryCore::getLiDARState() const {
+    auto state = state_; // copy
+
+    state.p -= this->config_.lidar_extr.translation();                      // position in LiDAR frame
+    state.q = this->config_.lidar_extr.rotation().transpose() * state.q;    // attitude in LiDAR frame
+    state.v = state.q.toRotationMatrix().transpose() * state.v;             // body-centered velocity
+
+    return state;
+} 
+
 // Process IMU measurement (propagate state)
-void gilda_lio::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::processIMU(iESEKF::IMUmeas& imu)
 {
     GILDA_PROFILE_FUNCTION(profiler_);
 
@@ -454,7 +472,7 @@ void gilda_lio::OdometryCore::initState() {
     this->filter_->setState(group); // set initial state
 }
 
-void gilda_lio::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::imuToBody(iESEKF::IMUmeas& imu)
 {
     double dt = imu.stamp - this->last_imu_stamp_;
     
@@ -483,7 +501,7 @@ void gilda_lio::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
     this->last_imu_stamp_ = imu.stamp;
 }
 
-void gilda_lio::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
+void gilda_lio::OdometryCore::propagateIMU(const iESEKF::IMUmeas& imu)
 {
     // Propagate IMU measurement
     this->mtx_filter.lock();

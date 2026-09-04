@@ -17,20 +17,20 @@ public:
     using NoiseMatrix = Eigen::Matrix<Scalar, 12, 12>; 
 
     // Simple Invariant Dynamics: constant velocity in the Lie Algebra
-    static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas& /*imu*/) {
+    static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
         typename Filter::VecTangent t = Filter::VecTangent::Zero();
         t(0) = Scalar(1.0); // Constant angular velocity or velocity along first axis
         return t; 
     }
 
     // RI-EKF Jacobian f_dx (The 'A' matrix of error dynamics)
-    static typename Filter::Jacobian simpleJacX(const Filter& /*f*/, const IMUmeas& /*imu*/) {
+    static typename Filter::Jacobian simpleJacX(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
         // In RI-EKF, A is often zero or dependent on inputs, but never on R or p
         return Filter::Jacobian::Zero();
     }
 
     // RI-EKF Noise Mapping f_dw
-    static typename Filter::MappingMatrix simpleJacW(const Filter& /*f*/, const IMUmeas& /*imu*/) {
+    static typename Filter::MappingMatrix simpleJacW(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
         typename Filter::MappingMatrix W = Filter::MappingMatrix::Zero();
         W.template block<DoF, DoF>(0,0).setIdentity(); // Map first 12 noises to DoF
         return W;
@@ -43,7 +43,7 @@ public:
                   simpleJacX,
                   simpleJacW};
 
-    IMUmeas imu;
+    IMUmeas<Scalar> imu;
     double dt{0.01};
 
     InvariantEKFTestFixture() {

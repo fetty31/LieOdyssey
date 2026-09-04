@@ -112,7 +112,7 @@ class Preintegrator {
     // imu_meas: raw IMU measurements (rad/s, m/s^2)
     //           including current bias estimates (rad/s, m/s^2)
     //           as well as timestep (s)
-    void integrate(const IMUmeas& imu_meas)
+    void integrate(const IMUmeas<Scalar>& imu_meas)
     {
         integrate(imu_meas.accel, imu_meas.gyro,
                   imu_meas.bias.accel, imu_meas.bias.gyro, 

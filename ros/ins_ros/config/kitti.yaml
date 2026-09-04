@@ -1,0 +1,100 @@
+# Config
+
+ins_ros_node:
+  ros__parameters:
+
+    # ============================================================
+    # General
+    # ============================================================
+    frames:
+      world: odom
+      body: imu_link
+
+    tf:
+      publish: false
+
+    # ============================================================
+    # Filter
+    # ============================================================
+    filter:
+      type: iESEKF
+
+      iterations:
+        max: 5
+        tolerance: 1.e-5
+
+      process_noise:
+        gyro: 0.015
+        accel: 0.15
+        gyro_bias: 1.54e-5
+        accel_bias: 3.38e-4
+
+    # ============================================================
+    # Sensors
+    # ============================================================
+    sensors:
+
+      imu:
+        type: imu
+        enabled: true
+
+        topic: /kitti/oxts/imu
+
+      gps:
+        type: gps
+        enabled: false
+
+        topic: /kitti/oxts/gps/fix
+
+        trust_covariance: true # whether to trust the covariance from the GPS message or not
+
+        covariance: # fixed covariance if trust_covariance is false
+          position:
+            x: 0.01
+            y: 0.01
+            z: 10.0
+
+        lever_arm:
+          x: -0.4
+          y: 0.0
+          z: 0.5
+
+      pose:
+        type: pose
+        enabled: false
+
+        topic: /fast_limo/state
+
+        covariance:
+          position: 0.1
+          orientation: 0.1
+
+      wheel_odom:
+        type: wheel_odom
+        enabled: false
+
+        topic: /input/wheel_odom
+
+        covariance:
+          velocity:
+            x: 0.1
+            y: 0.1
+            z: 0.01
+
+      baro:
+        type: barometer
+        enabled: false
+
+        topic: /input/baro
+
+        covariance:
+          altitude: 2.0
+
+      mag:
+        type: magnetometer
+        enabled: false
+
+        topic: /input/mag
+
+        covariance:
+          heading: 0.1

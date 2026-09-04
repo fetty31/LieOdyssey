@@ -1,52 +1,47 @@
-#include "gilda_lio/ekf.hpp"
-#include "gilda_lio/odometry_core.hpp"
+#include "ins_ros/ekf.hpp"
 
-using namespace gilda_lio::iESEKF;
+using namespace ins_ros::iESEKF;
 
-void gilda_lio::iESEKF::group_to_state(const Group& g, gilda_lio::State& state)
+void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
 {
 	iESEKF::Bundle X = g.impl(); 
 
 	// position, orientation, velocity
-	state.p = X.subgroup<0>().translation().cast<float>();
-	state.q = X.subgroup<0>().quat().cast<float>();
-	state.q.normalize();
-	state.v = X.subgroup<0>().linearVelocity().cast<float>();
+	state.p = X.subgroup<0>().translation();
+	state.q = X.subgroup<0>().quat();
+	state.v = X.subgroup<0>().linearVelocity();
 
 	// biases
-	state.bias.w = X.subgroup<1>().coeffs().cast<float>();
-	state.bias.a = X.subgroup<2>().coeffs().cast<float>();
+	state.bias.w = X.subgroup<1>().coeffs();
+	state.bias.a = X.subgroup<2>().coeffs();
 
 	// gravity
-	state.g = X.subgroup<3>().coeffs().cast<float>();
+	state.g = X.subgroup<3>().coeffs();
 }
 
-void gilda_lio::iESEKF::state_to_group(const gilda_lio::State& state, Group& g)
+void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
 {
     using NativeBundle = manif::Bundle<iESEKF::Scalar, 
                                             manif::SGal3,  // pose + velocity 
-                                            manif::R3,     // angular velocity bias
-                                            manif::R3,     // acceleration bias
-                                            manif::R3      // gravity 
+                                            manif::R3,      // angular velocity bias
+                                            manif::R3,      // acceleration bias
+                                            manif::R3       // gravity 
                                             >;
 	using SGal3 = manif::SGal3<iESEKF::Scalar>;
 	using R3    = manif::R3<iESEKF::Scalar>;
 
-	Eigen::Quaternion<Scalar> q = state.q.cast<Scalar>();
-	q.normalize();   // eigen cast does not guarantee normalized quat
-
-	auto X0 = NativeBundle(SGal3(state.p.cast<Scalar>(),                     // x y z                  0
-								q,                     	 					 // rotation               6
-								state.v.cast<Scalar>(),                      // vx, vy, vz             3
-								0.),                                         // delta t                9
-							R3(state.bias.w.cast<Scalar>()), 				 // b_w                   10
-							R3(state.bias.a.cast<Scalar>()), 				 // b_a                   13
-							R3(state.g.cast<Scalar>())                       // gravity               16
+	auto X0 = NativeBundle(SGal3(state.p,                    // x y z                  0
+								state.q,                     // rotation               6
+								state.v,                     // vx, vy, vz             3
+								0.),                         // delta t                9
+							R3(state.bias.w), 				 // b_w                   10
+							R3(state.bias.a), 				 // b_a                   13
+							R3(state.g)                      // gravity               16
 						);  
 	g = iESEKF::Group(iESEKF::Bundle(X0)); // cast to lie_odyssey type 
 }
 
-std::vector<double> gilda_lio::iESEKF::get_pose_covariance(const MatDoF& P)
+std::vector<double> ins_ros::iESEKF::get_pose_covariance(const MatDoF& P)
 {
     Eigen::Matrix<double, 6, 6> P_pose;
     P_pose.block<3, 3>(0, 0) = P.block<3, 3>(0, 0).cast<double>();
@@ -59,7 +54,7 @@ std::vector<double> gilda_lio::iESEKF::get_pose_covariance(const MatDoF& P)
     return cov;
 }
 
-std::vector<double> gilda_lio::iESEKF::get_velocity_covariance(const MatDoF& P)
+std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P)
 {
     Eigen::Matrix<double, 6, 6> P_odom = Eigen::Matrix<double, 6, 6>::Zero();
     P_odom.block<3, 3>(0, 0) = P.block<3, 3>(3, 3).cast<double>();
@@ -69,7 +64,7 @@ std::vector<double> gilda_lio::iESEKF::get_velocity_covariance(const MatDoF& P)
     return cov;
 }
 
-typename Filter::Tangent gilda_lio::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
+typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -83,14 +78,16 @@ typename Filter::Tangent gilda_lio::iESEKF::f(const Filter& kf, const IMUmeas& i
 	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity vector estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
+	auto b_a = X.impl().subgroup<2>().coeffs(); 				// accel bias estimate
+	auto b_w = X.impl().subgroup<1>().coeffs(); 				// gyro bias estimate
 
 	// rho (position): zero
 
 	// nu (linear acceleration contribution)
-	t.template segment<3>(3) = (imu.accel - imu.bias.accel /* -n_a */).cast<Scalar>() - R.transpose() * g;
+	t.template segment<3>(3) = (imu.accel - b_a /* -n_a */).cast<Scalar>() - R.transpose() * g;
 
 	// theta (angular velocity contribution)
-	t.template segment<3>(6) = (imu.gyro - imu.bias.gyro /* -n_w */).cast<Scalar>();
+	t.template segment<3>(6) = (imu.gyro - b_w /* -n_w */).cast<Scalar>();
 
 	// s (time)
 	t(9) = Scalar(1);
@@ -98,22 +95,28 @@ typename Filter::Tangent gilda_lio::iESEKF::f(const Filter& kf, const IMUmeas& i
     return t; // cast to Tangent
 }
 
-typename Filter::Tangent gilda_lio::iESEKF::f_state(const gilda_lio::State& state) 
+typename Filter::Tangent ins_ros::iESEKF::f_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/)
+{
+    typename Filter::VecTangent t = Filter::VecTangent::Zero();
+
+    t(9) = Scalar(1);
+
+    return t; // cast to Tangent
+}
+
+typename Filter::Tangent ins_ros::iESEKF::f_state(const ins_ros::State& state) 
 {
 	// Build tangent increment xi for SGal(3) group:
 	// xi = [ rho(3); nu(3); theta(3); s(1) ] 
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
-	auto grav = state.g.cast<Scalar>(); 				// gravity vector estimate
-	Eigen::Quaternion<Scalar> q = state.q.cast<Scalar>();
-	q.normalize();
-	auto R = q.toRotationMatrix(); 						// orientation estimate
+	auto R = state.q.toRotationMatrix(); // orientation estimate
 
 	// nu (linear acceleration contribution)
-	t.template segment<3>(3) = (state.a - state.bias.a /* -n_a */).cast<Scalar>() - R.transpose() * grav;
+	t.template segment<3>(3) = (state.a - state.bias.a /* -n_a */) - R.transpose() * state.g;
 
 	// theta (angular velocity contribution)
-	t.template segment<3>(6) = (state.w - state.bias.w /* -n_w */).cast<Scalar>();
+	t.template segment<3>(6) = (state.w - state.bias.w /* -n_w */);
 
 	// rho (position): zero
 
@@ -123,7 +126,7 @@ typename Filter::Tangent gilda_lio::iESEKF::f_state(const gilda_lio::State& stat
     return t; // cast to Tangent
 }
 
-typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Filter& kf, const IMUmeas& /*imu*/) 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas& /*imu*/) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -147,7 +150,16 @@ typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Filter& kf, const IMUme
     return Jx;
 }
 
-typename Filter::MappingMatrix gilda_lio::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+{
+	// Constant velocity model (no IMU input):
+
+    Filter::Jacobian Jx = Filter::Jacobian::Zero();
+
+    return Jx;
+}
+
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
@@ -160,31 +172,18 @@ typename Filter::MappingMatrix gilda_lio::iESEKF::df_dw(const Filter& /*kf*/, co
     return Jw;
 }
 
-void gilda_lio::iESEKF::H_fun(const Filter& /*kf*/, const Group& X_now, Measurement& z, HMat& H)
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
 {
-    gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
+    // w = (n_w, n_a, n_{b_w}, n_{b_a})
+    Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
 
-    core.pointToPlaneResidual(X_now, z, H);
+    Jw.block<3, 3>(3, 3)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_a
+    Jw.block<3, 3>(6, 0)  = -Eigen::Matrix<Scalar,3,3>::Identity(); // w.r.t n_w
+    
+    return Jw;
 }
 
-void gilda_lio::iESEKF::fill_H_point_to_plane(const Group& group, 
-											const V3& normal, 
-											const V3& point, 
-											int i, 
-											HMat& H)
-{
-	iESEKF::Bundle s = group.impl(); // lie_odyssey::ManifBundle object
-	manif::SGal3<Scalar> SGal3_s = s.subgroup<0>();
-
-	// Compute jacobian w.r.t. state
-	Eigen::Matrix<Scalar, 3, manif::SGal3<Scalar>::DoF> J_dX; // jacobian SGal3 action := J_dX ​= d(G * p_imu)/dX​
-	SGal3_s.act(point, J_dX);
-
-	// Fill H with state part
-	H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
-}
-
-void gilda_lio::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
+void ins_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
 {
 	/* 
 		To-Do: handle degeneracy in SGal3 group (first subgroup of our Bundle state)
