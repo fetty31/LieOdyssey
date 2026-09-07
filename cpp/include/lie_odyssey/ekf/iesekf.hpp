@@ -417,6 +417,8 @@ public:
             MatDyn Lambda_inv = Lambda.inverse();
 
             // Full Kalman gain
+            K.resize(DoF, r.rows());
+
             K =
                 Pxs *
                 Lambda_inv *

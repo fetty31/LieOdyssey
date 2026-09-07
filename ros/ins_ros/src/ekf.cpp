@@ -64,6 +64,26 @@ std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P)
     return cov;
 }
 
+void ins_ros::iESEKF::set_pose_covariance(
+    const std::array<double, 36>& cov,
+    Eigen::Matrix<Scalar, 6, 6>& P)
+{
+    Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
+        P_pose(cov.data());
+    
+    P = P_pose.cast<Scalar>();
+}
+
+void ins_ros::iESEKF::set_velocity_covariance(
+    const std::array<double, 36>& cov,
+    Eigen::Matrix<Scalar, 3, 3>& P)
+{
+    Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
+        P_odom(cov.data());
+
+    P = P_odom.block<3, 3>(0, 0).cast<Scalar>();
+}
+
 typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
@@ -81,7 +101,7 @@ typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu
 	auto b_a = X.impl().subgroup<2>().coeffs(); 				// accel bias estimate
 	auto b_w = X.impl().subgroup<1>().coeffs(); 				// gyro bias estimate
 
-	// rho (position): zero
+	// rho (position): zero (implicit in manif::SGal3 integration)
 
 	// nu (linear acceleration contribution)
 	t.template segment<3>(3) = (imu.accel - b_a /* -n_a */).cast<Scalar>() - R.transpose() * g;

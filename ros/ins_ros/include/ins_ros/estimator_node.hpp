@@ -92,10 +92,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void setState();
 
-        // --- Automatic calibration utils ---
-        // To-Do: add functions for online IMU bias estimation, gravity estimation, etc (same as Fast-LIMO)
-
         // --- Setup helpers (called during configure) ---
+        void declare_parameters();
         void load_parameters();
         void setup_subscriptions();
         void setup_publishers();
@@ -111,10 +109,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void publish_odom();
         void publish_pose();
         void broadcast_tf(const ins_ros::State& in, bool now = true);
-        bool initialize_imu_extrinsics(const std::string& imu_frame);
         bool transform_imu_to_base_link(const sensor_msgs::msg::Imu& msg, iESEKF::IMUmeas& imu);
         void initialize_orientation();
-        State::V3 get_euler_representation(const State::Quat& q);
 
         void publish_gps_debug(const Eigen::Vector3d& gps_position);
 
@@ -144,6 +140,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
             // (LIO world + LIO body) into the EKF world/body representation (it includes lio_to_base_).
         utils::FrameTransform lio_to_enu_; 
 
+        // IMU
+        std::string imu_topic_{""};
+        bool estimate_imu_bias_{false};
+        bool estimate_imu_orientation_{false};
+        double last_imu_stamp_;
         State::V3 previous_omega_base_{State::V3::Zero()};
 
         // Orientation initializers
@@ -156,25 +157,34 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         boost::circular_buffer<iESEKF::IMUmeas> imu_buffer_;
 
         // GPS / ENU converter
+        std::string gps_topic_{""};
         ENUConverter enu_converter_;
         bool trust_gps_covariance_{false};
         State::V3 gps_lever_arm_{State::V3::Zero()};
         State::V3 gps_noise_{State::V3::Zero()};
 
+        // 3D Odometry
+        std::string odom_topic_{""};
+        bool trust_odom_pose_covariance_{false};
+        bool trust_odom_velocity_covariance_{false};
+        State::V3 odom_position_noise_{State::V3::Zero()};
+        State::V3 odom_orientation_noise_{State::V3::Zero()};
+        State::V3 odom_velocity_noise_{State::V3::Zero()};
+
         // Wheel odom
+        std::string wheel_odom_topic_{""};
         State::V3 wheel_odom_noise_{State::V3::Zero()};
+
+        // Magnetometer
+        std::string mag_topic_{""};
+
+        // Barometer
+        std::string baro_topic_{""};
 
         // Parameters
         std::string world_frame_;
         std::string body_frame_;
         bool publish_tf_;
-
-        std::string imu_topic_{""};
-        std::string gps_topic_{""};
-        std::string wheel_odom_topic_{""};
-        std::string odom_topic_{""};
-        std::string mag_topic_{""};
-        std::string baro_topic_{""};
 
         // Process noise parameters
         double gyro_noise_;
@@ -182,9 +192,6 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         double gyro_bias_noise_;
         double accel_bias_noise_;
         
-        // IMU tracking
-        double last_imu_stamp_;
-
         // Subscribers
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr       imu_sub_;
         rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;

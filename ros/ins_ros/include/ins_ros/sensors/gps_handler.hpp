@@ -31,7 +31,7 @@ void H_fun(const iESEKF::Filter& /*kf*/,
 
     State::V3 p_gps_hat = p_hat + R_hat * y.lever_arm;
     
-    // Assume measurement is already converted to ENU frame
+    // Residual in ENU frame
     r.segment<3>(0) = y.position_enu - p_gps_hat;
 
     // Jacobian

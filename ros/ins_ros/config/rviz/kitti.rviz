@@ -138,7 +138,7 @@ Visualization Manager:
           Enabled: true
           Name: GPS
           Namespaces:
-            gps_debug: true
+            {}
           Topic:
             Depth: 5
             Durability Policy: Volatile
@@ -273,25 +273,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 112.14447784423828
+      Distance: 42.01078796386719
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: 4.684775352478027
+        Y: -0.28922080993652344
+        Z: 3.1433534622192383
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 0.8297972679138184
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.9604010581970215
+      Yaw: 3.1204001903533936
     Saved: ~
 Window Geometry:
   Displays:

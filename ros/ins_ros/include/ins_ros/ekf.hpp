@@ -3,6 +3,8 @@
 #include <lie_odyssey/lie_odyssey.hpp>
 #include "ins_ros/state.hpp"
 
+#include <array>
+
 namespace ins_ros::iESEKF {
 
 using Scalar = ins_ros::State::Scalar;
@@ -32,6 +34,8 @@ void state_to_group(const ins_ros::State& state, Group& g);
 // Covariance retrieval (Pose + Vel.)
 std::vector<double> get_pose_covariance(const MatDoF& P);
 std::vector<double> get_velocity_covariance(const MatDoF& P);
+void set_pose_covariance(const std::array<double, 36>& cov, Eigen::Matrix<Scalar, 6, 6>& P);
+void set_velocity_covariance(const std::array<double, 36>& cov, Eigen::Matrix<Scalar, 3, 3>& P);
 
 // Propagation model (IMU dynamics)
 typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
