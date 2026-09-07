@@ -108,6 +108,7 @@ typename Filter::Tangent lio_ros::iESEKF::f_state(const lio_ros::State& state)
 	Eigen::Quaternion<Scalar> q = state.q.cast<Scalar>();
 	q.normalize();
 	auto R = q.toRotationMatrix(); 						// orientation estimate
+	auto v0 = state.v.cast<Scalar>();				    // velocity estimate
 
 	// nu (linear acceleration contribution)
 	t.template segment<3>(3) = (state.a - state.bias.a /* -n_a */).cast<Scalar>() - R.transpose() * grav;
@@ -115,7 +116,8 @@ typename Filter::Tangent lio_ros::iESEKF::f_state(const lio_ros::State& state)
 	// theta (angular velocity contribution)
 	t.template segment<3>(6) = (state.w - state.bias.w /* -n_w */).cast<Scalar>();
 
-	// rho (position): zero
+	// rho (position): 
+	t.template segment<3>(0) = v0; // p ⊞ v*dt
 
 	// s (time)
 	t(9) = Scalar(1);
@@ -181,7 +183,7 @@ void lio_ros::iESEKF::fill_H_point_to_plane(const Group& group,
 	SGal3_s.act(point, J_dX);
 
 	// Fill H with state part
-	H.row(i).template segment<manif::SGal3<Scalar>::DoF>(0) = (normal.transpose() * J_dX).eval();
+	H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
 }
 
 void lio_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)

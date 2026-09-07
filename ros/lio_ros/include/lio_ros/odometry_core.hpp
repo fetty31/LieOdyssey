@@ -33,7 +33,7 @@ public:
     State getState() const;
 
     // Get current state (lidar) in world frame 
-    State getLiDARState() const;
+    State getLiDARState() const; 
 
     // Get last processed scan transformed to world frame
     pcl::PointCloud<LioPointType>::Ptr getWorldScan() const { return world_scan_; }
@@ -79,10 +79,6 @@ private:
 
     Config config_;
     State state_;
-
-    const Eigen::Matrix<iESEKF::Scalar,
-                        iESEKF::MeasDoF,
-                        iESEKF::Bundle::DoF> selection_mat_;
 
     // EKF filter
     std::unique_ptr<iESEKF::Filter> filter_;

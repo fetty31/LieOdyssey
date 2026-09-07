@@ -1,14 +1,6 @@
 #include "lio_ros/odometry_core.hpp"
 
-lio_ros::OdometryCore::OdometryCore() : 
-    selection_mat_([] {
-        Eigen::Matrix<iESEKF::Scalar,
-                      iESEKF::MeasDoF,
-                      iESEKF::Bundle::DoF> m;
-        m.setZero();
-        m.template block<10,10>(0,0).setIdentity();
-        return m;
-    }())
+lio_ros::OdometryCore::OdometryCore() 
 {
     this->deskewed_scan_  = pcl::PointCloud<LioPointType>::ConstPtr (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
     this->world_scan_     = pcl::PointCloud<LioPointType>::Ptr (lio_ros::make_shared<pcl::PointCloud<LioPointType>>());
@@ -66,24 +58,6 @@ void lio_ros::OdometryCore::initialize(const lio_ros::Config& config)
         this->calibrated_ = true;
     }
 }
-
-// Get current state (baselink) in world frame
-lio_ros::State lio_ros::OdometryCore::getState() const {
-    auto state = state_; // copy
-    state.v = state.q.toRotationMatrix().transpose() * state.v; // body-centered velocity
-    return state;
-}
-
-// Get current state (lidar) in world frame 
-lio_ros::State lio_ros::OdometryCore::getLiDARState() const {
-    auto state = state_; // copy
-
-    state.p -= this->config_.lidar_extr.translation();                      // position in LiDAR frame
-    state.q = this->config_.lidar_extr.rotation().transpose() * state.q;    // attitude in LiDAR frame
-    state.v = state.q.toRotationMatrix().transpose() * state.v;             // body-centered velocity
-
-    return state;
-} 
 
 // Process IMU measurement (propagate state)
 void lio_ros::OdometryCore::processIMU(iESEKF::IMUmeas& imu)
@@ -305,7 +279,6 @@ void lio_ros::OdometryCore::processScan(const pcl::PointCloud<LioPointType>::Ptr
         this->filter_->update
                 <iESEKF::Measurement, 
                 iESEKF::HMat> (static_cast<iESEKF::Scalar>(config_.lidar_noise),
-                                selection_mat_,
                                 iESEKF::H_fun /*Measurement function*/);
         /*NOTE: update() will trigger the matching procedure
         in order to update the measurement stage of the KF with the computed point-to-plane distances*/
@@ -389,7 +362,7 @@ void lio_ros::OdometryCore::pointToPlaneResidual(const iESEKF::Group& X_now, iES
     std::size_t N = (matches.size() > max_matches) ? 
                     max_matches : matches.size();
 
-    H = iESEKF::HMat::Zero(N, iESEKF::MeasDoF);
+    H = iESEKF::HMat::Zero(N, iESEKF::Bundle::DoF);
     z.resize(N);
 
     // For each match, calculate its derivative and distance
@@ -431,6 +404,24 @@ std::vector<double> lio_ros::OdometryCore::getTwistCovariance() const
     cov[25] = config_.cov_gyro;
     return cov;
 }
+
+// Get current state (baselink) in world frame
+lio_ros::State lio_ros::OdometryCore::getState() const {
+    auto state = state_; // copy
+    state.v = state.q.toRotationMatrix().transpose() * state.v; // body-centered velocity
+    return state;
+}
+
+// Get current state (lidar) in world frame 
+lio_ros::State lio_ros::OdometryCore::getLiDARState() const {
+    auto state = state_; // copy
+
+    state.p -= this->config_.lidar_extr.translation();                      // position in LiDAR frame
+    state.q = this->config_.lidar_extr.rotation().transpose() * state.q;    // attitude in LiDAR frame
+    state.v = state.q.toRotationMatrix().transpose() * state.v;             // body-centered velocity
+
+    return state;
+} 
 
 void lio_ros::OdometryCore::initFilter() {
 

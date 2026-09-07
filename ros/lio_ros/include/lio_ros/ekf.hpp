@@ -7,10 +7,10 @@ namespace lio_ros::iESEKF {
 
 using Scalar = double;
 
-using IMUmeas = lie_odyssey::IMUmeas<Scalar>;
-
 using V3 = Eigen::Matrix<Scalar, 3, 1>;
 using Quat = Eigen::Quaternion<Scalar>;
+
+using IMUmeas = lie_odyssey::IMUmeas<Scalar>;
 
 using Bundle = lie_odyssey::BundleManif<Scalar, 
                                     manif::SGal3,  // pose + velocity 
@@ -26,8 +26,7 @@ using Tangent = Filter::Tangent;
 using MatDoF  = Filter::MatDoF;
 
 using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
-constexpr int MeasDoF = 10;                                  // Measured Group DoF (SGal3 DoF)
-using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, MeasDoF>; // Measurement Jacobian (N measurement x Measured Group DoF)
+using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
 
 // Type-conversion helper
 void group_to_state(const Group& g, lio_ros::State& state);
