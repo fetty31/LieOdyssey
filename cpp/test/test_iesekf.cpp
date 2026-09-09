@@ -31,7 +31,7 @@ public:
     using Measurement = Eigen::Matrix<Scalar, 10, 1>; // arbitrary measurement dimension
 
     // Default simple dynamics: constant tangent motion along first axis
-    static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas& imu) {
+    static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas<Scalar>& imu) {
         typename Filter::VecTangent t = Filter::VecTangent::Zero();
         // move in first tangent dimension proportional to dt in predict (arbitrary motion)
         t(0) = Scalar(1.0);
@@ -39,10 +39,10 @@ public:
     }
 
     // Jacobians of the dynamics
-    static typename Filter::Jacobian simpleJacX(const Filter&, const IMUmeas&) {
+    static typename Filter::Jacobian simpleJacX(const Filter&, const IMUmeas<Scalar>&) {
         return Filter::Jacobian::Identity();
     }
-    static typename Filter::MappingMatrix simpleJacW(const Filter&, const IMUmeas&) {
+    static typename Filter::MappingMatrix simpleJacW(const Filter&, const IMUmeas<Scalar>&) {
         return Filter::MappingMatrix::Zero();
     }
 
@@ -53,7 +53,7 @@ public:
                   simpleJacX,
                   simpleJacW};
 
-    IMUmeas imu;
+    IMUmeas<Scalar> imu;
     double dt{0.01};
 
     IESEKFTestFixture() {
@@ -139,7 +139,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithZeroResidualReducesCovarianceTrace) {
 
     // call update
     Measurement y;
-    this->filter.template update<Measurement, HMat>(
+    this->filter.template update<Measurement, Measurement, HMat>(
         y,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e3,
@@ -176,7 +176,7 @@ TYPED_TEST(IESEKFTestFixture, UpdateWithNonzeroResidualChangesState) {
     auto state_before = this->filter.getState();
 
     // run update
-    this->filter.template update<Measurement, HMat>(
+    this->filter.template update<Measurement, Measurement, HMat>(
         meas,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e-3,
         Eigen::Matrix<double, Measurement::RowsAtCompileTime, Measurement::RowsAtCompileTime>::Identity() * 1e3,

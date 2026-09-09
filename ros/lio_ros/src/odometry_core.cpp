@@ -60,7 +60,7 @@ void lio_ros::OdometryCore::initialize(const lio_ros::Config& config)
 }
 
 // Process IMU measurement (propagate state)
-void lio_ros::OdometryCore::processIMU(lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::processIMU(iESEKF::IMUmeas& imu)
 {
     LIO_PROFILE_FUNCTION(profiler_);
 
@@ -405,6 +405,24 @@ std::vector<double> lio_ros::OdometryCore::getTwistCovariance() const
     return cov;
 }
 
+// Get current state (baselink) in world frame
+lio_ros::State lio_ros::OdometryCore::getState() const {
+    auto state = state_; // copy
+    state.v = state.q.toRotationMatrix().transpose() * state.v; // body-centered velocity
+    return state;
+}
+
+// Get current state (lidar) in world frame 
+lio_ros::State lio_ros::OdometryCore::getLiDARState() const {
+    auto state = state_; // copy
+
+    state.p -= this->config_.lidar_extr.translation();                      // position in LiDAR frame
+    state.q = this->config_.lidar_extr.rotation().transpose() * state.q;    // attitude in LiDAR frame
+    state.v = state.q.toRotationMatrix().transpose() * state.v;             // body-centered velocity
+
+    return state;
+} 
+
 void lio_ros::OdometryCore::initFilter() {
 
     iESEKF::Filter::NoiseMatrix Q = iESEKF::Filter::NoiseMatrix::Identity();
@@ -439,7 +457,7 @@ void lio_ros::OdometryCore::initState() {
     this->filter_->setState(group); // set initial state
 }
 
-void lio_ros::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::imuToBody(iESEKF::IMUmeas& imu)
 {
     double dt = imu.stamp - this->last_imu_stamp_;
     
@@ -468,7 +486,7 @@ void lio_ros::OdometryCore::imuToBody(lie_odyssey::IMUmeas& imu)
     this->last_imu_stamp_ = imu.stamp;
 }
 
-void lio_ros::OdometryCore::propagateIMU(const lie_odyssey::IMUmeas& imu)
+void lio_ros::OdometryCore::propagateIMU(const iESEKF::IMUmeas& imu)
 {
     // Propagate IMU measurement
     this->mtx_filter.lock();

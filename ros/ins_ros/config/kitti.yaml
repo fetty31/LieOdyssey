@@ -1,0 +1,105 @@
+# Config
+
+ins_ros_node:
+  ros__parameters:
+
+    # ============================================================
+    # General
+    # ============================================================
+    frames:
+      world: odom
+      body: base_link
+
+    tf:
+      publish: true
+
+    # ============================================================
+    # Filter
+    # ============================================================
+    filter:
+      iterations:
+        max: 5
+        tolerance: 1.e-5
+
+      process_noise:
+        gyro: 6.01e-4
+        accel: 1.53e-2
+        gyro_bias: 1.54e-5
+        accel_bias: 3.38e-4
+
+    # ============================================================
+    # Sensors
+    # ============================================================
+    sensors:
+
+      imu:
+        enabled: true
+
+        topic: /kitti/oxts/imu
+
+        estimate_orientation: false  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
+        estimate_bias: false         # estimate IMU bias (gyro + accel) from IMU measurements
+        bias:
+          gyro:
+            x: 0.01
+            y: 0.01
+            z: 0.01
+          accel:
+            x: 0.1
+            y: 0.1
+            z: 0.1
+
+      gps:
+        enabled: true
+
+        topic: /kitti/oxts/gps/fix
+
+        trust_covariance: true # whether to trust the covariance from the GPS message or not
+
+        covariance: # fixed covariance if trust_covariance is false
+          position:
+            x: 1.0
+            y: 1.0
+            z: 1.0
+
+        lever_arm:
+          x: -1.405
+          y: 0.32
+          z: 0.93
+          # x: 0.0
+          # y: 0.0
+          # z: 0.0
+
+      odometry:
+        enabled: false
+
+        topic: /lio_ros/state
+
+        trust_covariance: # whether to trust the covariance from the Odometry message or not 
+          pose: false      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
+          velocity: false  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
+
+        covariance:
+          position:
+            x: 0.01
+            y: 0.01
+            z: 0.01
+          orientation:
+            x: 0.01
+            y: 0.01
+            z: 0.01
+          velocity:
+            x: 0.1
+            y: 0.1
+            z: 0.1
+
+      wheel_odom:
+        enabled: false
+
+        topic: /kitti/oxts/gps/vel
+
+        covariance:
+          velocity:
+            x: 0.1
+            y: 0.1
+            z: 0.01

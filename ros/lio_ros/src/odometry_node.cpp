@@ -178,7 +178,7 @@ class LIOwrapper : public rclcpp::Node
 
             lio_ros::OdometryCore& core = lio_ros::OdometryCore::getInstance();
 
-            lie_odyssey::IMUmeas imu;
+            lio_ros::iESEKF::IMUmeas imu;
             this->fromROStoLimo(msg, imu);
 
             // Propagate IMU measurement
@@ -188,6 +188,7 @@ class LIOwrapper : public rclcpp::Node
             nav_msgs::msg::Odometry state_msg, body_msg;
             this->fromLimoToROS(core.getState(),      core.getPoseCovariance(), core.getTwistCovariance(), state_msg);
             this->fromLimoToROS(core.getLiDARState(), core.getPoseCovariance(), core.getTwistCovariance(), body_msg);
+            body_msg.child_frame_id = "lidar_link";
 
             this->state_pub->publish(state_msg);
             this->body_pub->publish(body_msg);
@@ -366,7 +367,7 @@ class LIOwrapper : public rclcpp::Node
         ///////////////////////////////////////             Aux. func.           ///////////////////////////////////////////////////////////// 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
 
-        void fromROStoLimo(const sensor_msgs::msg::Imu& in, lie_odyssey::IMUmeas& out){
+        void fromROStoLimo(const sensor_msgs::msg::Imu& in, lio_ros::iESEKF::IMUmeas& out){
             out.stamp = rclcpp::Time(in.header.stamp).seconds();
 
             out.gyro(0) = in.angular_velocity.x;
@@ -380,7 +381,8 @@ class LIOwrapper : public rclcpp::Node
 
         void fromLimoToROS(const lio_ros::State& in, nav_msgs::msg::Odometry& out){
             out.header.stamp = this->get_clock()->now();
-            out.header.frame_id = "map";
+            out.header.frame_id = this->world_frame;
+            out.child_frame_id = this->body_frame;
 
             // Pose/Attitude
             Eigen::Vector3d pos = in.p.cast<double>();

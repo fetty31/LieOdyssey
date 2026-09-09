@@ -28,7 +28,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: Deskewed
+    SyncSource: FinalRaw
 Visualization Manager:
   Class: ""
   Displays:
@@ -153,7 +153,7 @@ Visualization Manager:
               Scale: 1
               Value: true
             Value: true
-          Enabled: true
+          Enabled: false
           Keep: 100
           Name: BodyState
           Position Tolerance: 0.10000000149011612
@@ -174,7 +174,7 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /lio_ros/body
-          Value: true
+          Value: false
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
@@ -348,7 +348,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 32.747657775878906
+      Distance: 57.712562561035156
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -363,10 +363,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.7597963213920593
+      Pitch: 0.8447962999343872
       Target Frame: base_link
       Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 3.3354010581970215
+      Yaw: 2.9003984928131104
     Saved: ~
 Window Geometry:
   Displays:
@@ -384,5 +384,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1850
-  X: 2630
+  X: 70
   Y: 27

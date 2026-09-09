@@ -196,7 +196,7 @@ class LIOwrapper : public rclcpp::Node
 
             gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
 
-            lie_odyssey::IMUmeas imu;
+            gilda_lio::iESEKF::IMUmeas imu;
             this->fromROStoLimo(msg, imu);
 
             // Propagate IMU measurement
@@ -396,7 +396,7 @@ class LIOwrapper : public rclcpp::Node
         ///////////////////////////////////////             Aux. func.           ///////////////////////////////////////////////////////////// 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
 
-        void fromROStoLimo(const sensor_msgs::msg::Imu& in, lie_odyssey::IMUmeas& out){
+        void fromROStoLimo(const sensor_msgs::msg::Imu& in, gilda_lio::iESEKF::IMUmeas& out){
             out.stamp = rclcpp::Time(in.header.stamp).seconds();
 
             out.gyro(0) = in.angular_velocity.x;
