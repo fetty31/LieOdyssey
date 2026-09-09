@@ -19,7 +19,7 @@ void ins_ros::State::progress(double t) {
 
     group.plus(dx * ins_ros::iESEKF::Scalar(dt));
 
-    ins_ros::iESEKF::group_to_state(group, *this);
+    ins_ros::iESEKF::group_to_state(group, t, *this);
 }   
 
 ins_ros::State::Isometry ins_ros::State::get_transform() const {
@@ -51,31 +51,31 @@ ins_ros::State::V3 ins_ros::State::get_rpy() const
     ins_ros::State::Scalar pitch = euler[1] * 180.0 / M_PI;
     ins_ros::State::Scalar roll  = euler[2] * 180.0 / M_PI;
 
-    ins_ros::State::Scalar yaw_alt =
-        std::remainder(yaw + 180.0, 360.0);
+    // ins_ros::State::Scalar yaw_alt =
+    //     std::remainder(yaw + 180.0, 360.0);
 
-    ins_ros::State::Scalar pitch_alt =
-        std::remainder(180.0 - pitch, 360.0);
+    // ins_ros::State::Scalar pitch_alt =
+    //     std::remainder(180.0 - pitch, 360.0);
 
-    ins_ros::State::Scalar roll_alt =
-        std::remainder(roll + 180.0, 360.0);
+    // ins_ros::State::Scalar roll_alt =
+    //     std::remainder(roll + 180.0, 360.0);
 
-    const ins_ros::State::Scalar norm_current =
-        yaw * yaw +
-        pitch * pitch +
-        roll * roll;
+    // const ins_ros::State::Scalar norm_current =
+    //     yaw * yaw +
+    //     pitch * pitch +
+    //     roll * roll;
 
-    const ins_ros::State::Scalar norm_alt =
-        yaw_alt * yaw_alt +
-        pitch_alt * pitch_alt +
-        roll_alt * roll_alt;
+    // const ins_ros::State::Scalar norm_alt =
+    //     yaw_alt * yaw_alt +
+    //     pitch_alt * pitch_alt +
+    //     roll_alt * roll_alt;
 
-    if (norm_alt < norm_current)
-    {
-        yaw   = yaw_alt;
-        pitch = pitch_alt;
-        roll  = roll_alt;
-    }
+    // if (norm_alt < norm_current)
+    // {
+    //     yaw   = yaw_alt;
+    //     pitch = pitch_alt;
+    //     roll  = roll_alt;
+    // }
 
     return ins_ros::State::V3(roll, pitch, yaw);
 }

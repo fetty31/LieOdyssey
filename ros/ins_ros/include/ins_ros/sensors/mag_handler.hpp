@@ -57,8 +57,8 @@ void H_fun(const iESEKF::Filter& /*kf*/,
 
     // Jacobian
     H = iESEKF::HMat::Zero(3, DoF);
-    H.block<3,3>(0, 6) = manif::skew(R.transpose() * B_body_expected); // ∂r/∂q
-    H.block<3,3>(0, 0) = manif::skew(B_body_expected); // ∂r/∂p for magnetic field model (small, often neglected)
+    H.block<3,3>(0, 6) = manif::skew(R.transpose() * B_body_expected); // ∂h/∂q
+    H.block<3,3>(0, 0) = manif::skew(B_body_expected); // ∂h/∂p for magnetic field model (small, often neglected)
 }
 
 } // namespace ins_ros::iESEKF::magnetometer

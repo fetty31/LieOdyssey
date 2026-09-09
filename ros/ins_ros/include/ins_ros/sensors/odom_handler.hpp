@@ -13,7 +13,6 @@ void H_fun(const iESEKF::Filter& /*kf*/,
 {
     using SGal3 = manif::SGal3<iESEKF::Scalar>;
     using Tangent = SGal3::Tangent;
-    // using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
 
     SGal3 X_m = X_now.impl().subgroup<0>();
     SGal3 Y_m = Y.impl().subgroup<0>();
@@ -23,6 +22,10 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     SGal3::Jacobian J_Y;
 
     xi = X_m.minus(Y_m, J_X, J_Y);
+
+    std::cout << "J_X:\n" << J_X << std::endl;
+    std::cout << "J_Y:\n" << J_Y << std::endl;
+    std::cout << "xi:\n" << xi.coeffs().transpose() << std::endl;
 
     r = iESEKF::Measurement::Zero(9);
     r.segment<3>(0) = xi.coeffs().segment<3>(0);
@@ -37,6 +40,10 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     // Derivative wrt filter state
     H.block<9, 9>(0, 0) = J_X.block<9, 9>(0, 0);
 
+
+
+
+    // using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
 
     // SGal3 Y_m = Y.impl().subgroup<0>(); // measurement as SGal3 (pose + velocity)
 

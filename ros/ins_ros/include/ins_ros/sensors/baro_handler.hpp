@@ -47,7 +47,7 @@ void H_fun(const iESEKF::Filter& /*kf*/,
 
     H = iESEKF::HMat::Zero(1, DoF);
 
-    // Jacobian: derivative of residual w.r.t position z
+    // Jacobian: dh/dp
     H(0, 2) = dp_dh(z);
 }
 

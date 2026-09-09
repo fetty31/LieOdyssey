@@ -17,6 +17,7 @@
 #include "ins_ros/sensors/pose_handler.hpp"
 #include "ins_ros/sensors/odom_handler.hpp"
 #include "ins_ros/sensors/wheel_handler.hpp"
+#include "ins_ros/sensors/yaw_handler.hpp"
 
 // ROS
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
@@ -37,6 +38,8 @@
 
     // debug/visualization
 #include <visualization_msgs/msg/marker.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 // TF
 #include <tf2_ros/transform_broadcaster.h>
@@ -49,6 +52,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include <boost/circular_buffer.hpp>
 
@@ -112,6 +116,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         bool transform_imu_to_base_link(const sensor_msgs::msg::Imu& msg, iESEKF::IMUmeas& imu);
         void initialize_orientation();
 
+        void print_state(const std::string& prefix, const ins_ros::State& state);
+
         void publish_gps_debug(const Eigen::Vector3d& gps_position);
 
     // VARIABLES
@@ -125,6 +131,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // State
         ins_ros::State state_;
+        std::chrono::steady_clock::time_point t0_system_;
+
 
         // TF
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -150,6 +158,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // Orientation initializers
         std::unique_ptr<init::IMUOrientationInitializer> imu_orientation_initializer_;
         std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_initializer_;
+        std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_continuous_;
         bool orientation_initialized_{false};
 
         // Buffers
@@ -209,6 +218,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_gps_pub_;
         std::vector<geometry_msgs::msg::Point> debug_gps_points_;
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr debug_odom_pub_;
+        rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_yaw_pub_;
+        
 };
 
 } // namespace ins_ros

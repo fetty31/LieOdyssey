@@ -17,8 +17,6 @@ ins_ros_node:
     # Filter
     # ============================================================
     filter:
-      type: iESEKF
-
       iterations:
         max: 5
         tolerance: 1.e-5
@@ -52,7 +50,7 @@ ins_ros_node:
             z: 0.1
 
       gps:
-        enabled: false
+        enabled: true
 
         topic: /kitti/oxts/gps/fix
 
@@ -68,15 +66,32 @@ ins_ros_node:
           x: -1.405
           y: 0.32
           z: 0.93
+          # x: 0.0
+          # y: 0.0
+          # z: 0.0
 
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /lio_ros/state
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
-          pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
-          velocity: true  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
+          pose: false      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
+          velocity: false  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
+
+        covariance:
+          position:
+            x: 0.01
+            y: 0.01
+            z: 0.01
+          orientation:
+            x: 0.01
+            y: 0.01
+            z: 0.01
+          velocity:
+            x: 0.1
+            y: 0.1
+            z: 0.1
 
       wheel_odom:
         enabled: false

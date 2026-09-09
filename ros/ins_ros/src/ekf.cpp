@@ -2,7 +2,7 @@
 
 using namespace ins_ros::iESEKF;
 
-void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
+void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros::State& state)
 {
 	iESEKF::Bundle X = g.impl(); 
 
@@ -10,6 +10,9 @@ void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
 	state.p = X.subgroup<0>().translation();
 	state.q = X.subgroup<0>().quat();
 	state.v = X.subgroup<0>().linearVelocity();
+
+	// time (relative to initial time reference)
+	state.time = time;
 
 	// biases
 	state.bias.w = X.subgroup<1>().coeffs();
@@ -33,7 +36,7 @@ void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
 	auto X0 = NativeBundle(SGal3(state.p,                    // x y z                  0
 								state.q,                     // rotation               6
 								state.v,                     // vx, vy, vz             3
-								0.),                         // delta t                9
+								state.time),                 // delta t                9
 							R3(state.bias.w), 				 // b_w                   10
 							R3(state.bias.a), 				 // b_a                   13
 							R3(state.g)                      // gravity               16

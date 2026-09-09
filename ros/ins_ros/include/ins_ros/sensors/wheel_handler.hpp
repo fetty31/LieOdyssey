@@ -28,7 +28,7 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     H.block<3,3>(0, 3) = R.transpose();
 
     // orientation coupling: δθ × v
-    H.block<3,3>(0, 6) = manif::skew(z_hat);
+    H.block<3,3>(0, 6) = -manif::skew(z_hat);
 }
 
 } // namespace ins_ros::iESEKF::wheel

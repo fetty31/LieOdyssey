@@ -28,7 +28,7 @@ using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
 using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
 
 // Type-conversion helper
-void group_to_state(const Group& g, ins_ros::State& state);
+void group_to_state(const Group& g, const double& time, ins_ros::State& state);
 void state_to_group(const ins_ros::State& state, Group& g);
 
 // Covariance retrieval (Pose + Vel.)

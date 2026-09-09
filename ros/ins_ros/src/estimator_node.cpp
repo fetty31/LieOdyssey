@@ -6,9 +6,9 @@ INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
     , filter_(iESEKF::MatDoF::Identity() * 1e-3,
               iESEKF::Filter::NoiseMatrix::Identity() * 1e-3,
-              iESEKF::f,
-              iESEKF::df_dx,
-              iESEKF::df_dw,
+              iESEKF::f_cv,
+              iESEKF::df_dx_cv,
+              iESEKF::df_dw_cv,
               iESEKF::degeneracy_callback)
     , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
@@ -57,6 +57,11 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     gps_orientation_initializer_ = std::make_unique<init::GPSOrientationInitializer>();
     orientation_initialized_ = false;
 
+        // debug
+    init::GPSOrientationInitializer::Parameters params;
+    params.max_speed = 20.5;
+    gps_orientation_continuous_ = std::make_unique<init::GPSOrientationInitializer>(params);
+    
     // Load parameters, setup subscriptions and publishers
     declare_parameters();
     load_parameters();
@@ -78,6 +83,9 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     filter_.setTolerance(tolerance_);
 
     setState();
+
+    // Set time reference
+    t0_system_ = std::chrono::steady_clock::now();
 
     RCLCPP_INFO(get_logger(), "Configured");
     return CallbackReturn::SUCCESS;
@@ -422,7 +430,7 @@ void INSEstimator::setup_subscriptions()
             odom_topic_, 
             sensor_qos,
             std::bind(&INSEstimator::odom_callback, this, std::placeholders::_1));
-        RCLCPP_INFO(get_logger(), "  Pose:       %s", odom_topic_.c_str());
+        RCLCPP_INFO(get_logger(), "  3D Odometry: %s", odom_topic_.c_str());
     }
 
     if(!mag_topic_.empty())
@@ -455,6 +463,8 @@ void INSEstimator::setup_publishers()
     debug_odom_pub_ =
         create_publisher<nav_msgs::msg::Odometry>(
             "~/debug/lio_odom", 10);
+    debug_yaw_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+        "~/debug/yaw", 10);
 }
 
 void INSEstimator::setState() 
@@ -474,15 +484,17 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     iESEKF::IMUmeas imu;
     from_ros_to_ins(msg, imu);
 
-    // Compute dt from last IMU stamp
+    // Compute time difference
     if (last_imu_stamp_ < 0.0)
     {
         last_imu_stamp_ = imu.stamp;
-        previous_omega_base_ = imu.gyro;
-        return;
+        imu.dt = 0.0;
     }
-    imu.dt = imu.stamp - last_imu_stamp_;
-    last_imu_stamp_ = imu.stamp;
+    else
+    {
+        imu.dt = imu.stamp - last_imu_stamp_;
+        last_imu_stamp_ = imu.stamp;
+    }
 
     // Transform IMU measurements into base/body frame if necessary.
     if (!transform_imu_to_base_link(msg, imu))
@@ -492,6 +504,12 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
             *get_clock(),
             1000,
             "Skipping IMU propagation.");
+        return;
+    }
+
+    if (imu.dt <= 0.0 || imu.dt >= 0.1)
+    {
+        previous_omega_base_ = imu.gyro;
         return;
     }
 
@@ -576,13 +594,18 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         imu.dt);
 
     // Filter prediction
+    // print_state("Before IMU propagation", state_);
     filter_.predict(imu);
 
     // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
+    const auto now_system = std::chrono::steady_clock::now();
+    const double now =
+        std::chrono::duration<double>(now_system - t0_system_).count();
+    iESEKF::group_to_state(filter_.getState(), now, state_);
     state_.w = imu.gyro;
     state_.a = imu.accel;
-    state_.time = imu.stamp;
+
+    // print_state("After IMU propagation", state_);
 
     // Publish
     publish_odom();
@@ -668,12 +691,12 @@ void INSEstimator::gps_callback(
     meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
     meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
 
-    RCLCPP_DEBUG(
-        get_logger(),
-        "GPS measurement in ENU frame: [%.3f, %.3f, %.3f] m",
-        meas.position_enu.x(),
-        meas.position_enu.y(),
-        meas.position_enu.z());
+    // RCLCPP_DEBUG(
+    //     get_logger(),
+    //     "GPS measurement in ENU frame: [%.3f, %.3f, %.3f] m",
+    //     meas.position_enu.x(),
+    //     meas.position_enu.y(),
+    //     meas.position_enu.z());
 
     using Mat3 =
         Eigen::Matrix<iESEKF::Scalar, 3, 3>;
@@ -718,71 +741,56 @@ void INSEstimator::gps_callback(
             ins_ros::iESEKF::gps::H_fun);
 
     // Update local state
-    iESEKF::group_to_state(filter_.getState(), state_);
+    const auto now_system = std::chrono::steady_clock::now();
+    const double now =
+        std::chrono::duration<double>(now_system - t0_system_).count();
+    iESEKF::group_to_state(filter_.getState(), now, state_);
     
-    // DEBUG 
-    const auto rpy = state_.get_rpy();
-    const auto v_body = state_.get_body_velocity();
+    print_state("After GPS update", state_);
 
-    RCLCPP_DEBUG(
-        get_logger(),
-        "\n"
-        "Estimated state:\n"
-        "  time:       %.6f\n"
-        "  position:   [%.6f, %.6f, %.6f] m\n"
-        "  velocity:   [%.6f, %.6f, %.6f] m/s\n"
-        "  body velocity:   [%.6f, %.6f, %.6f] m/s\n"
-        "  RPY:        [%.3f, %.3f, %.3f] deg\n"
-        "  quaternion: [%.6f, %.6f, %.6f, %.6f]\n"
-        "  gravity:    [%.6f, %.6f, %.6f] m/s²\n"
-        "  angular vel:[%.6f, %.6f, %.6f] rad/s\n"
-        "  accel:      [%.6f, %.6f, %.6f] m/s²\n"
-        "  gyro bias:  [%.6f, %.6f, %.6f] rad/s\n"
-        "  accel bias: [%.6f, %.6f, %.6f] m/s²",
-        state_.time,
-        state_.p.x(), state_.p.y(), state_.p.z(),
-        state_.v.x(), state_.v.y(), state_.v.z(),
-        v_body.x(), v_body.y(), v_body.z(),
-        rpy.x(),
-        rpy.y(),
-        rpy.z(),
-        state_.q.w(), state_.q.x(), state_.q.y(), state_.q.z(),
-        state_.g.x(), state_.g.y(), state_.g.z(),
-        state_.w.x(), state_.w.y(), state_.w.z(),
-        state_.a.x(), state_.a.y(), state_.a.z(),
-        state_.bias.w.x(), state_.bias.w.y(), state_.bias.w.z(),
-        state_.bias.a.x(), state_.bias.a.y(), state_.bias.a.z());
-}
-
-void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
-{
-    if(!orientation_initialized_)
+    if(gps_orientation_continuous_->add_position(p_gps_enu, rclcpp::Time(msg.header.stamp).seconds()))
     {
-        RCLCPP_WARN_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            1000,
-            "Orientation not initialized. Skipping wheel odometry measurement.");
-        return;
+        double yaw = gps_orientation_continuous_->heading();
+        Eigen::Matrix<iESEKF::Scalar, 2, 2> R_yaw, R_yaw_inv;
+        R_yaw.setIdentity();
+        R_yaw *= 0.01;
+        R_yaw_inv = R_yaw.inverse();
+        filter_.update<
+        iESEKF::Scalar,
+        iESEKF::Measurement,
+        iESEKF::HMat>(
+            yaw,
+            R_yaw,
+            R_yaw_inv,
+            ins_ros::iESEKF::yaw::H_fun);
+
+        RCLCPP_DEBUG(get_logger(), "Updating yaw: %f", yaw*180.0/M_PI);
+        
+        visualization_msgs::msg::Marker marker;
+
+        marker.header.frame_id = world_frame_;
+        marker.header.stamp = this->now();
+        marker.ns = "yaw_marker";
+        marker.id =  0;
+        marker.type = visualization_msgs::msg::Marker::ARROW;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.position.x = p_gps_enu.x();
+        marker.pose.position.y = p_gps_enu.y();
+        tf2::Quaternion q;
+        q.setRPY(0.0, 0.0, yaw);
+        marker.pose.orientation = tf2::toMsg(q);
+        marker.scale.x = 1.0;
+        marker.scale.y = 0.06;
+        marker.scale.z = 0.06;
+        marker.color.r = 1.0f;
+        marker.color.g = 0.0f;
+        marker.color.b = 1.0f;
+        marker.color.a = 1.0;
+        marker.lifetime = rclcpp::Duration::from_nanoseconds(0);
+        debug_yaw_pub_->publish(marker);
+
+        gps_orientation_continuous_->reset();
     }
-
-    iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
-    meas(0) = msg.twist.linear.x;
-    meas(1) = msg.twist.linear.y;
-    meas(2) = 0.0; // Assuming no vertical velocity from wheel odometry
-
-    // Wheel odometry measurement update
-    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_w  = Mat3::Zero();
-    R_w(0, 0) = wheel_odom_noise_.x();
-    R_w(1, 1) = wheel_odom_noise_.y();
-    R_w(2, 2) = wheel_odom_noise_.z();
-    Mat3 R_w_inv = R_w.inverse();
-
-    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-        meas,
-        R_w, R_w_inv,
-        ins_ros::iESEKF::wheel::H_fun);
 }
 
 void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
@@ -807,6 +815,13 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     // arbitrary LIO world frame.
     State odom_meas;
     from_ros_to_ins(msg, odom_meas);
+
+    odom_meas.v = odom_meas.q.toRotationMatrix() * odom_meas.v; // convert velocity to inertial frame
+
+    const auto now_system = std::chrono::steady_clock::now();
+    const double now =
+        std::chrono::duration<double>(now_system - t0_system_).count();
+    odom_meas.time = now;
 
     // Transform LIO/VIO world -> ENU
     //
@@ -921,14 +936,67 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
     Eigen::MatrixXd R_odom_inv = R_odom.inverse();
 
+    print_state("Before 3D odometry update", state_);
+
     filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
         group_meas,
         R_odom, R_odom_inv,
         ins_ros::iESEKF::odom::H_fun);
+
+    State state_now;
+    const auto noww_system = std::chrono::steady_clock::now();
+    const double noww =
+        std::chrono::duration<double>(noww_system - t0_system_).count();
+    RCLCPP_DEBUG(
+        get_logger(),
+        "After 3D odometry update, time=%.3f s",
+        noww);
+    iESEKF::group_to_state(filter_.getState(), noww, state_now);
+    print_state("After 3D odometry update", state_now);
     
     nav_msgs::msg::Odometry debug_msg;
     from_ins_to_ros(odom_meas, debug_msg);
     debug_odom_pub_->publish(debug_msg);
+}
+
+void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
+{
+    if(!orientation_initialized_)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "Orientation not initialized. Skipping wheel odometry measurement.");
+        return;
+    }
+
+    iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
+    meas(0) = msg.twist.linear.x;
+    meas(1) = msg.twist.linear.y;
+    meas(2) = 0.0; // Assuming no vertical velocity from wheel odometry
+
+    RCLCPP_DEBUG(get_logger(), "Received base velocity x:%f, y:%f", meas(0), meas(1));
+
+    // Wheel odometry measurement update
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    Mat3 R_w  = Mat3::Zero();
+    R_w(0, 0) = wheel_odom_noise_.x();
+    R_w(1, 1) = wheel_odom_noise_.y();
+    R_w(2, 2) = wheel_odom_noise_.z();
+    Mat3 R_w_inv = R_w.inverse();
+
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        meas,
+        R_w, R_w_inv,
+        ins_ros::iESEKF::wheel::H_fun);
+    
+    State state_now;
+    const auto now_system = std::chrono::steady_clock::now();
+    const double now =
+        std::chrono::duration<double>(now_system - t0_system_).count();
+    iESEKF::group_to_state(filter_.getState(), now, state_now);
+    print_state("After wheel odometry update", state_now);
 }
 
 void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
@@ -1205,14 +1273,14 @@ void INSEstimator::initialize_orientation()
     setState();
     
     // Update filter with initial orientation measurement
-    iESEKF::Group group_meas;
-    iESEKF::state_to_group(state_, group_meas);
-    Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
-    Eigen::MatrixXd R_pose_inv = R_pose.inverse();
-    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
-        group_meas,
-        R_pose, R_pose_inv,
-        ins_ros::iESEKF::pose::H_fun);
+    // iESEKF::Group group_meas;
+    // iESEKF::state_to_group(state_, group_meas);
+    // Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
+    // Eigen::MatrixXd R_pose_inv = R_pose.inverse();
+    // filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
+    //     group_meas,
+    //     R_pose, R_pose_inv,
+    //     ins_ros::iESEKF::pose::H_fun);
 
     orientation_initialized_ = true;
 
@@ -1247,6 +1315,42 @@ void INSEstimator::initialize_orientation()
         rpy.z());
 }
 
+void INSEstimator::print_state(const std::string& prefix, const State& state)
+{
+    const auto rpy = state.get_rpy();
+    const auto v_body = state.get_body_velocity();
+
+    RCLCPP_DEBUG(
+        get_logger(),
+        "%s:\n"
+        "Estimated state:\n"
+        "  time:       %.6f\n"
+        "  position:   [%.6f, %.6f, %.6f] m\n"
+        "  velocity:   [%.6f, %.6f, %.6f] m/s\n"
+        "  body velocity:   [%.6f, %.6f, %.6f] m/s\n"
+        "  RPY:        [%.3f, %.3f, %.3f] deg\n"
+        "  quaternion: [%.6f, %.6f, %.6f, %.6f]\n"
+        "  gravity:    [%.6f, %.6f, %.6f] m/s²\n"
+        "  angular vel:[%.6f, %.6f, %.6f] rad/s\n"
+        "  accel:      [%.6f, %.6f, %.6f] m/s²\n"
+        "  gyro bias:  [%.6f, %.6f, %.6f] rad/s\n"
+        "  accel bias: [%.6f, %.6f, %.6f] m/s²",
+        prefix.c_str(),
+        state.time,
+        state.p.x(), state.p.y(), state.p.z(),
+        state.v.x(), state.v.y(), state.v.z(),
+        v_body.x(), v_body.y(), v_body.z(),
+        rpy.x(),
+        rpy.y(),
+        rpy.z(),
+        state.q.w(), state.q.x(), state.q.y(), state.q.z(),
+        state.g.x(), state.g.y(), state.g.z(),
+        state.w.x(), state.w.y(), state.w.z(),
+        state.a.x(), state.a.y(), state.a.z(),
+        state.bias.w.x(), state.bias.w.y(), state.bias.w.z(),
+        state.bias.a.x(), state.bias.a.y(), state.bias.a.z());
+}
+
 void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
 {
     // Publish GPS position in INS frame (body w.r.t ENU)
@@ -1275,6 +1379,7 @@ void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
     marker.scale.x = 0.05;
 
     marker.color.a = 1.0;
+    marker.color.b = 1.0;
 
     marker.points = debug_gps_points_;
 

@@ -30,6 +30,10 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     auto R_hat = X_now.impl().subgroup<0>().quat().toRotationMatrix();
 
     State::V3 p_gps_hat = p_hat + R_hat * y.lever_arm;
+
+    std::cout << "GPS PREDICTED: " << p_hat << std::endl;
+    std::cout << "GPS RECEIVED: " << y.position_enu << std::endl;
+    std::cout << "GPS LEVER ARM: " << y.lever_arm << std::endl;
     
     // Residual in ENU frame
     r.segment<3>(0) = y.position_enu - p_gps_hat;
@@ -37,11 +41,11 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     // Jacobian
     H = iESEKF::HMat::Zero(3, DoF);
 
-    // dp/dp = Identity
+    // dh/dp = Identity
     H.block<3,3>(0, 0) = Eigen::Matrix<Scalar, 3, 3>::Identity(); 
 
-    // dp/dq = -R_hat * skew(lever_arm)
-    H.block<3,3>(0, 6) = -R_hat * manif::skew(y.lever_arm);
+    // dh/dq = - skew(R_hat*lever_arm)
+    H.block<3,3>(0, 6) = -manif::skew(R_hat * y.lever_arm);
 }
 
 } // namespace ins_ros::iESEKF::gps
