@@ -194,6 +194,28 @@ public:
             K = aux * H.transpose() * R_inv;
             KH = K*H;
 
+            std::cout << "\n===== GPS ITERATION =====\n";
+
+            std::cout << "dx before:\n"
+                    << dx.coeffs().transpose()
+                    << '\n';
+
+            std::cout << "J:\n"
+                    << J
+                    << '\n';
+
+            std::cout << "J_inv:\n"
+                    << J_inv
+                    << '\n';
+
+            std::cout << "K:\n"
+                    << K
+                    << '\n';
+
+            std::cout << "K*r:\n"
+                    << (K*r).transpose()
+                    << '\n';
+
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 

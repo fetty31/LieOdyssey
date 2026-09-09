@@ -6,9 +6,9 @@ INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
     , filter_(iESEKF::MatDoF::Identity() * 1e-3,
               iESEKF::Filter::NoiseMatrix::Identity() * 1e-3,
-              iESEKF::f_cv,
-              iESEKF::df_dx_cv,
-              iESEKF::df_dw_cv,
+              iESEKF::f,
+              iESEKF::df_dx,
+              iESEKF::df_dw,
               iESEKF::degeneracy_callback)
     , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
@@ -27,12 +27,10 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
 {
     RCLCPP_DEBUG(get_logger(), "Configuring...");
 
-    // Initialize state 
+    // Initialize state
     this->state_ = ins_ros::State();
-
-    // Set buffer capacity
-    this->imu_buffer_.set_capacity(2000);
-    this->state_buffer_.set_capacity(2000);
+    this->filter_time_ = -1.0;
+    this->filter_time_initialized_ = false;
 
     // Reset ENU frame
     enu_converter_ = ENUConverter();
@@ -61,10 +59,20 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     init::GPSOrientationInitializer::Parameters params;
     params.max_speed = 20.5;
     gps_orientation_continuous_ = std::make_unique<init::GPSOrientationInitializer>(params);
-    
+
     // Load parameters, setup subscriptions and publishers
     declare_parameters();
     load_parameters();
+
+    // Apply buffer configuration to the measurement handler
+    measurements::MeasurementHandler::Options handler_opts;
+    handler_opts.imu_capacity = imu_buffer_capacity_;
+    handler_opts.aiding_capacity = aiding_buffer_capacity_;
+    handler_opts.state_capacity = imu_buffer_capacity_;
+    handler_opts.history_window_s = history_window_s_;
+    meas_handler_.setOptions(handler_opts);
+    meas_handler_.clear();
+
     setup_subscriptions();
     setup_publishers();
 
@@ -84,9 +92,6 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
 
     setState();
 
-    // Set time reference
-    t0_system_ = std::chrono::steady_clock::now();
-
     RCLCPP_INFO(get_logger(), "Configured");
     return CallbackReturn::SUCCESS;
 }
@@ -98,13 +103,17 @@ INSEstimator::CallbackReturn INSEstimator::on_activate(const rclcpp_lifecycle::S
     state_pub_->on_activate();
     pose_pub_->on_activate();
 
-    RCLCPP_INFO(get_logger(), "Activated");
+    setup_timer();
+
+    RCLCPP_INFO(get_logger(), "Activated (estimation rate: %.2f Hz)", estimation_rate_);
     return CallbackReturn::SUCCESS;
 }
 
 INSEstimator::CallbackReturn INSEstimator::on_deactivate(const rclcpp_lifecycle::State&)
 {
     RCLCPP_DEBUG(get_logger(), "Deactivating...");
+
+    estimation_timer_.reset();
 
     state_pub_->on_deactivate();
     pose_pub_->on_deactivate();
@@ -117,6 +126,8 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
 {
     RCLCPP_DEBUG(get_logger(), "Cleaning up...");
 
+    estimation_timer_.reset();
+
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
@@ -128,9 +139,9 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     tf_broadcaster_.reset();
 
     filter_.reset();
-
-    state_buffer_.clear();
-    imu_buffer_.clear();
+    meas_handler_.clear();
+    filter_time_ = -1.0;
+    filter_time_initialized_ = false;
 
     RCLCPP_INFO(get_logger(), "Cleaned up");
     return CallbackReturn::SUCCESS;
@@ -139,6 +150,8 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
 INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::State&)
 {
     RCLCPP_DEBUG(get_logger(), "Shutting down...");
+
+    estimation_timer_.reset();
 
     imu_sub_.reset();
     gps_sub_.reset();
@@ -157,6 +170,8 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
 {
     RCLCPP_DEBUG(get_logger(), "Error occurred - cleaning up...");
 
+    estimation_timer_.reset();
+
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
@@ -167,8 +182,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     pose_pub_.reset();
     tf_broadcaster_.reset();
 
-    state_buffer_.clear();
-    imu_buffer_.clear();
+    meas_handler_.clear();
 
     return CallbackReturn::SUCCESS;
 }
@@ -185,6 +199,11 @@ void INSEstimator::declare_parameters()
 
     declare_parameter<bool>("tf.publish", true);
 
+    // Timing: when true, stamp incoming measurements at receive time instead
+    // of trusting msg.header.stamp (use when sensor clocks are not synced
+    // with the PC clock; applies to all sensors including the IMU time base).
+    declare_parameter<bool>("timing.use_receive_stamp", false);
+
     // Filter
     declare_parameter<int>("filter.iterations.max", 5);
     declare_parameter<double>("filter.iterations.tolerance", 1e-6);
@@ -194,6 +213,22 @@ void INSEstimator::declare_parameters()
 
     declare_parameter<double>("filter.process_noise.gyro_bias", 1.54e-5);
     declare_parameter<double>("filter.process_noise.accel_bias", 3.38e-4);
+
+    // Fixed-frequency estimation loop
+    declare_parameter<double>("filter.rate", 100.0);
+    declare_parameter<double>("filter.history_window", 5.0);
+    declare_parameter<int>("filter.buffer.imu_capacity", 2000);
+    declare_parameter<int>("filter.buffer.aiding_capacity", 200);
+
+    // Synchronization / latency handling
+    declare_parameter<double>("sync.gps.rewind_threshold", 0.05);
+    declare_parameter<double>("sync.gps.max_age", 2.0);
+    declare_parameter<double>("sync.odom.tolerance", 0.05);
+    declare_parameter<double>("sync.wheel_odom.tolerance", 0.05);
+    declare_parameter<double>("sync.mag.tolerance", 0.05);
+    declare_parameter<double>("sync.baro.tolerance", 0.05);
+    declare_parameter<double>("sync.yaw.tolerance", 0.10);
+    declare_parameter<double>("sync.future_tolerance", 0.02);
 
     // IMU
     declare_parameter<bool>("sensors.imu.enabled", true);
@@ -271,9 +306,30 @@ void INSEstimator::load_parameters()
     body_frame_  = get_parameter("frames.body").as_string();
     publish_tf_  = get_parameter("tf.publish").as_bool();
 
+    use_receive_stamp_ = get_parameter("timing.use_receive_stamp").as_bool();
+    if (use_receive_stamp_)
+    {
+        RCLCPP_WARN(get_logger(),
+            "timing.use_receive_stamp=true: stamping all measurements at receive time, ignoring msg headers.");
+    }
+
     // Filter
     max_iters_ = get_parameter("filter.iterations.max").as_int();
     tolerance_ = get_parameter("filter.iterations.tolerance").as_double();
+
+    estimation_rate_ = get_parameter("filter.rate").as_double();
+    history_window_s_ = get_parameter("filter.history_window").as_double();
+    imu_buffer_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.imu_capacity").as_int());
+    aiding_buffer_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.aiding_capacity").as_int());
+
+    gps_rewind_threshold_ = get_parameter("sync.gps.rewind_threshold").as_double();
+    gps_max_age_ = get_parameter("sync.gps.max_age").as_double();
+    sync_tolerance_odom_ = get_parameter("sync.odom.tolerance").as_double();
+    sync_tolerance_wheel_ = get_parameter("sync.wheel_odom.tolerance").as_double();
+    sync_tolerance_mag_ = get_parameter("sync.mag.tolerance").as_double();
+    sync_tolerance_baro_ = get_parameter("sync.baro.tolerance").as_double();
+    sync_tolerance_yaw_ = get_parameter("sync.yaw.tolerance").as_double();
+    sync_future_tolerance_ = get_parameter("sync.future_tolerance").as_double();
 
     // Sensors
         // IMU
@@ -467,6 +523,16 @@ void INSEstimator::setup_publishers()
         "~/debug/yaw", 10);
 }
 
+void INSEstimator::setup_timer()
+{
+    const double rate = (estimation_rate_ > 0.0) ? estimation_rate_ : 100.0;
+    const auto period = std::chrono::duration<double>(1.0 / rate);
+    estimation_timer_ = create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(period),
+        std::bind(&INSEstimator::estimation_timer_callback, this));
+    RCLCPP_INFO(get_logger(), "Estimation timer created at %.2f Hz", rate);
+}
+
 void INSEstimator::setState() 
 {
     iESEKF::Group group;
@@ -476,15 +542,20 @@ void INSEstimator::setState()
 }
 
 /* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /////////////////////////////////            CALLBACKS                /////////////////////////////////////////////////////////////
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
+    /////////////////////////////////            CALLBACKS (thin)          /////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ *
+ * Each callback converts its ROS message and pushes a stamped measurement
+ * into the MeasurementHandler. No predict/update happens here; the
+ * fixed-frequency estimation_timer_callback() owns the filter.
+ */
 
 void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
 {
     iESEKF::IMUmeas imu;
     from_ros_to_ins(msg, imu);
 
-    // Compute time difference
+    // Compute time difference (sensor time base).
     if (last_imu_stamp_ < 0.0)
     {
         last_imu_stamp_ = imu.stamp;
@@ -503,117 +574,49 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
             get_logger(),
             *get_clock(),
             1000,
-            "Skipping IMU propagation.");
+            "Skipping IMU measurement (TF unavailable).");
         return;
     }
 
-    if (imu.dt <= 0.0 || imu.dt >= 0.1)
+    if (imu.dt < 0.0 || imu.dt >= 0.1)
     {
+        // Keep lever-arm correction state consistent, but still buffer the
+        // sample so the timer can observe the time gap.
         previous_omega_base_ = imu.gyro;
-        return;
+        if (imu.dt < 0.0)
+        {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                "Out-of-order IMU stamp (dt=%.6f). Sample buffered anyway.", imu.dt);
+            imu.dt = 0.0;
+        }
     }
 
-    // Initialize IMU orientation if not already done
-    if (!imu_orientation_initializer_->initialized())
+    // Feed stationary initializer (roll/pitch + bias) while uninitialized.
+    if (!imu_orientation_initializer_->initialized() && estimate_imu_orientation_)
     {
         Eigen::Vector3d accel = imu.accel.cast<double>();
         Eigen::Vector3d gyro = imu.gyro.cast<double>();
-
-        RCLCPP_INFO_THROTTLE(
-                get_logger(),
-                *get_clock(),
-                5000,
-                "Estimating IMU orientation from accelerometer data...");
-
         if (imu_orientation_initializer_->add_measurement(accel, gyro))
         {
-            if(estimate_imu_bias_){
+            if (estimate_imu_bias_)
+            {
                 state_.bias.a = imu_orientation_initializer_->accelerometer_bias().cast<iESEKF::Scalar>();
                 state_.bias.w = imu_orientation_initializer_->gyroscope_bias().cast<iESEKF::Scalar>();
             }
-            RCLCPP_INFO(
-                get_logger(),
-                "IMU orientation computed (roll/pitch) with accelerometer bias: [%.3f, %.3f, %.3f] m/s^2 and gyroscope bias: [%.3f, %.3f, %.3f] rad/s",
-                state_.bias.a.x(),
-                state_.bias.a.y(),
-                state_.bias.a.z(),
-                state_.bias.w.x(),
-                state_.bias.w.y(),
-                state_.bias.w.z());
-        }else{
-            RCLCPP_DEBUG(
-                get_logger(),
-                "IMU orientation initializer: %zu/%zu samples collected",
-                imu_orientation_initializer_->sample_count_,
-                imu_orientation_initializer_->params_.min_samples);
-            return;
+            RCLCPP_INFO(get_logger(),
+                "IMU orientation computed (roll/pitch) with accel bias: [%.3f, %.3f, %.3f] m/s^2 and gyro bias: [%.3f, %.3f, %.3f] rad/s",
+                state_.bias.a.x(), state_.bias.a.y(), state_.bias.a.z(),
+                state_.bias.w.x(), state_.bias.w.y(), state_.bias.w.z());
         }
-    }
-
-    // If the GPS is active, the filter state will be expressed in a local ENU frame
-    // for now, we need to ensure that the ENU origin has been initialized before propagating (to-do: handle this better)
-    if (!gps_topic_.empty())
-    {
-        if (!enu_converter_.initialized())
+        else
         {
-            RCLCPP_WARN_THROTTLE(
-                get_logger(),
-                *get_clock(),
-                5000,
-                "Local ENU frame not initialized. Skipping IMU propagation.");
-            return;
+            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
+                "IMU orientation initializer: %zu samples collected",
+                imu_orientation_initializer_->sample_count_);
         }
     }
 
-    // Check whether complete orientation is available
-    if (!orientation_initialized_)
-    {
-        if (!imu_orientation_initializer_->initialized())
-            return;
-
-        if ( (!gps_orientation_initializer_->initialized()) && (!gps_topic_.empty()) )
-            return;
-
-        initialize_orientation();
-    }
-
-    RCLCPP_DEBUG_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        1000,
-        "Propagating state with corrected IMU measurement: "
-        "accel=[%.3f, %.3f, %.3f] m/s², "
-        "gyro=[%.3f, %.3f, %.3f] rad/s, "
-        "dt=%.6f s",
-        imu.accel.x() - state_.bias.a.x(),
-        imu.accel.y() - state_.bias.a.y(),
-        imu.accel.z() - state_.bias.a.z(),
-        imu.gyro.x() - state_.bias.w.x(),
-        imu.gyro.y() - state_.bias.w.y(),
-        imu.gyro.z() - state_.bias.w.z(),
-        imu.dt);
-
-    // Filter prediction
-    // print_state("Before IMU propagation", state_);
-    filter_.predict(imu);
-
-    // Update local state
-    const auto now_system = std::chrono::steady_clock::now();
-    const double now =
-        std::chrono::duration<double>(now_system - t0_system_).count();
-    iESEKF::group_to_state(filter_.getState(), now, state_);
-    state_.w = imu.gyro;
-    state_.a = imu.accel;
-
-    // print_state("After IMU propagation", state_);
-
-    // Publish
-    publish_odom();
-    publish_pose();
-
-    // TF
-    if (publish_tf_)
-        broadcast_tf(state_);
+    meas_handler_.pushImu(imu);
 }
 
 void INSEstimator::gps_callback(
@@ -659,66 +662,51 @@ void INSEstimator::gps_callback(
 
     publish_gps_debug(p_gps_enu);
 
-    // Initialize GPS orientation if not already done
+    const double stamp = sensor_stamp(msg.header.stamp);
+
+    // Feed yaw initializer (needs motion); kept here so the timer only reads the result.
     if (!gps_orientation_initializer_->initialized())
     {
-        if (gps_orientation_initializer_->add_position(p_gps_enu, 
-                                                    rclcpp::Time(msg.header.stamp).seconds()))
+        if (!gps_orientation_initializer_->add_position(p_gps_enu, stamp))
         {
-            RCLCPP_INFO(
-                get_logger(),
-                "GPS orientation initialized (yaw)");
-        }else{
-            RCLCPP_DEBUG(
-                get_logger(),
+            RCLCPP_DEBUG(get_logger(),
                 "GPS orientation initializer: %f m traveled",
                 gps_orientation_initializer_->distance_traveled_);
-            return;
+        }
+        else
+        {
+            RCLCPP_INFO(get_logger(), "GPS orientation initialized (yaw)");
         }
     }
 
-    if(!orientation_initialized_)
+    // Continuous heading refinement -> pushed as yaw measurement for the timer.
+    if (gps_orientation_continuous_->add_position(p_gps_enu, stamp))
     {
-        RCLCPP_WARN_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            5000,
-            "Orientation not initialized. Skipping GPS measurement.");
-        return;
+        measurements::StampedYaw yaw_meas;
+        yaw_meas.stamp = stamp;
+        yaw_meas.yaw = gps_orientation_continuous_->heading();
+        yaw_meas.R.setIdentity();
+        yaw_meas.R *= 0.0000001;
+        yaw_meas.R_inv = yaw_meas.R.inverse();
+        meas_handler_.pushYaw(yaw_meas);
+        publish_yaw_debug(yaw_meas.yaw, p_gps_enu);
+        gps_orientation_continuous_->reset();
     }
 
-    iESEKF::gps::GPSMeasurement meas;
-    meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
-    meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
+    measurements::StampedGps meas;
+    meas.stamp = stamp;
+    meas.meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
+    meas.meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
 
-    // RCLCPP_DEBUG(
-    //     get_logger(),
-    //     "GPS measurement in ENU frame: [%.3f, %.3f, %.3f] m",
-    //     meas.position_enu.x(),
-    //     meas.position_enu.y(),
-    //     meas.position_enu.z());
-
-    using Mat3 =
-        Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
     Mat3 R_gps;
-
     if ((msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {
-        // Assuming covariance expressed in ENU frame (ROS convention)
         R_gps <<
-            msg.position_covariance[0],
-            msg.position_covariance[1],
-            msg.position_covariance[2],
-
-            msg.position_covariance[3],
-            msg.position_covariance[4],
-            msg.position_covariance[5],
-
-            msg.position_covariance[6],
-            msg.position_covariance[7],
-            msg.position_covariance[8];
+            msg.position_covariance[0], msg.position_covariance[1], msg.position_covariance[2],
+            msg.position_covariance[3], msg.position_covariance[4], msg.position_covariance[5],
+            msg.position_covariance[6], msg.position_covariance[7], msg.position_covariance[8];
     }
     else
     {
@@ -727,70 +715,10 @@ void INSEstimator::gps_callback(
         R_gps(1, 1) = gps_noise_.y();
         R_gps(2, 2) = gps_noise_.z();
     }
+    meas.R = R_gps;
+    meas.R_inv = R_gps.inverse();
 
-    const Mat3 R_gps_inv =
-        R_gps.inverse();
-
-    filter_.update<
-        iESEKF::gps::GPSMeasurement,
-        iESEKF::Measurement,
-        iESEKF::HMat>(
-            meas,
-            R_gps,
-            R_gps_inv,
-            ins_ros::iESEKF::gps::H_fun);
-
-    // Update local state
-    const auto now_system = std::chrono::steady_clock::now();
-    const double now =
-        std::chrono::duration<double>(now_system - t0_system_).count();
-    iESEKF::group_to_state(filter_.getState(), now, state_);
-    
-    print_state("After GPS update", state_);
-
-    if(gps_orientation_continuous_->add_position(p_gps_enu, rclcpp::Time(msg.header.stamp).seconds()))
-    {
-        double yaw = gps_orientation_continuous_->heading();
-        Eigen::Matrix<iESEKF::Scalar, 2, 2> R_yaw, R_yaw_inv;
-        R_yaw.setIdentity();
-        R_yaw *= 0.01;
-        R_yaw_inv = R_yaw.inverse();
-        filter_.update<
-        iESEKF::Scalar,
-        iESEKF::Measurement,
-        iESEKF::HMat>(
-            yaw,
-            R_yaw,
-            R_yaw_inv,
-            ins_ros::iESEKF::yaw::H_fun);
-
-        RCLCPP_DEBUG(get_logger(), "Updating yaw: %f", yaw*180.0/M_PI);
-        
-        visualization_msgs::msg::Marker marker;
-
-        marker.header.frame_id = world_frame_;
-        marker.header.stamp = this->now();
-        marker.ns = "yaw_marker";
-        marker.id =  0;
-        marker.type = visualization_msgs::msg::Marker::ARROW;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.position.x = p_gps_enu.x();
-        marker.pose.position.y = p_gps_enu.y();
-        tf2::Quaternion q;
-        q.setRPY(0.0, 0.0, yaw);
-        marker.pose.orientation = tf2::toMsg(q);
-        marker.scale.x = 1.0;
-        marker.scale.y = 0.06;
-        marker.scale.z = 0.06;
-        marker.color.r = 1.0f;
-        marker.color.g = 0.0f;
-        marker.color.b = 1.0f;
-        marker.color.a = 1.0;
-        marker.lifetime = rclcpp::Duration::from_nanoseconds(0);
-        debug_yaw_pub_->publish(marker);
-
-        gps_orientation_continuous_->reset();
-    }
+    meas_handler_.pushGps(meas);
 }
 
 void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
@@ -809,54 +737,17 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
         }
     }
 
-    // Convert ROS Odometry -> INS State
-    //
-    // i.e. the pose of the LIO body expressed in the
-    // arbitrary LIO world frame.
     State odom_meas;
     from_ros_to_ins(msg, odom_meas);
+    odom_meas.v = odom_meas.q.toRotationMatrix() * odom_meas.v; // body -> inertial
 
-    odom_meas.v = odom_meas.q.toRotationMatrix() * odom_meas.v; // convert velocity to inertial frame
+    const double stamp = sensor_stamp(msg.header.stamp);
+    odom_meas.time = stamp;
 
-    const auto now_system = std::chrono::steady_clock::now();
-    const double now =
-        std::chrono::duration<double>(now_system - t0_system_).count();
-    odom_meas.time = now;
-
-    // Transform LIO/VIO world -> ENU
-    //
-    // The incoming LIO/VIO pose is expressed in an
-    // arbitrary LIO/VIO world frame. If GPS is active, we need to align that world frame
-    // with the INS ENU frame.
-    //
-    // Assuming:
-    //   - LIO/VIO and INS use the same IMU,
-    //   - LIO/VIO initializes roll/pitch from the IMU,
-    //   - LIO/VIO starts with yaw = 0,
-    //   - the transform from the LIO/VIO body to the INS base frame is known
-    // we can determine the initial LIO/VIO-world <-> ENU rotation
-    // from the initial ENU/base orientation.
-    //
-    // In particular, initial_enu_base_ gives the initial transform
-    // of the filter body frame in ENU. Combining it with the initial
-    // LIO/VIO base orientation allows us to obtain the LIO/VIO-world
-    // to ENU alignment.
-    //
-    // The resulting transform is then kept fixed because the LIO/VIO
-    // world frame is assumed to be static (inertial frame).
-
-    //  Initialize LIO world -> ENU
-    // ------------------------------------------------------------
     if ((!gps_topic_.empty()))
     {
         if(!lio_to_enu_.initialized())
         {
-            // We need both:
-            //   - an initialized INS orientation
-            //   - a GPS ENU position
-            //
-            // The GPS position must come from the GPS callback,
-            // NOT from this LIO message.
             if (!orientation_initialized_ || (!enu_converter_.initialized()))
             {
                 RCLCPP_WARN_THROTTLE(
@@ -867,93 +758,63 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
                 return;
             }
 
-            // INS body frame expressed w.r.t ENU frame
             auto T_enu_base = initial_enu_base_.isometry();
-
-            // LIO body frame expressed w.r.t INS body frame
             auto T_base_lio = lio_to_base_.isometry();
 
-            // LIO body frame expressed w.r.t LIO world frame
-            utils::FrameTransform::Isometry3 
+            utils::FrameTransform::Isometry3
                 T_lio_world = Eigen::Isometry3d::Identity();
             T_lio_world.linear() = odom_meas.q.toRotationMatrix();
             T_lio_world.translation() = odom_meas.p;
 
-            // ENU <- LIO world
-            auto T_enu_lio_world =
-                T_enu_base * T_base_lio * T_lio_world.inverse();
+            auto T_enu_lio_world = T_enu_base * T_base_lio * T_lio_world.inverse();
 
             lio_to_enu_.setTransform(
                 T_enu_lio_world.linear(),
                 T_enu_lio_world.translation());
 
-            RCLCPP_INFO(
-                get_logger(),
-                "Initialized LIO/VIO world -> ENU alignment.");
+            RCLCPP_INFO(get_logger(), "Initialized LIO/VIO world -> ENU alignment.");
         }
 
-        // Transform LIO pose into ENU frame
-        odom_meas =
-            lio_to_enu_.transform(odom_meas);
+        odom_meas = lio_to_enu_.transform(odom_meas);
     }else{
-        // If GPS is not active, we assume that the LIO/VIO world frame
-        // is already aligned with the filter frame. In this case, we only need
-        // to transform the LIO/VIO body pose into the INS base frame.
-        odom_meas =
-            lio_to_base_.transform(odom_meas);
+        odom_meas = lio_to_base_.transform(odom_meas);
     }
 
     iESEKF::Group group_meas;
     iESEKF::state_to_group(odom_meas, group_meas);
 
-    // Measurement noise covariance (example values)
-    // For odom measurement, we compute 9xDoF matrix
-    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(9, 9); 
-
+    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(9, 9);
     if(trust_odom_pose_covariance_)
     {
         Eigen::Matrix<iESEKF::Scalar, 6, 6> pose_cov;
         iESEKF::set_pose_covariance(msg.pose.covariance, pose_cov);
-        R_odom.block<3, 3>(0, 0) = pose_cov.block<3, 3>(0, 0); // position covariance
-        R_odom.block<3, 3>(6, 6) = pose_cov.block<3, 3>(3, 3); // orientation covariance
+        R_odom.block<3, 3>(0, 0) = pose_cov.block<3, 3>(0, 0);
+        R_odom.block<3, 3>(6, 6) = pose_cov.block<3, 3>(3, 3);
     }
     else
     {
-        R_odom.block<3, 3>(0, 0) = odom_position_noise_.asDiagonal();    // position covariance
-        R_odom.block<3, 3>(6, 6) = odom_orientation_noise_.asDiagonal(); // orientation covariance
+        R_odom.block<3, 3>(0, 0) = odom_position_noise_.asDiagonal();
+        R_odom.block<3, 3>(6, 6) = odom_orientation_noise_.asDiagonal();
     }
 
     if(trust_odom_velocity_covariance_)
     {
         Eigen::Matrix<iESEKF::Scalar, 3, 3> twist_cov;
         iESEKF::set_velocity_covariance(msg.twist.covariance, twist_cov);
-        R_odom.block<3, 3>(3, 3) = twist_cov; // velocity covariance
+        R_odom.block<3, 3>(3, 3) = twist_cov;
     }
     else
     {
-        R_odom.block<3, 3>(3, 3) = odom_velocity_noise_.asDiagonal(); // velocity covariance
+        R_odom.block<3, 3>(3, 3) = odom_velocity_noise_.asDiagonal();
     }
 
-    Eigen::MatrixXd R_odom_inv = R_odom.inverse();
+    measurements::StampedOdom stamped;
+    stamped.stamp = stamp;
+    stamped.group = group_meas;
+    stamped.R = R_odom;
+    stamped.R_inv = R_odom.inverse();
+    meas_handler_.pushOdom(stamped);
 
-    print_state("Before 3D odometry update", state_);
-
-    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
-        group_meas,
-        R_odom, R_odom_inv,
-        ins_ros::iESEKF::odom::H_fun);
-
-    State state_now;
-    const auto noww_system = std::chrono::steady_clock::now();
-    const double noww =
-        std::chrono::duration<double>(noww_system - t0_system_).count();
-    RCLCPP_DEBUG(
-        get_logger(),
-        "After 3D odometry update, time=%.3f s",
-        noww);
-    iESEKF::group_to_state(filter_.getState(), noww, state_now);
-    print_state("After 3D odometry update", state_now);
-    
     nav_msgs::msg::Odometry debug_msg;
     from_ins_to_ros(odom_meas, debug_msg);
     debug_odom_pub_->publish(debug_msg);
@@ -961,89 +822,333 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
 {
-    if(!orientation_initialized_)
-    {
-        RCLCPP_WARN_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            1000,
-            "Orientation not initialized. Skipping wheel odometry measurement.");
-        return;
-    }
-
     iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
     meas(0) = msg.twist.linear.x;
     meas(1) = msg.twist.linear.y;
-    meas(2) = 0.0; // Assuming no vertical velocity from wheel odometry
+    meas(2) = 0.0;
 
-    RCLCPP_DEBUG(get_logger(), "Received base velocity x:%f, y:%f", meas(0), meas(1));
-
-    // Wheel odometry measurement update
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_w  = Mat3::Zero();
+    Mat3 R_w = Mat3::Zero();
     R_w(0, 0) = wheel_odom_noise_.x();
     R_w(1, 1) = wheel_odom_noise_.y();
     R_w(2, 2) = wheel_odom_noise_.z();
-    Mat3 R_w_inv = R_w.inverse();
 
-    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-        meas,
-        R_w, R_w_inv,
-        ins_ros::iESEKF::wheel::H_fun);
-    
-    State state_now;
-    const auto now_system = std::chrono::steady_clock::now();
-    const double now =
-        std::chrono::duration<double>(now_system - t0_system_).count();
-    iESEKF::group_to_state(filter_.getState(), now, state_now);
-    print_state("After wheel odometry update", state_now);
+    measurements::StampedWheel stamped;
+    stamped.stamp = sensor_stamp(msg.header.stamp);
+    stamped.meas = meas;
+    stamped.R = R_w;
+    stamped.R_inv = R_w.inverse();
+    meas_handler_.pushWheel(stamped);
 }
 
 void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
 {
-    // Convert ROS magnetic field message to vector (Tesla)
     State::V3 mag_vector;
     mag_vector.x() = msg.magnetic_field.x;
     mag_vector.y() = msg.magnetic_field.y;
     mag_vector.z() = msg.magnetic_field.z;
 
-    // Magnetic field measurement update
-    iESEKF::Measurement meas(mag_vector);
-
-    // Measurement noise covariance (example values)
-    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_mag = Mat3::Identity() * 0.05; // 0.05 Tesla variance
-    Mat3 R_mag_inv = R_mag.inverse();
-
-    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
-        meas,
-        R_mag, R_mag_inv,
-        ins_ros::iESEKF::magnetometer::H_fun);
+    measurements::StampedMag stamped;
+    stamped.stamp = sensor_stamp(msg.header.stamp);
+    stamped.meas = iESEKF::Measurement(mag_vector);
+    // R defaults from stamped type; keep fixed variance for now.
+    meas_handler_.pushMag(stamped);
 }
 
 void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
 {
-    // Get ROS pressure measurement
-    iESEKF::Scalar pressure = msg.fluid_pressure; 
+    measurements::StampedBaro stamped;
+    stamped.stamp = sensor_stamp(msg.header.stamp);
+    stamped.pressure = static_cast<iESEKF::Scalar>(msg.fluid_pressure);
+    stamped.R = Eigen::MatrixXd::Identity(1,1);
+    stamped.R(0, 0) = 2.0;
+    stamped.R_inv = stamped.R.inverse();
+    meas_handler_.pushBaro(stamped);
+}
 
-    // Measurement noise covariance (example values)
-    Eigen::MatrixXd R_baro = Eigen::MatrixXd::Identity(1,1);
-    R_baro(0, 0) = 2.0; // height measurement variance (2 meters equivalent)
-    Eigen::MatrixXd R_baro_inv = R_baro.inverse();
+/* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////////////////////////////        ESTIMATION TIMER              /////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
+
+void INSEstimator::estimation_timer_callback()
+{
+    // Gate 1: ENU frame must exist if GPS is enabled.
+    if (!gps_topic_.empty() && !enu_converter_.initialized())
+    {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+            "Local ENU frame not initialized. Dropping buffered IMU.");
+        // Keep buffers bounded while waiting for the first GPS fix.
+        const double latest = meas_handler_.latestImuStamp();
+        if (latest > 0.0) meas_handler_.drainImuUpTo(latest);
+        return;
+    }
+
+    // Gate 2: orientation must be initialized before filtering.
+    if (!orientation_initialized_)
+    {
+        if (!try_initialize_orientation())
+        {
+            const double latest = meas_handler_.latestImuStamp();
+            if (latest > 0.0) meas_handler_.drainImuUpTo(latest);
+            return;
+        }
+        // Freshly initialized: anchor filter time to the newest IMU and
+        // seed the snapshot history so future GPS rewinds have a reference.
+        const double latest = meas_handler_.latestImuStamp();
+        if (latest > 0.0)
+        {
+            meas_handler_.drainImuUpTo(latest);
+            filter_time_ = latest;
+            filter_time_initialized_ = true;
+            meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
+            refresh_state_from_filter(filter_time_);
+        }
+        return;
+    }
+
+    const double t_target = meas_handler_.latestImuStamp();
+    if (t_target < 0.0) return;
+    if (filter_time_initialized_ && t_target <= filter_time_) return;
+
+    // Predict with all new IMU up to the target stamp.
+    process_imu_up_to(t_target);
+    if (!filter_time_initialized_) return;
+
+    const double filter_time = filter_time_;
+
+    // Update with synchronized aiding measurements.
+    process_gps_at(filter_time);
+    process_odom_at(filter_time);
+    process_wheel_at(filter_time);
+    process_mag_at(filter_time);
+    process_baro_at(filter_time);
+    process_yaw_at(filter_time);
+
+    // Publish current belief.
+    publish_odom();
+    publish_pose();
+    if (publish_tf_) broadcast_tf(state_);
+
+    // Keep history bounded.
+    meas_handler_.pruneOlderThan(filter_time - history_window_s_);
+}
+
+void INSEstimator::process_imu_up_to(double t_target)
+{
+    auto imus = meas_handler_.drainImuUpTo(t_target);
+    if (imus.empty()) return;
+
+    for (const auto& imu : imus)
+    {
+        if (imu.dt <= 0.0 || imu.dt >= 0.1)
+        {
+            // First sample after init or time gap: advance the time base
+            // without integrating.
+            if (imu.stamp > filter_time_)
+            {
+                filter_time_ = imu.stamp;
+                filter_time_initialized_ = true;
+            }
+            continue;
+        }
+
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Predict: accel=[%.3f, %.3f, %.3f] gyro=[%.3f, %.3f, %.3f] dt=%.6f",
+            imu.accel.x(), imu.accel.y(), imu.accel.z(),
+            imu.gyro.x(), imu.gyro.y(), imu.gyro.z(), imu.dt);
+
+        filter_.predict(imu);
+        filter_time_ = imu.stamp;
+        filter_time_initialized_ = true;
+
+        iESEKF::group_to_state(filter_.getState(), filter_time_, state_);
+        state_.w = imu.gyro;
+        state_.a = imu.accel;
+
+        meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
+    }
+}
+
+void INSEstimator::process_gps_at(double filter_time)
+{
+    if (gps_topic_.empty()) return;
+
+    auto opt = meas_handler_.takeGpsAtOrBefore(filter_time);
+    if (!opt) return;
+
+    const double delay = filter_time - opt->stamp;
+    if (delay > gps_max_age_)
+    {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Dropping stale GPS (delay=%.3f s > max_age=%.3f s)", delay, gps_max_age_);
+        return;
+    }
+
+    if (measurements::MeasurementHandler::needsRewind(opt->stamp, filter_time, gps_rewind_threshold_))
+    {
+        if (apply_gps_with_rewind(*opt, filter_time)) return;
+        // Fall through to direct update if rewind history is unavailable.
+    }
+
+    apply_gps_direct(*opt);
+}
+
+bool INSEstimator::apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time)
+{
+    auto snap = meas_handler_.snapshotAt(gps.stamp);
+    if (!snap)
+    {
+        RCLCPP_WARN(get_logger(), "No state snapshot for GPS rewind at %.6f; applying direct update.", gps.stamp);
+        return false;
+    }
+    auto imus = meas_handler_.imuBetween(gps.stamp, filter_time);
+    if (imus.empty())
+    {
+        RCLCPP_DEBUG(get_logger(), "No IMU between GPS stamp and filter time; applying direct update.");
+        return false;
+    }
+
+    RCLCPP_DEBUG(get_logger(), "GPS delayed by %.3f s: rewind to %.6f and re-propagate %zu IMU.",
+        filter_time - gps.stamp, gps.stamp, imus.size());
+
+    // Save current belief.
+    const auto X_cur = filter_.getState();
+    const auto P_cur = filter_.getCovariance();
+    (void)X_cur; (void)P_cur;  // kept for future re-application of in-window aiding
+
+    // Rewind, update at measurement time, then re-propagate (past -> future recovery).
+    filter_.setState(snap->state);
+    filter_.setCovariance(snap->covariance);
+
+    filter_.update<
+        iESEKF::gps::GPSMeasurement,
+        iESEKF::Measurement,
+        iESEKF::HMat>(gps.meas, gps.R, gps.R_inv, ins_ros::iESEKF::gps::H_fun);
+
+    meas_handler_.truncateSnapshotsAfter(gps.stamp);
+    meas_handler_.pushStateSnapshot(gps.stamp, filter_.getState(), filter_.getCovariance());
+
+    for (const auto& imu : imus)
+    {
+        if (imu.dt <= 0.0 || imu.dt >= 0.1) continue;
+        filter_.predict(imu);
+        meas_handler_.pushStateSnapshot(imu.stamp, filter_.getState(), filter_.getCovariance());
+    }
+
+    refresh_state_from_filter(filter_time);
+    print_state("After delayed GPS update + re-propagation", state_);
+    return true;
+}
+
+void INSEstimator::apply_gps_direct(const measurements::StampedGps& gps)
+{
+    filter_.update<
+        iESEKF::gps::GPSMeasurement,
+        iESEKF::Measurement,
+        iESEKF::HMat>(gps.meas, gps.R, gps.R_inv, ins_ros::iESEKF::gps::H_fun);
+
+    refresh_state_from_filter(filter_time_);
+    meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
+    print_state("After GPS update", state_);
+}
+
+void INSEstimator::process_odom_at(double filter_time)
+{
+    if (odom_topic_.empty()) return;
+    auto opt = meas_handler_.takeSyncOdom(filter_time, sync_tolerance_odom_, sync_future_tolerance_);
+    if (!opt) return;
+
+    print_state("Before 3D odometry update", state_);
+    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
+        opt->group, opt->R, opt->R_inv, ins_ros::iESEKF::odom::H_fun);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+    print_state("After 3D odometry update", state_);
+}
+
+void INSEstimator::process_wheel_at(double filter_time)
+{
+    if (wheel_odom_topic_.empty()) return;
+    auto opt = meas_handler_.takeSyncWheel(filter_time, sync_tolerance_wheel_, sync_future_tolerance_);
+    if (!opt) return;
+
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        opt->meas, opt->R, opt->R_inv, ins_ros::iESEKF::wheel::H_fun);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+    print_state("After wheel odometry update", state_);
+}
+
+void INSEstimator::process_mag_at(double filter_time)
+{
+    if (mag_topic_.empty()) return;
+    auto opt = meas_handler_.takeSyncMag(filter_time, sync_tolerance_mag_, sync_future_tolerance_);
+    if (!opt) return;
+
+    filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
+        opt->meas, opt->R, opt->R_inv, ins_ros::iESEKF::magnetometer::H_fun);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+}
+
+void INSEstimator::process_baro_at(double filter_time)
+{
+    if (baro_topic_.empty()) return;
+    auto opt = meas_handler_.takeSyncBaro(filter_time, sync_tolerance_baro_, sync_future_tolerance_);
+    if (!opt) return;
 
     filter_.update<iESEKF::Scalar, iESEKF::Measurement, iESEKF::HMat>(
-        pressure,
-        R_baro, R_baro_inv,
-        ins_ros::iESEKF::barometer::H_fun);
+        opt->pressure, opt->R, opt->R_inv, ins_ros::iESEKF::barometer::H_fun);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+}
+
+void INSEstimator::process_yaw_at(double filter_time)
+{
+    if (gps_topic_.empty()) return;
+    auto opt = meas_handler_.takeSyncYaw(filter_time, sync_tolerance_yaw_, sync_future_tolerance_);
+    if (!opt) return;
+
+    filter_.update<
+        iESEKF::Scalar,
+        iESEKF::Measurement,
+        iESEKF::HMat>(
+            opt->yaw, opt->R, opt->R_inv, ins_ros::iESEKF::yaw::H_fun);
+    RCLCPP_DEBUG(get_logger(), "Updating yaw: %f deg", opt->yaw * 180.0 / M_PI);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+    print_state("After yaw update", state_);
+}
+
+void INSEstimator::refresh_state_from_filter(double stamp)
+{
+    iESEKF::group_to_state(filter_.getState(), stamp, state_);
+}
+
+bool INSEstimator::try_initialize_orientation()
+{
+    if (orientation_initialized_) return true;
+    if (!imu_orientation_initializer_->initialized()) return false;
+    if ((!gps_orientation_initializer_->initialized()) && (!gps_topic_.empty())) return false;
+
+    initialize_orientation();
+    return orientation_initialized_;
 }
 
 /* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////////////////////////////        CONVERSION HELPERS           /////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
 
+double INSEstimator::sensor_stamp(const rclcpp::Time& header_stamp)
+{
+    if (use_receive_stamp_)
+        return this->get_clock()->now().seconds();
+    return header_stamp.seconds();
+}
+
 void INSEstimator::from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out)
 {
-    out.stamp = rclcpp::Time(in.header.stamp).seconds();
+    out.stamp = sensor_stamp(in.header.stamp);
 
     out.gyro(0) = static_cast<iESEKF::Scalar>(in.angular_velocity.x);
     out.gyro(1) = static_cast<iESEKF::Scalar>(in.angular_velocity.y);
@@ -1092,7 +1197,7 @@ void INSEstimator::from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::S
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out)
 {
-    out.header.stamp = rclcpp::Time(in.time);
+    out.header.stamp = rclcpp::Time(static_cast<int64_t>(in.time * 1e9));
     out.header.frame_id = world_frame_;
     out.child_frame_id  = body_frame_;
 
@@ -1129,6 +1234,9 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out)
 {
+    out.header.stamp = rclcpp::Time(static_cast<int64_t>(in.time * 1e9));
+    out.header.frame_id = world_frame_;
+
     // Position
     out.pose.pose.position.x = in.p(0);
     out.pose.pose.position.y = in.p(1);
@@ -1169,7 +1277,7 @@ void INSEstimator::publish_pose()
 void INSEstimator::broadcast_tf(const ins_ros::State& in, bool now)
 {
     geometry_msgs::msg::TransformStamped tf_msg;
-    tf_msg.header.stamp    = (now) ? this->get_clock()->now() : rclcpp::Time(in.time);
+    tf_msg.header.stamp    = (now) ? this->get_clock()->now() : rclcpp::Time(static_cast<int64_t>(in.time * 1e9));
     tf_msg.header.frame_id = world_frame_;
     tf_msg.child_frame_id  = body_frame_;
 
@@ -1261,27 +1369,93 @@ void INSEstimator::initialize_orientation()
         q_yaw * q_tilt;
     q_enu_base.normalize();
 
-    // Save the initial ENU <-> base_link alignment
-    Eigen::Vector3d initial_gps_position_enu = - q_enu_base.toRotationMatrix() * gps_lever_arm_;
-    initial_enu_base_.setTransform(q_enu_base, initial_gps_position_enu);
+    // Anchor the filter to where the antenna actually is now.
+    //
+    // When GPS is active, heading initialization requires the robot to travel
+    // (distance_threshold, default ~2 m) away from the ENU origin, which was
+    // fixed at the very first GPS fix. Anchoring at the origin would ignore
+    // that traveled distance, so the newest buffered GPS fix is used instead:
+    //
+    // p_body_enu = p_antenna_enu - R_enu_base * lever_arm
+    //
+    // A rough initial velocity is differenced from the two newest buffered
+    // fixes (horizontal plane only; GPS altitude is too noisy for this) and
+    // the anchored position is extrapolated to the latest IMU stamp, which is
+    // the time base the timer will continue filtering from.
+    Eigen::Vector3d p_antenna_enu = Eigen::Vector3d::Zero();
+    double t_antenna = -1.0;
+    Eigen::Vector3d v_init_enu = Eigen::Vector3d::Zero();
+    bool have_anchor = false;
+
+    if (!gps_topic_.empty())
+    {
+        const auto newest = meas_handler_.peekNewestGps(2);
+        if (!newest.empty())
+        {
+            p_antenna_enu = newest.back().meas.position_enu.cast<double>();
+            t_antenna = newest.back().stamp;
+            have_anchor = true;
+
+            if (newest.size() == 2)
+            {
+                const double dt = newest[1].stamp - newest[0].stamp;
+                const Eigen::Vector2d dp =
+                    (newest[1].meas.position_enu - newest[0].meas.position_enu)
+                        .head<2>().cast<double>();
+                const double speed = (dt > 1e-6) ? dp.norm() / dt : -1.0;
+
+                // Sanity gate: reject non-monotonic stamps and unphysical jumps.
+                constexpr double kMaxInitSpeed = 30.0;  // m/s
+                if (dt > 1e-6 && speed >= 0.0 && speed <= kMaxInitSpeed)
+                {
+                    v_init_enu.head<2>() = dp / dt;
+                }
+                else
+                {
+                    RCLCPP_WARN(get_logger(),
+                        "Discarding GPS velocity seed (dt=%.3f s, speed=%.2f m/s); starting at zero velocity.",
+                        dt, speed);
+                }
+            }
+        }
+        if (!have_anchor)
+        {
+            RCLCPP_WARN(get_logger(),
+                "No buffered GPS fix at initialization; anchoring filter at ENU origin with zero velocity.");
+        }
+    }
+
+    const Eigen::Matrix3d R_enu_base = q_enu_base.toRotationMatrix();
+    Eigen::Vector3d initial_body_position_enu =
+        p_antenna_enu - R_enu_base * gps_lever_arm_;
+
+    // Reference time: newest IMU stamp, matching what the timer anchors
+    // filter_time_ to right after initialization.
+    double t_ref = meas_handler_.latestImuStamp();
+    if (have_anchor && t_ref > 0.0 && t_antenna > 0.0 && t_ref >= t_antenna)
+    {
+        initial_body_position_enu += v_init_enu * (t_ref - t_antenna);
+    }
+    else if (t_ref < 0.0)
+    {
+        t_ref = (t_antenna > 0.0) ? t_antenna : 0.0;
+    }
+
+    state_.time = t_ref;
+
+    // Save the initial ENU <-> base_link alignment (base pose at init time,
+    // used e.g. to align the LIO/VIO world frame in odom_callback).
+    initial_enu_base_.setTransform(q_enu_base, initial_body_position_enu);
 
     state_.q =
         q_enu_base.cast<iESEKF::Scalar>();
     state_.p =
-        initial_gps_position_enu.cast<iESEKF::Scalar>(); 
+        initial_body_position_enu.cast<iESEKF::Scalar>();
+    state_.v =
+        v_init_enu.cast<iESEKF::Scalar>(); 
     
     setState();
     
-    // Update filter with initial orientation measurement
-    // iESEKF::Group group_meas;
-    // iESEKF::state_to_group(state_, group_meas);
-    // Eigen::MatrixXd R_pose = Eigen::MatrixXd::Identity(6, 6) * 0.1; // 10cm/0.1rad covariance
-    // Eigen::MatrixXd R_pose_inv = R_pose.inverse();
-    // filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
-    //     group_meas,
-    //     R_pose, R_pose_inv,
-    //     ins_ros::iESEKF::pose::H_fun);
-
     orientation_initialized_ = true;
 
     if(!gps_topic_.empty())
@@ -1309,10 +1483,21 @@ void INSEstimator::initialize_orientation()
 
     RCLCPP_INFO(
         get_logger(),
-        "Initial RPY: [%.3f, %.3f, %.3f] deg",
+        "Initial RPY: [%.3f, %.3f, %.3f] deg, position: [%.3f, %.3f, %.3f] m, velocity: [%.3f, %.3f, %.3f] m/s (antenna fix: [%.3f, %.3f, %.3f] m @ %.3f s, ref t=%.3f s)",
         rpy.x(),
         rpy.y(),
-        rpy.z());
+        rpy.z(),
+        state_.p.x(),
+        state_.p.y(),
+        state_.p.z(),
+        state_.v.x(),
+        state_.v.y(),
+        state_.v.z(),
+        p_antenna_enu.x(),
+        p_antenna_enu.y(),
+        p_antenna_enu.z(),
+        t_antenna,
+        t_ref);
 }
 
 void INSEstimator::print_state(const std::string& prefix, const State& state)
@@ -1386,6 +1571,32 @@ void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
     debug_gps_pub_->publish(marker);
 }
 
+void INSEstimator::publish_yaw_debug(double yaw, const Eigen::Vector3d& position_enu)
+{
+    visualization_msgs::msg::Marker marker;
+
+    marker.header.frame_id = world_frame_;
+    marker.header.stamp = this->now();
+    marker.ns = "yaw_marker";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::ARROW;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.position.x = position_enu.x();
+    marker.pose.position.y = position_enu.y();
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, yaw);
+    marker.pose.orientation = tf2::toMsg(q);
+    marker.scale.x = 1.0;
+    marker.scale.y = 0.06;
+    marker.scale.z = 0.06;
+    marker.color.r = 1.0f;
+    marker.color.g = 0.0f;
+    marker.color.b = 1.0f;
+    marker.color.a = 1.0;
+    marker.lifetime = rclcpp::Duration::from_nanoseconds(0);
+    debug_yaw_pub_->publish(marker);
+}
+
 
 } // namespace ins_ros
 
@@ -1403,4 +1614,3 @@ int main(int argc, char * argv[])
     rclcpp::shutdown();
     return 0;
 }
-

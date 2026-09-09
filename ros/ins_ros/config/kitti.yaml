@@ -13,19 +13,44 @@ ins_ros_node:
     tf:
       publish: true
 
+    timing:
+      use_receive_stamp: false
+
     # ============================================================
     # Filter
     # ============================================================
     filter:
       iterations:
-        max: 5
+        max: 10
         tolerance: 1.e-5
+
+      rate: 100.0
+      history_window: 5.0
+      buffer:
+        imu_capacity: 2000
+        aiding_capacity: 200
 
       process_noise:
         gyro: 6.01e-4
         accel: 1.53e-2
         gyro_bias: 1.54e-5
         accel_bias: 3.38e-4
+
+    sync:
+      gps:
+        rewind_threshold: 0.05
+        max_age: 2.0
+      odom:
+        tolerance: 0.05
+      wheel_odom:
+        tolerance: 0.05
+      mag:
+        tolerance: 0.05
+      baro:
+        tolerance: 0.05
+      yaw:
+        tolerance: 0.10
+      future_tolerance: 0.02
 
     # ============================================================
     # Sensors
@@ -54,21 +79,21 @@ ins_ros_node:
 
         topic: /kitti/oxts/gps/fix
 
-        trust_covariance: true # whether to trust the covariance from the GPS message or not
+        trust_covariance: false # whether to trust the covariance from the GPS message or not
 
         covariance: # fixed covariance if trust_covariance is false
           position:
-            x: 1.0
-            y: 1.0
-            z: 1.0
+            x: 0.01
+            y: 0.01
+            z: 0.01
 
         lever_arm:
-          x: -1.405
-          y: 0.32
-          z: 0.93
+          # x: -1.405
+          # y: 0.32
+          # z: 0.93
           # x: 0.0
           # y: 0.0
-          # z: 0.0
+          z: 0.0
 
       odometry:
         enabled: false

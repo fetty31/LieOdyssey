@@ -13,6 +13,11 @@ ins_ros_node:
     tf:
       publish: false
 
+    # Timing: stamp incoming measurements at receive time instead of trusting
+    # msg headers (enable when sensor clocks are not synced with the PC clock)
+    timing:
+      use_receive_stamp: false
+
     # ============================================================
     # Filter
     # ============================================================
@@ -21,11 +26,35 @@ ins_ros_node:
         max: 5
         tolerance: 1.e-5
 
+      # Fixed-frequency estimation loop (callbacks only buffer, timer filters)
+      rate: 100.0
+      history_window: 5.0
+      buffer:
+        imu_capacity: 2000
+        aiding_capacity: 200
+
       process_noise:
         gyro: 0.015
         accel: 0.15
         gyro_bias: 1.54e-5
         accel_bias: 3.38e-4
+
+    # Measurement synchronization / latency handling
+    sync:
+      gps:
+        rewind_threshold: 0.05  # delay above this triggers rewind + re-propagation
+        max_age: 2.0            # older GPS is dropped as stale
+      odom:
+        tolerance: 0.05
+      wheel_odom:
+        tolerance: 0.05
+      mag:
+        tolerance: 0.05
+      baro:
+        tolerance: 0.05
+      yaw:
+        tolerance: 0.10
+      future_tolerance: 0.02
 
     # ============================================================
     # Sensors

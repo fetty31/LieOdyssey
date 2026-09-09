@@ -11,6 +11,8 @@
 
 #include "ins_ros/utils/frame_transform.hpp"
 
+#include "ins_ros/measurements/measurement_handler.hpp"
+
 #include "ins_ros/sensors/baro_handler.hpp"
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
@@ -50,11 +52,9 @@
 
 // Utilities
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-#include <chrono>
-
-#include <boost/circular_buffer.hpp>
 
 #include <Eigen/Geometry>
 
@@ -87,12 +87,30 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
     private:
 
+        // --- Thin ROS callbacks: only convert + push into MeasurementHandler ---
         void imu_callback(const sensor_msgs::msg::Imu& msg);
         void gps_callback(const sensor_msgs::msg::NavSatFix& msg);
         void wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg);
         void odom_callback(const nav_msgs::msg::Odometry& msg);
         void mag_callback(const sensor_msgs::msg::MagneticField& msg);
         void baro_callback(const sensor_msgs::msg::FluidPressure& msg);
+
+        // --- Fixed-frequency estimation loop ---
+        void estimation_timer_callback();
+        void process_imu_up_to(double t_target);
+        void process_gps_at(double filter_time);
+        void process_odom_at(double filter_time);
+        void process_wheel_at(double filter_time);
+        void process_mag_at(double filter_time);
+        void process_baro_at(double filter_time);
+        void process_yaw_at(double filter_time);
+        void refresh_state_from_filter(double stamp);
+
+        // GPS latency handling: rewind to snapshot, update, re-propagate IMU.
+        bool apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time);
+        void apply_gps_direct(const measurements::StampedGps& gps);
+
+        bool try_initialize_orientation();
 
         void setState();
 
@@ -101,8 +119,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void load_parameters();
         void setup_subscriptions();
         void setup_publishers();
+        void setup_timer();
 
         // --- ROS <-> Library conversion helpers ---
+        double sensor_stamp(const rclcpp::Time& header_stamp);
         void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
         void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
         void from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::State& out);
@@ -119,6 +139,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void print_state(const std::string& prefix, const ins_ros::State& state);
 
         void publish_gps_debug(const Eigen::Vector3d& gps_position);
+        void publish_yaw_debug(double yaw, const Eigen::Vector3d& position_enu);
 
     // VARIABLES
 
@@ -129,10 +150,15 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         int max_iters_;
         double tolerance_;
 
-        // State
-        ins_ros::State state_;
-        std::chrono::steady_clock::time_point t0_system_;
+        // Centralized measurement buffers + state history for rewind.
+        measurements::MeasurementHandler meas_handler_;
 
+        // Filter time base: ROS sensor stamp (seconds) of last processed IMU.
+        double filter_time_{-1.0};
+        bool filter_time_initialized_{false};
+
+        // State (mirrors filter after each timer tick; read by callbacks for bias/debug).
+        ins_ros::State state_;
 
         // TF
         std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -152,7 +178,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::string imu_topic_{""};
         bool estimate_imu_bias_{false};
         bool estimate_imu_orientation_{false};
-        double last_imu_stamp_;
+        double last_imu_stamp_{-1.0};
         State::V3 previous_omega_base_{State::V3::Zero()};
 
         // Orientation initializers
@@ -160,10 +186,6 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_initializer_;
         std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_continuous_;
         bool orientation_initialized_{false};
-
-        // Buffers
-        boost::circular_buffer<ins_ros::State> state_buffer_;
-        boost::circular_buffer<iESEKF::IMUmeas> imu_buffer_;
 
         // GPS / ENU converter
         std::string gps_topic_{""};
@@ -195,6 +217,25 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::string body_frame_;
         bool publish_tf_;
 
+        // When true, stamp all incoming measurements with the local receive
+        // time instead of trusting msg.header.stamp (for sensors whose clock
+        // is not synchronized with the PC clock).
+        bool use_receive_stamp_{false};
+
+        // Estimation loop / synchronization parameters
+        double estimation_rate_{100.0};
+        double history_window_s_{5.0};
+        double gps_rewind_threshold_{0.05};
+        double gps_max_age_{2.0};
+        double sync_tolerance_odom_{0.05};
+        double sync_tolerance_wheel_{0.05};
+        double sync_tolerance_mag_{0.05};
+        double sync_tolerance_baro_{0.05};
+        double sync_tolerance_yaw_{0.10};
+        double sync_future_tolerance_{0.02};
+        std::size_t imu_buffer_capacity_{2000};
+        std::size_t aiding_buffer_capacity_{200};
+
         // Process noise parameters
         double gyro_noise_;
         double accel_noise_;
@@ -208,6 +249,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<sensor_msgs::msg::MagneticField>::SharedPtr mag_sub_;
         rclcpp::Subscription<sensor_msgs::msg::FluidPressure>::SharedPtr baro_sub_;
+
+        // Fixed-frequency estimation timer
+        rclcpp::TimerBase::SharedPtr estimation_timer_;
 
         // Publishers (lifecycle-aware)
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>> state_pub_;
