@@ -21,7 +21,7 @@ ins_ros_node:
     # ============================================================
     filter:
       iterations:
-        max: 10
+        max: 5
         tolerance: 1.e-5
 
       rate: 100.0

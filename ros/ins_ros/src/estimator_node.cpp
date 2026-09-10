@@ -6,9 +6,9 @@ INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
     , filter_(iESEKF::MatDoF::Identity() * 1e-3,
               iESEKF::Filter::NoiseMatrix::Identity() * 1e-3,
-              iESEKF::f,
-              iESEKF::df_dx,
-              iESEKF::df_dw,
+              iESEKF::f_cv,
+              iESEKF::df_dx_cv,
+              iESEKF::df_dw_cv,
               iESEKF::degeneracy_callback)
     , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
