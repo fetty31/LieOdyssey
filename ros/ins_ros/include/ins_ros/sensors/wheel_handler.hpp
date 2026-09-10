@@ -24,11 +24,13 @@ void H_fun(const iESEKF::Filter& /*kf*/,
 
     H = iESEKF::HMat::Zero(3, DoF);
 
-    // velocity part
+    // Jacobian H = dh = R^T dv + skew(z_hat) dθ
+
+    // velocity part (dh/dv)
     H.block<3,3>(0, 3) = R.transpose();
 
-    // orientation coupling: δθ × v
-    H.block<3,3>(0, 6) = -manif::skew(z_hat);
+    // orientation part (dh/dθ)
+    H.block<3,3>(0, 6) = manif::skew(z_hat);
 }
 
 } // namespace ins_ros::iESEKF::wheel

@@ -161,7 +161,6 @@ public:
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
                 std::function<void(const iESEKF<Group>&, const Group&, const Measurement&, Residual&, HMat&)> H_fun)
     {
-        std::cerr << "DEBUG: entering update method" << std::endl;
         Group X_now = X_;
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
@@ -171,20 +170,15 @@ public:
 
         for(int iter=0; iter < max_iters_; ++iter) {
 
-            std::cerr << "DEBUG: entering update loop iter=" << iter << std::endl;
             // Current error state
             Jacobian J;
-            std::cerr << "DEBUG: about to call minus" << std::endl;
             Tangent dx = X_now.minus(X_, J);
-            std::cerr << "DEBUG: minus returned, dx norm=" << dx.coeffs().norm() << std::endl;
 
             // Get residual and linearized measurement model
             Residual r;
             HMat H;
             H_fun(*this, X_now, y, r, H);    // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
                                              // r == (Eigen::Dynamic x 1) = (N measurements x 1)
-
-            std::cerr << "DEBUG: H_fun called, retrieved residual and meas jacob" << std::endl;
 
             // Update covariance
             Jacobian J_inv = J.inverse();
@@ -198,28 +192,6 @@ public:
 
             K = aux * H.transpose() * R_inv;
             KH = K*H;
-
-            std::cout << "\n===== IESEKF ITERATION =====\n";
-
-            std::cout << "dx before:\n"
-                    << dx.coeffs().transpose()
-                    << '\n';
-
-            std::cout << "J:\n"
-                    << J
-                    << '\n';
-
-            std::cout << "J_inv:\n"
-                    << J_inv
-                    << '\n';
-
-            std::cout << "K:\n"
-                    << K
-                    << '\n';
-
-            std::cout << "K*r:\n"
-                    << (K*r).transpose()
-                    << '\n';
 
             // Update error state
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 

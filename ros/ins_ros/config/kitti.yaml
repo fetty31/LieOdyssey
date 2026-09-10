@@ -88,12 +88,9 @@ ins_ros_node:
             z: 0.01
 
         lever_arm:
-          # x: -1.405
-          # y: 0.32
-          # z: 0.93
-          # x: 0.0
-          # y: 0.0
-          z: 0.0
+          x: -1.405
+          y: 0.32
+          z: 0.93
 
       odometry:
         enabled: false
@@ -119,7 +116,7 @@ ins_ros_node:
             z: 0.1
 
       wheel_odom:
-        enabled: false
+        enabled: true
 
         topic: /kitti/oxts/gps/vel
 

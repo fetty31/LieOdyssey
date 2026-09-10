@@ -6,9 +6,9 @@ INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
     , filter_(iESEKF::MatDoF::Identity() * 1e-3,
               iESEKF::Filter::NoiseMatrix::Identity() * 1e-3,
-              iESEKF::f_cv,
-              iESEKF::df_dx_cv,
-              iESEKF::df_dw_cv,
+              iESEKF::f,
+              iESEKF::df_dx,
+              iESEKF::df_dw,
               iESEKF::degeneracy_callback)
     , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
@@ -686,7 +686,7 @@ void INSEstimator::gps_callback(
         yaw_meas.stamp = stamp;
         yaw_meas.yaw = gps_orientation_continuous_->heading();
         yaw_meas.R.setIdentity();
-        yaw_meas.R *= 0.0000001;
+        yaw_meas.R *= 0.01;
         yaw_meas.R_inv = yaw_meas.R.inverse();
         meas_handler_.pushYaw(yaw_meas);
         publish_yaw_debug(yaw_meas.yaw, p_gps_enu);
