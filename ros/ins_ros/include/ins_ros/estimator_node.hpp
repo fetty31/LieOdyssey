@@ -16,7 +16,6 @@
 #include "ins_ros/sensors/baro_handler.hpp"
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
-#include "ins_ros/sensors/pose_handler.hpp"
 #include "ins_ros/sensors/odom_handler.hpp"
 #include "ins_ros/sensors/wheel_handler.hpp"
 #include "ins_ros/sensors/yaw_handler.hpp"
@@ -55,6 +54,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <array>
 
 #include <Eigen/Geometry>
 
@@ -69,6 +69,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         using CallbackReturn =
             rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+
+        using ROSCovariance = std::array<double, 36>;
 
     // FUNCTIONS
 
@@ -126,8 +128,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
         void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
         void from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::State& out);
-        void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out);
-        void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out);
+
+        void from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out,
+            const std::optional<ROSCovariance>& pose_cov = std::nullopt,
+            const std::optional<ROSCovariance>& twist_cov = std::nullopt);
+        void from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out, 
+            const std::optional<ROSCovariance>& pose_cov = std::nullopt);
 
         // Additional helpers
         void publish_odom();

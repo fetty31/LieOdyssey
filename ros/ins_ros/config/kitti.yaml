@@ -14,7 +14,8 @@ ins_ros_node:
       publish: true
 
     timing:
-      use_receive_stamp: false
+      use_receive_stamp: true   # when true, incoming measurements are stamped at receive time instead of trusting msg.header.stamp 
+                                # (use it when sensors are not synced with PC's clock)
 
     # ============================================================
     # Filter
@@ -25,7 +26,7 @@ ins_ros_node:
         tolerance: 1.e-5
 
       rate: 100.0
-      history_window: 5.0
+      history_window: 50.0
       buffer:
         imu_capacity: 2000
         aiding_capacity: 200
@@ -49,7 +50,7 @@ ins_ros_node:
       baro:
         tolerance: 0.05
       yaw:
-        tolerance: 0.10
+        tolerance: 5.0
       future_tolerance: 0.02
 
     # ============================================================
@@ -116,7 +117,7 @@ ins_ros_node:
             z: 0.1
 
       wheel_odom:
-        enabled: true
+        enabled: false
 
         topic: /kitti/oxts/gps/vel
 

@@ -21,8 +21,8 @@ struct StampedGps {
 struct StampedOdom {
   double stamp{-1.0};
   iESEKF::Group group{};
-  Eigen::MatrixXd R{Eigen::MatrixXd::Identity(9, 9)};
-  Eigen::MatrixXd R_inv{Eigen::MatrixXd::Identity(9, 9)};
+  Eigen::MatrixXd R{Eigen::MatrixXd::Identity(10, 10)};
+  Eigen::MatrixXd R_inv{Eigen::MatrixXd::Identity(10, 10)};
   bool has_velocity{true};
 };
 

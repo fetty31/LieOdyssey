@@ -199,7 +199,7 @@ void INSEstimator::declare_parameters()
 
     declare_parameter<bool>("tf.publish", true);
 
-    // Timing: when true, stamp incoming measurements at receive time instead
+    // Timing: when true, incoming measurements are stamped at receive time instead
     // of trusting msg.header.stamp (use when sensor clocks are not synced
     // with the PC clock; applies to all sensors including the IMU time base).
     declare_parameter<bool>("timing.use_receive_stamp", false);
@@ -783,7 +783,8 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     iESEKF::Group group_meas;
     iESEKF::state_to_group(odom_meas, group_meas);
 
-    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(9, 9);
+    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(10, 10);
+    R_odom(9,9) = 0.1; // time sensitivity
     if(trust_odom_pose_covariance_)
     {
         Eigen::Matrix<iESEKF::Scalar, 6, 6> pose_cov;
@@ -816,7 +817,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     meas_handler_.pushOdom(stamped);
 
     nav_msgs::msg::Odometry debug_msg;
-    from_ins_to_ros(odom_meas, debug_msg);
+    from_ins_to_ros(odom_meas, debug_msg, msg.pose.covariance, msg.twist.covariance);
     debug_odom_pub_->publish(debug_msg);
 }
 
@@ -974,7 +975,13 @@ void INSEstimator::process_gps_at(double filter_time)
     if (gps_topic_.empty()) return;
 
     auto opt = meas_handler_.takeGpsAtOrBefore(filter_time);
-    if (!opt) return;
+
+    RCLCPP_DEBUG(get_logger(), "GPS buffer size: %li", meas_handler_.gpsQueued());
+
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced GPS data from buffer");
+        return;
+    }
 
     const double delay = filter_time - opt->stamp;
     if (delay > gps_max_age_)
@@ -1056,7 +1063,13 @@ void INSEstimator::process_odom_at(double filter_time)
 {
     if (odom_topic_.empty()) return;
     auto opt = meas_handler_.takeSyncOdom(filter_time, sync_tolerance_odom_, sync_future_tolerance_);
-    if (!opt) return;
+
+    RCLCPP_DEBUG(get_logger(), "ODOM buffer size: %li", meas_handler_.odomQueued());
+
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced ODOM data from buffer");
+        return;
+    }
 
     print_state("Before 3D odometry update", state_);
     filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
@@ -1070,7 +1083,13 @@ void INSEstimator::process_wheel_at(double filter_time)
 {
     if (wheel_odom_topic_.empty()) return;
     auto opt = meas_handler_.takeSyncWheel(filter_time, sync_tolerance_wheel_, sync_future_tolerance_);
-    if (!opt) return;
+
+    RCLCPP_DEBUG(get_logger(), "WHEEL ODOM buffer size: %li", meas_handler_.wheelQueued());
+
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced WHEEL ODOM data from buffer");
+        return;
+    }
 
     filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
         opt->meas, opt->R, opt->R_inv, ins_ros::iESEKF::wheel::H_fun);
@@ -1083,7 +1102,10 @@ void INSEstimator::process_mag_at(double filter_time)
 {
     if (mag_topic_.empty()) return;
     auto opt = meas_handler_.takeSyncMag(filter_time, sync_tolerance_mag_, sync_future_tolerance_);
-    if (!opt) return;
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced MAGNETOMETER data from buffer");
+        return;
+    }
 
     filter_.update<iESEKF::Measurement, iESEKF::Measurement, iESEKF::HMat>(
         opt->meas, opt->R, opt->R_inv, ins_ros::iESEKF::magnetometer::H_fun);
@@ -1095,7 +1117,13 @@ void INSEstimator::process_baro_at(double filter_time)
 {
     if (baro_topic_.empty()) return;
     auto opt = meas_handler_.takeSyncBaro(filter_time, sync_tolerance_baro_, sync_future_tolerance_);
-    if (!opt) return;
+
+    RCLCPP_DEBUG(get_logger(), "BAROMETER buffer size: %li", meas_handler_.baroQueued());
+
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced BAROMETER data from buffer");
+        return;
+    }
 
     filter_.update<iESEKF::Scalar, iESEKF::Measurement, iESEKF::HMat>(
         opt->pressure, opt->R, opt->R_inv, ins_ros::iESEKF::barometer::H_fun);
@@ -1107,7 +1135,13 @@ void INSEstimator::process_yaw_at(double filter_time)
 {
     if (gps_topic_.empty()) return;
     auto opt = meas_handler_.takeSyncYaw(filter_time, sync_tolerance_yaw_, sync_future_tolerance_);
-    if (!opt) return;
+
+    RCLCPP_DEBUG(get_logger(), "YAW/HEADING buffer size: %li", meas_handler_.yawQueued());
+
+    if (!opt){
+        RCLCPP_WARN(get_logger(), "Could not get synced YAW/HEADING data from buffer");
+        return;
+    }
 
     filter_.update<
         iESEKF::Scalar,
@@ -1195,7 +1229,9 @@ void INSEstimator::from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::S
     out.v.z() = static_cast<State::Scalar>(in.twist.twist.linear.z);
 }
 
-void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out)
+void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out,
+                                    const std::optional<ROSCovariance>& pose_cov,
+                                    const std::optional<ROSCovariance>& twist_cov)
 {
     out.header.stamp = rclcpp::Time(static_cast<int64_t>(in.time * 1e9));
     out.header.frame_id = world_frame_;
@@ -1219,20 +1255,30 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
     out.twist.twist.angular.z = in.w(2);
 
     // Covariances (row-major 6x6)
-    auto pose_cov  = iESEKF::get_pose_covariance(filter_.getCovariance());
-    auto twist_cov = iESEKF::get_velocity_covariance(filter_.getCovariance());
-    for (int i = 0; i < 36; ++i)
-    {
-        out.pose.covariance[i]  = pose_cov[i];
-        out.twist.covariance[i] = twist_cov[i];  
+    if (pose_cov.has_value()) {
+        out.pose.covariance = *pose_cov;
+    }else{
+        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance());
+        for (int i = 0; i < 36; ++i)
+            out.pose.covariance[i]  = pose_cov_vec[i];
     }
+
+    if(twist_cov.has_value()) {
+        out.twist.covariance = *twist_cov;
+    }else{
+        auto twist_cov_vec = iESEKF::get_velocity_covariance(filter_.getCovariance());
+        for (int i = 0; i < 36; ++i)
+            out.twist.covariance[i]  = twist_cov_vec[i];
+    }
+
     // add gyro covariance
     out.twist.covariance[21] = gyro_noise_;
     out.twist.covariance[28] = gyro_noise_;
     out.twist.covariance[25] = gyro_noise_;
 }
 
-void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out)
+void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out,
+                                    const std::optional<ROSCovariance>& pose_cov)
 {
     out.header.stamp = rclcpp::Time(static_cast<int64_t>(in.time * 1e9));
     out.header.frame_id = world_frame_;
@@ -1249,10 +1295,12 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg:
     out.pose.pose.orientation.w = in.q.w();
 
     // Covariance (row-major 6x6)
-    auto pose_cov  = iESEKF::get_pose_covariance(filter_.getCovariance());
-    for (int i = 0; i < 36; ++i)
-    {
-        out.pose.covariance[i]  = pose_cov[i];
+    if (pose_cov.has_value()) {
+        out.pose.covariance = *pose_cov;
+    }else{
+        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance());
+        for (int i = 0; i < 36; ++i)
+            out.pose.covariance[i]  = pose_cov_vec[i];
     }
 }
 
@@ -1438,7 +1486,8 @@ void INSEstimator::initialize_orientation()
     }
     else if (t_ref < 0.0)
     {
-        t_ref = (t_antenna > 0.0) ? t_antenna : 0.0;
+        // t_ref = (t_antenna > 0.0) ? t_antenna : 0.0;
+        return;
     }
 
     state_.time = t_ref;

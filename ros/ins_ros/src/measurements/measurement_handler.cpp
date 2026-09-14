@@ -136,7 +136,7 @@ std::optional<T> MeasurementHandler::takeClosestTo(std::deque<T>& buffer, double
                                                    StampFn stamp_of) {
   // Find index of closest sample within [t_query - tolerance, t_query + future_tolerance].
   int best_idx = -1;
-  double best_dt = tolerance + future_tolerance + 1.0;
+  double best_dt = std::numeric_limits<double>::max();
   const int n = static_cast<int>(buffer.size());
   for (int i = 0; i < n; ++i) {
     const double s = stamp_of(buffer[static_cast<std::size_t>(i)]);
@@ -322,6 +322,26 @@ std::size_t MeasurementHandler::gpsQueued() const {
 std::size_t MeasurementHandler::odomQueued() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return odom_buffer_.size();
+}
+
+std::size_t MeasurementHandler::wheelQueued() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return wheel_buffer_.size();
+}
+
+std::size_t MeasurementHandler::yawQueued() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return yaw_buffer_.size();
+}
+
+std::size_t MeasurementHandler::baroQueued() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return baro_buffer_.size();
+}
+
+std::size_t MeasurementHandler::magQueued() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return mag_buffer_.size();
 }
 
 bool MeasurementHandler::needsRewind(double meas_stamp, double filter_time,

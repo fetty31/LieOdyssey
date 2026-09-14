@@ -17,28 +17,39 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     SGal3 X_m = X_now.impl().subgroup<0>();
     SGal3 Y_m = Y.impl().subgroup<0>();
 
+    auto t_x = X_m.t();
+    auto t_y = Y_m.t();
+
+    // Y_mm = SGal3(Y_m.translation(),                    // x y z                  0
+    //             Y_m.quat,                     // rotation               6
+    //             state.v,                     // vx, vy, vz             3
+    //             state.time),                 // delta t                9
+
+    std::cout << std::setprecision(15) << "time x: " << t_x << std::endl;
+    std::cout << std::setprecision(15) << "time y: " << t_y << std::endl;
+
     Tangent xi;
     SGal3::Jacobian J_X;
     SGal3::Jacobian J_Y;
 
-    xi = X_m.minus(Y_m, J_X, J_Y);
+    // xi = X_m.minus(Y_m, J_X, J_Y);
 
-    std::cout << "J_X:\n" << J_X << std::endl;
-    std::cout << "J_Y:\n" << J_Y << std::endl;
-    std::cout << "xi:\n" << xi.coeffs().transpose() << std::endl;
+    // Residual: z - h(x) -> Y ⊖ X
+    xi = Y_m.minus(X_m, J_Y, J_X);
 
-    r = iESEKF::Measurement::Zero(9);
-    r.segment<3>(0) = xi.coeffs().segment<3>(0);
-    r.segment<3>(3) = xi.coeffs().segment<3>(3);
-    r.segment<3>(6) = xi.coeffs().segment<3>(6);
+    std::cout << std::setprecision(4) << "J_X:\n" << J_X << std::endl;
+    std::cout << std::setprecision(4) << "J_Y:\n" << J_Y << std::endl;
+    std::cout << std::setprecision(4) << "xi:\n" << xi.coeffs().transpose() << std::endl;
+
+    r = xi.coeffs();
 
     H = iESEKF::HMat::Zero(
-        9,
+        10, 
         iESEKF::Group::Impl::DoF
     );
 
     // Derivative wrt filter state
-    H.block<9, 9>(0, 0) = J_X.block<9, 9>(0, 0);
+    H.block<10,10>(0,0) = J_X;
 
 
 

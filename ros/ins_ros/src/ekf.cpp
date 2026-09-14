@@ -12,7 +12,8 @@ void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros
 	state.v = X.subgroup<0>().linearVelocity();
 
 	// time (relative to initial time reference)
-	state.time = time;
+	// state.time = time;
+	state.time = X.subgroup<0>().t();
 
 	// biases
 	state.bias.w = X.subgroup<1>().coeffs();

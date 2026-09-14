@@ -106,11 +106,16 @@ class MeasurementHandler {
   std::size_t imuQueued() const;
   std::size_t gpsQueued() const;
   std::size_t odomQueued() const;
+  std::size_t wheelQueued() const;
+  std::size_t yawQueued() const;
+  std::size_t baroQueued() const;
+  std::size_t magQueued() const;
 
   static bool needsRewind(double meas_stamp, double filter_time,
                           double latency_threshold);
 
- private:
+//  private:
+ public:
   template <typename T>
   static std::optional<T> takeLatestAtOrBefore(std::deque<T>& buffer, double t_query);
 
