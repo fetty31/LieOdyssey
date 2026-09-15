@@ -11,12 +11,12 @@ ins_ros_node:
       body: ona2/base_footprint
 
     tf:
-      publish: false
+      publish: true
 
     # Timing: stamp incoming measurements at receive time instead of trusting
     # msg headers (enable when sensor clocks are not synced with the PC clock)
     timing:
-      use_receive_stamp: false
+      use_receive_stamp: true
 
     # ============================================================
     # Filter
@@ -92,7 +92,7 @@ ins_ros_node:
             z: 10.0
 
         lever_arm:
-          x: 0.4
+          x: -0.4
           y: 0.0
           z: 0.5
 

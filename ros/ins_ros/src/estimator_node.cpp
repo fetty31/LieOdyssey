@@ -30,6 +30,7 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     // Initialize state
     this->state_ = ins_ros::State();
     this->filter_time_ = -1.0;
+    this->filter_init_time_ = -1.0;
     this->filter_time_initialized_ = false;
 
     // Reset ENU frame
@@ -141,6 +142,7 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     filter_.reset();
     meas_handler_.clear();
     filter_time_ = -1.0;
+    filter_init_time_ = -1.0;
     filter_time_initialized_ = false;
 
     RCLCPP_INFO(get_logger(), "Cleaned up");
@@ -536,7 +538,7 @@ void INSEstimator::setup_timer()
 void INSEstimator::setState() 
 {
     iESEKF::Group group;
-    iESEKF::state_to_group(this->state_, group);
+    iESEKF::state_to_group(this->state_, group, filter_init_time_);
 
     this->filter_.setState(group); // set initial state
 }
@@ -781,7 +783,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     }
 
     iESEKF::Group group_meas;
-    iESEKF::state_to_group(odom_meas, group_meas);
+    iESEKF::state_to_group(odom_meas, group_meas, filter_init_time_);
 
     Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(10, 10);
     R_odom(9,9) = 0.1; // time sensitivity
@@ -900,6 +902,7 @@ void INSEstimator::estimation_timer_callback()
         {
             meas_handler_.drainImuUpTo(latest);
             filter_time_ = latest;
+            filter_init_time_ = filter_time_;
             filter_time_initialized_ = true;
             meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
             refresh_state_from_filter(filter_time_);
@@ -909,12 +912,11 @@ void INSEstimator::estimation_timer_callback()
 
     const double t_target = meas_handler_.latestImuStamp();
     if (t_target < 0.0) return;
-    if (filter_time_initialized_ && t_target <= filter_time_) return;
+    if (!filter_time_initialized_) return;
+    if (t_target <= filter_time_) return;
 
     // Predict with all new IMU up to the target stamp.
     process_imu_up_to(t_target);
-    if (!filter_time_initialized_) return;
-
     const double filter_time = filter_time_;
 
     // Update with synchronized aiding measurements.
@@ -948,7 +950,6 @@ void INSEstimator::process_imu_up_to(double t_target)
             if (imu.stamp > filter_time_)
             {
                 filter_time_ = imu.stamp;
-                filter_time_initialized_ = true;
             }
             continue;
         }
@@ -960,7 +961,6 @@ void INSEstimator::process_imu_up_to(double t_target)
 
         filter_.predict(imu);
         filter_time_ = imu.stamp;
-        filter_time_initialized_ = true;
 
         iESEKF::group_to_state(filter_.getState(), filter_time_, state_);
         state_.w = imu.gyro;
@@ -1077,6 +1077,38 @@ void INSEstimator::process_odom_at(double filter_time)
     refresh_state_from_filter(filter_time);
     meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
     print_state("After 3D odometry update", state_);
+}
+
+void INSEstimator::process_relative_odom_at(double filter_time)
+{
+    if (odom_topic_.empty()) return;
+    auto odom_i = meas_handler_.peekClosestOdom(filter_time,
+                                                sync_tolerance_odom_,
+                                                sync_future_tolerance_);
+    if (!odom_i){
+        RCLCPP_WARN(get_logger(), "Could not find odometry reference for relative odometry.");
+        return;
+    }
+
+    auto snapshot = meas_handler_.snapshotAt(odom_i->stamp);
+    if (!snapshot){
+        RCLCPP_WARN(get_logger(), "Could not find filter state for relative odometry reference.");
+        return;
+    }
+
+    iESEKF::relative_odom::RelativeOdomMeasurement rel;
+    rel.X_ref     = snapshot->state;
+    rel.Y_ref     = odom_i->group;
+    rel.Y_cur     = current_odom.group;
+    rel.t_ref     = odom_i->stamp;
+    rel.t_cur     = current_odom.stamp;
+
+    print_state("Before relative odometry update", state_);
+    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
+        rel, opt->R, opt->R_inv, ins_ros::iESEKF::relative_odom::H_fun);
+    refresh_state_from_filter(filter_time);
+    meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
+    print_state("After relative odometry update", state_);
 }
 
 void INSEstimator::process_wheel_at(double filter_time)
@@ -1227,6 +1259,9 @@ void INSEstimator::from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::S
     out.v.x() = static_cast<State::Scalar>(in.twist.twist.linear.x);
     out.v.y() = static_cast<State::Scalar>(in.twist.twist.linear.y);
     out.v.z() = static_cast<State::Scalar>(in.twist.twist.linear.z);
+
+    // Time
+    out.time = sensor_stamp(in.header.stamp);
 }
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odometry& out,

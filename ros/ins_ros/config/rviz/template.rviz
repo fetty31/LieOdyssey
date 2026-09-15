@@ -9,7 +9,6 @@ Panels:
         - /EKF1
         - /EKF1/Odometry1
         - /EKF1/LIO/VIO1/Shape1
-        - /Odometry1
       Splitter Ratio: 0.5
     Tree Height: 719
   - Class: rviz_common/Selection
@@ -138,7 +137,7 @@ Visualization Manager:
           Enabled: true
           Name: GPS
           Namespaces:
-            gps_debug: true
+            {}
           Topic:
             Depth: 5
             Durability Policy: Volatile
@@ -188,45 +187,6 @@ Visualization Manager:
           Value: true
       Enabled: true
       Name: EKF
-    - Angle Tolerance: 0.10000000149011612
-      Class: rviz_default_plugins/Odometry
-      Covariance:
-        Orientation:
-          Alpha: 0.5
-          Color: 255; 255; 127
-          Color Style: Unique
-          Frame: Local
-          Offset: 1
-          Scale: 1
-          Value: true
-        Position:
-          Alpha: 0.30000001192092896
-          Color: 204; 51; 204
-          Scale: 1
-          Value: true
-        Value: false
-      Enabled: true
-      Keep: 10000
-      Name: Odometry
-      Position Tolerance: 0.10000000149011612
-      Shape:
-        Alpha: 1
-        Axes Length: 1
-        Axes Radius: 0.10000000149011612
-        Color: 246; 211; 45
-        Head Length: 0.30000001192092896
-        Head Radius: 0.10000000149011612
-        Shaft Length: 1
-        Shaft Radius: 0.05000000074505806
-        Value: Arrow
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /fast_limo/state
-      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -273,7 +233,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 112.14447784423828
+      Distance: 40.331024169921875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -288,10 +248,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 1.3147965669631958
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.9604010581970215
+      Yaw: 3.980400562286377
     Saved: ~
 Window Geometry:
   Displays:

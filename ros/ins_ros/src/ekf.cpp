@@ -11,9 +11,8 @@ void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros
 	state.q = X.subgroup<0>().quat();
 	state.v = X.subgroup<0>().linearVelocity();
 
-	// time (relative to initial time reference)
-	// state.time = time;
-	state.time = X.subgroup<0>().t();
+	// time (here we use the global time)
+	state.time = time;
 
 	// biases
 	state.bias.w = X.subgroup<1>().coeffs();
@@ -23,7 +22,7 @@ void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros
 	state.g = X.subgroup<3>().coeffs();
 }
 
-void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
+void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g, double time_ref)
 {
     using NativeBundle = manif::Bundle<iESEKF::Scalar, 
                                             manif::SGal3,  // pose + velocity 
@@ -34,10 +33,12 @@ void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
 	using SGal3 = manif::SGal3<iESEKF::Scalar>;
 	using R3    = manif::R3<iESEKF::Scalar>;
 
+	iESEKF::Scalar sgal3_time = (time_ref > 0) ? static_cast<iESEKF::Scalar>(state.time - time_ref) : 0.0; 
+
 	auto X0 = NativeBundle(SGal3(state.p,                    // x y z                  0
 								state.q,                     // rotation               6
 								state.v,                     // vx, vy, vz             3
-								state.time),                 // delta t                9
+								sgal3_time),                 // delta t                9
 							R3(state.bias.w), 				 // b_w                   10
 							R3(state.bias.a), 				 // b_a                   13
 							R3(state.g)                      // gravity               16

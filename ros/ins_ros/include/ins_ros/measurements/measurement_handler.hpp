@@ -124,6 +124,11 @@ class MeasurementHandler {
                                         double tolerance, double future_tolerance,
                                         StampFn stamp_of);
 
+  template <typename T, typename StampFn>
+  static std::optional<T> peekClosestTo(std::deque<T>& buffer, double t_query,
+                                        double tolerance, double future_tolerance,
+                                        StampFn stamp_of);
+
   void enforceCapacity();
   void pruneHistory(double t_newest);
 

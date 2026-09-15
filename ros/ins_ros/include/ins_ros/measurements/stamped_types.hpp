@@ -21,8 +21,8 @@ struct StampedGps {
 struct StampedOdom {
   double stamp{-1.0};
   iESEKF::Group group{};
-  Eigen::MatrixXd R{Eigen::MatrixXd::Identity(10, 10)};
-  Eigen::MatrixXd R_inv{Eigen::MatrixXd::Identity(10, 10)};
+  Eigen::Matrix<iESEKF::Scalar, 10, 10> R{Eigen::Matrix<iESEKF::Scalar, 10, 10>::Identity()};
+  Eigen::Matrix<iESEKF::Scalar, 10, 10> R_inv{Eigen::Matrix<iESEKF::Scalar, 10, 10>::Identity()};
   bool has_velocity{true};
 };
 
@@ -43,8 +43,8 @@ struct StampedMag {
 struct StampedBaro {
   double stamp{-1.0};
   iESEKF::Scalar pressure{101325.0};
-  Eigen::MatrixXd R{Eigen::MatrixXd::Identity(1, 1)};
-  Eigen::MatrixXd R_inv{Eigen::MatrixXd::Identity(1, 1)};
+  Eigen::Matrix<iESEKF::Scalar, 1, 1> R{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity()};
+  Eigen::Matrix<iESEKF::Scalar, 1, 1> R_inv{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity()};
 };
 
 struct StampedYaw {

@@ -17,6 +17,7 @@
 #include "ins_ros/sensors/gps_handler.hpp"
 #include "ins_ros/sensors/mag_handler.hpp"
 #include "ins_ros/sensors/odom_handler.hpp"
+#include "ins_ros/sensors/relative_odom_handler.hpp"
 #include "ins_ros/sensors/wheel_handler.hpp"
 #include "ins_ros/sensors/yaw_handler.hpp"
 
@@ -102,6 +103,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void process_imu_up_to(double t_target);
         void process_gps_at(double filter_time);
         void process_odom_at(double filter_time);
+        void process_relative_odom_at(double filter_time);
         void process_wheel_at(double filter_time);
         void process_mag_at(double filter_time);
         void process_baro_at(double filter_time);
@@ -161,6 +163,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Filter time base: ROS sensor stamp (seconds) of last processed IMU.
         double filter_time_{-1.0};
+        double filter_init_time_{-1.0};
         bool filter_time_initialized_{false};
 
         // State (mirrors filter after each timer tick; read by callbacks for bias/debug).
@@ -207,6 +210,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         State::V3 odom_position_noise_{State::V3::Zero()};
         State::V3 odom_orientation_noise_{State::V3::Zero()};
         State::V3 odom_velocity_noise_{State::V3::Zero()};
+
+        std::optional<iESEKF::relative_odom::RelativeOdomMeasurement> odom_reference_;
 
         // Wheel odom
         std::string wheel_odom_topic_{""};

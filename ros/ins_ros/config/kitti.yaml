@@ -76,7 +76,7 @@ ins_ros_node:
             z: 0.1
 
       gps:
-        enabled: true
+        enabled: false
 
         topic: /kitti/oxts/gps/fix
 
@@ -94,12 +94,12 @@ ins_ros_node:
           z: 0.93
 
       odometry:
-        enabled: false
+        enabled: true
 
         topic: /lio_ros/state
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
-          pose: false      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
+          pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
           velocity: false  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
 
         covariance:

@@ -160,6 +160,41 @@ std::optional<T> MeasurementHandler::takeClosestTo(std::deque<T>& buffer, double
   return out;
 }
 
+template <typename T, typename StampFn>
+std::optional<T> MeasurementHandler::peekClosestTo(std::deque<T>& buffer, double t_query,
+                                                   double tolerance,
+                                                   double future_tolerance,
+                                                   StampFn stamp_of) {
+  // std::lock_guard<std::mutex> lock(mutex_);
+  // if (buffer.empty())
+  //     return std::nullopt;
+
+  // const double t_min = t_query - tolerance;
+  // const double t_max = t_query + future_tolerance;
+
+  // std::optional<StampedOdom> best;
+  // double best_dt = std::numeric_limits<double>::max();
+
+  // for (const auto& odom : odom_buffer_)
+  // {
+  //     if (odom.stamp < t_min)
+  //         continue;
+
+  //     if (odom.stamp > t_max)
+  //         break;
+
+  //     const double dt = std::abs(odom.stamp - t_query);
+
+  //     if (dt < best_dt)
+  //     {
+  //         best_dt = dt;
+  //         best = odom;
+  //     }
+  // }
+
+  // return best;
+}
+
 // --- Aiding queries ---
 
 std::optional<StampedGps> MeasurementHandler::takeGpsAtOrBefore(double t_query) {
@@ -250,6 +285,14 @@ std::vector<StampedGps> MeasurementHandler::peekNewestGps(std::size_t n) const {
     out.push_back(gps_buffer_[i]);
   }
   return out;
+}
+
+std::optional<StampedOdom> MeasurementHandler::peekClosestOdom(
+    double t_query,
+    double tolerance,
+    double future_tolerance) const
+{
+
 }
 
 // --- State history ---
