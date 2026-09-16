@@ -134,18 +134,29 @@ std::optional<T> MeasurementHandler::takeClosestTo(std::deque<T>& buffer, double
                                                    double tolerance,
                                                    double future_tolerance,
                                                    StampFn stamp_of) {
+  if (buffer.empty())
+      return std::nullopt;
+
   // Find index of closest sample within [t_query - tolerance, t_query + future_tolerance].
+  const double t_min = t_query - tolerance;
+  const double t_max = t_query + future_tolerance;
+
   int best_idx = -1;
   double best_dt = std::numeric_limits<double>::max();
-  const int n = static_cast<int>(buffer.size());
-  for (int i = 0; i < n; ++i) {
-    const double s = stamp_of(buffer[static_cast<std::size_t>(i)]);
-    if (s < t_query - tolerance) continue;  // too old, will be discarded below
-    if (s > t_query + future_tolerance) break;  // buffers are time-ordered
+
+  const std::size_t n = buffer.size();
+  for (std::size_t i = 0; i < n; ++i) 
+  {
+    const double s = stamp_of(buffer[i]);
+
+    if (s < t_min) continue;  // too old, will be discarded below
+    if (s > t_max) break;  // buffers are time-ordered
+
     const double dt = std::abs(s - t_query);
+
     if (dt < best_dt) {
       best_dt = dt;
-      best_idx = i;
+      best_idx = static_cast<int>(i);
     }
   }
   // Discard everything strictly older than the search window.
@@ -153,7 +164,9 @@ std::optional<T> MeasurementHandler::takeClosestTo(std::deque<T>& buffer, double
     buffer.pop_front();
     if (best_idx > 0) --best_idx;
   }
+
   if (best_idx < 0) return std::nullopt;
+
   // Consume up to and including the chosen sample.
   T out = buffer[static_cast<std::size_t>(best_idx)];
   buffer.erase(buffer.begin(), buffer.begin() + best_idx + 1);
@@ -161,38 +174,75 @@ std::optional<T> MeasurementHandler::takeClosestTo(std::deque<T>& buffer, double
 }
 
 template <typename T, typename StampFn>
-std::optional<T> MeasurementHandler::peekClosestTo(std::deque<T>& buffer, double t_query,
+std::optional<T> MeasurementHandler::peekClosestTo(const std::deque<T>& buffer, double t_query,
                                                    double tolerance,
                                                    double future_tolerance,
                                                    StampFn stamp_of) {
-  // std::lock_guard<std::mutex> lock(mutex_);
-  // if (buffer.empty())
-  //     return std::nullopt;
+  if (buffer.empty())
+      return std::nullopt;
 
-  // const double t_min = t_query - tolerance;
-  // const double t_max = t_query + future_tolerance;
+  // Find index of closest sample within [t_query - tolerance, t_query + future_tolerance].
+  const double t_min = t_query - tolerance;
+  const double t_max = t_query + future_tolerance;
 
-  // std::optional<StampedOdom> best;
-  // double best_dt = std::numeric_limits<double>::max();
+  int best_idx = -1;
+  double best_dt = std::numeric_limits<double>::max();
 
-  // for (const auto& odom : odom_buffer_)
-  // {
-  //     if (odom.stamp < t_min)
-  //         continue;
+  const std::size_t n = buffer.size();
+  for (std::size_t i = 0; i < n; ++i) 
+  {
+    const double s = stamp_of(buffer[i]);
 
-  //     if (odom.stamp > t_max)
-  //         break;
+    if (s < t_min) continue;  // too old, will be discarded below
+    if (s > t_max) break;  // buffers are time-ordered
 
-  //     const double dt = std::abs(odom.stamp - t_query);
+    const double dt = std::abs(s - t_query);
 
-  //     if (dt < best_dt)
-  //     {
-  //         best_dt = dt;
-  //         best = odom;
-  //     }
-  // }
+    if (dt < best_dt) {
+      best_dt = dt;
+      best_idx = static_cast<int>(i);
+    }
+  }
 
-  // return best;
+  return buffer[static_cast<std::size_t>(best_idx)];
+}
+
+template <typename T, typename StampFn>
+std::vector<T> MeasurementHandler::peekNewest(const std::deque<T>& buffer, std::size_t n,
+                                              double tolerance,
+                                              StampFn stamp_of) 
+{
+  std::vector<T> out;
+
+  if (buffer.empty() || n == 0)
+    return out;
+
+  const std::size_t count = std::min(n, buffer.size());
+  out.reserve(count);
+
+  // Get the newest n samples.
+  for (std::size_t i = buffer.size() - count; i < buffer.size(); ++i) {
+    out.push_back(buffer[i]);
+  }
+
+  // Check that consecutive samples are not separated by more than
+  // the allowed time tolerance.
+  for (std::size_t i = 1; i < out.size(); ++i) {
+    const double dt =
+        stamp_of(out[i]) - stamp_of(out[i - 1]);
+
+    if (dt > tolerance)
+      return {};
+  }
+
+  return out;
+}
+
+template <typename T>
+std::optional<T> MeasurementHandler::peekLatest(const std::deque<T>& buffer) 
+{
+  if (buffer.empty()) return std::nullopt;
+  return buffer.back();
 }
 
 // --- Aiding queries ---
@@ -271,28 +321,110 @@ std::optional<StampedYaw> MeasurementHandler::takeSyncYaw(double t_query, double
 
 std::optional<StampedGps> MeasurementHandler::peekLatestGps() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (gps_buffer_.empty()) return std::nullopt;
-  return gps_buffer_.back();
+  return peekLatest(gps_buffer_);
 }
 
-std::vector<StampedGps> MeasurementHandler::peekNewestGps(std::size_t n) const {
+std::optional<StampedOdom> MeasurementHandler::peekLatestOdom() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<StampedGps> out;
-  if (gps_buffer_.empty() || n == 0) return out;
-  const std::size_t count = std::min(n, gps_buffer_.size());
-  out.reserve(count);
-  for (std::size_t i = gps_buffer_.size() - count; i < gps_buffer_.size(); ++i) {
-    out.push_back(gps_buffer_[i]);
-  }
-  return out;
+  return peekLatest(odom_buffer_);
 }
 
-std::optional<StampedOdom> MeasurementHandler::peekClosestOdom(
-    double t_query,
-    double tolerance,
-    double future_tolerance) const
-{
+std::optional<StampedWheel> MeasurementHandler::peekLatestWheel() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekLatest(wheel_buffer_);
+}
 
+std::optional<StampedMag> MeasurementHandler::peekLatestMag() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekLatest(mag_buffer_);
+}
+
+std::optional<StampedBaro> MeasurementHandler::peekLatestBaro() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekLatest(baro_buffer_);
+}
+
+std::optional<StampedYaw> MeasurementHandler::peekLatestYaw() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekLatest(yaw_buffer_);
+}
+
+std::vector<StampedGps> MeasurementHandler::peekNewestGps(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(gps_buffer_, n, tolerance,
+                    [](const StampedGps& e) { return e.stamp; });
+}
+
+std::vector<StampedOdom> MeasurementHandler::peekNewestOdom(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(odom_buffer_, n, tolerance,
+                    [](const StampedOdom& e) { return e.stamp; });
+}
+
+std::vector<StampedWheel> MeasurementHandler::peekNewestWheel(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(wheel_buffer_, n, tolerance,
+                    [](const StampedWheel& e) { return e.stamp; });
+}
+
+std::vector<StampedMag> MeasurementHandler::peekNewestMag(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(mag_buffer_, n, tolerance,
+                    [](const StampedMag& e) { return e.stamp; });
+}
+
+std::vector<StampedBaro> MeasurementHandler::peekNewestBaro(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(baro_buffer_, n, tolerance,
+                    [](const StampedBaro& e) { return e.stamp; });
+}
+
+std::vector<StampedYaw> MeasurementHandler::peekNewestYaw(std::size_t n, double tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekNewest(yaw_buffer_, n, tolerance,
+                    [](const StampedYaw& e) { return e.stamp; });
+}
+
+std::optional<StampedGps> MeasurementHandler::peekSyncGps(double t_query, double tolerance,
+                                                          double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(gps_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedGps& e) { return e.stamp; });
+}
+
+std::optional<StampedOdom> MeasurementHandler::peekSyncOdom(double t_query, double tolerance,
+                                                            double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(odom_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedOdom& e) { return e.stamp; });
+}
+
+std::optional<StampedWheel> MeasurementHandler::peekSyncWheel(double t_query, double tolerance,
+                                                              double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(wheel_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedWheel& e) { return e.stamp; });
+}
+
+std::optional<StampedMag> MeasurementHandler::peekSyncMag(double t_query, double tolerance,
+                                                          double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(mag_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedMag& e) { return e.stamp; });
+}
+
+std::optional<StampedBaro> MeasurementHandler::peekSyncBaro(double t_query, double tolerance,
+                                                            double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(baro_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedBaro& e) { return e.stamp; });
+}
+
+std::optional<StampedYaw> MeasurementHandler::peekSyncYaw(double t_query, double tolerance,
+                                                          double future_tolerance) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return peekClosestTo(yaw_buffer_, t_query, tolerance, future_tolerance,
+                       [](const StampedYaw& e) { return e.stamp; });
 }
 
 // --- State history ---

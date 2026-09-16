@@ -86,20 +86,64 @@ class MeasurementHandler {
                                         double future_tolerance = 0.02);
 
   // --- Non-destructive peek (buffer contents are preserved) ---
-  /// Newest buffered GPS fix, if any. Used e.g. to anchor filter
-  /// initialization without consuming the measurement.
+
+  /**
+   * @brief Get newest measurement from buffer
+   *
+   * Gets last measurement from buffer (if not empty)
+   */
   std::optional<StampedGps> peekLatestGps() const;
-  /// Up to n newest buffered GPS fixes in chronological order (oldest first).
-  /// Used e.g. to difference fixes for a rough initial velocity estimate.
-  std::vector<StampedGps> peekNewestGps(std::size_t n) const;
+  std::optional<StampedOdom> peekLatestOdom() const;
+  std::optional<StampedWheel> peekLatestWheel() const;
+  std::optional<StampedMag> peekLatestMag() const;
+  std::optional<StampedBaro> peekLatestBaro() const;
+  std::optional<StampedYaw> peekLatestYaw() const;
+
+  /**
+   * @brief Get up to n newest buffered messages in chronological order (oldest first).
+   *
+   * Gets last n measurements from buffer taking into account a time tolerance
+   * between consecutive samples. In case the tolerance is not respected, returns
+   * an empty vector.
+   */
+  std::vector<StampedGps> peekNewestGps(std::size_t n, double tolerance=0.1) const;
+  std::vector<StampedOdom> peekNewestOdom(std::size_t n, double tolerance=0.1) const;
+  std::vector<StampedWheel> peekNewestWheel(std::size_t n, double tolerance=0.1) const;
+  std::vector<StampedMag> peekNewestMag(std::size_t n, double tolerance=0.1) const;
+  std::vector<StampedBaro> peekNewestBaro(std::size_t n, double tolerance=0.1) const;
+  std::vector<StampedYaw> peekNewestYaw(std::size_t n, double tolerance=0.1) const;
+
+  /**
+   * @brief Closest measurement to t_query within tolerance without consuming.
+   *
+   * Only looks at measurements with stamp <= t_query + future_tolerance
+   * (to allow for small timestamp jitter).
+   * Returns nullopt if nothing is within tolerance.
+   */
+  std::optional<StampedGps> peekSyncGps(double t_query, double tolerance,
+                                        double future_tolerance = 0.02) const;
+  std::optional<StampedOdom> peekSyncOdom(double t_query, double tolerance,
+                                          double future_tolerance = 0.02) const;
+  std::optional<StampedWheel> peekSyncWheel(double t_query, double tolerance,
+                                            double future_tolerance = 0.02) const;
+  std::optional<StampedMag> peekSyncMag(double t_query, double tolerance,
+                                        double future_tolerance = 0.02) const;
+  std::optional<StampedBaro> peekSyncBaro(double t_query, double tolerance,
+                                          double future_tolerance = 0.02) const;
+  std::optional<StampedYaw> peekSyncYaw(double t_query, double tolerance,
+                                        double future_tolerance = 0.02) const;
 
   // --- State history (for past/future recovery on delayed measurements) ---
   void pushStateSnapshot(double stamp, const iESEKF::Group& state,
                          const iESEKF::MatDoF& cov);
+
   /// Closest snapshot with stamp <= t_query. Nullopt if history is empty/too new.
   std::optional<StateSnapshot> snapshotAt(double t_query) const;
+
   /// Drop snapshots newer than t_query (used after rewind + re-propagation).
   void truncateSnapshotsAfter(double t_query);
+
+  //// Prune (remove) all buffer's data older than t_min
   void pruneOlderThan(double t_min);
 
   // --- Introspection ---
@@ -125,9 +169,17 @@ class MeasurementHandler {
                                         StampFn stamp_of);
 
   template <typename T, typename StampFn>
-  static std::optional<T> peekClosestTo(std::deque<T>& buffer, double t_query,
+  static std::optional<T> peekClosestTo(const std::deque<T>& buffer, double t_query,
                                         double tolerance, double future_tolerance,
                                         StampFn stamp_of);
+
+  template <typename T, typename StampFn>
+  static std::vector<T> peekNewest(const std::deque<T>& buffer, std::size_t n,
+                                  double tolerance,
+                                  StampFn stamp_of);
+  
+  template <typename T>
+  static std::optional<T> peekLatest(const std::deque<T>& buffer);
 
   void enforceCapacity();
   void pruneHistory(double t_newest);

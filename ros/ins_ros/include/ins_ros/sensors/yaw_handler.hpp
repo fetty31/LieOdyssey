@@ -53,7 +53,8 @@ void H_fun(
     H = iESEKF::HMat::Zero(2, DoF);
 
     State::V3 ex(1.0, 0.0, 0.0);
-    Eigen::Matrix<iESEKF::Scalar, 3, 3> J_forward = -R * manif::skew(ex);
+    // Eigen::Matrix<iESEKF::Scalar, 3, 3> J_forward = -R * manif::skew(ex);
+    Eigen::Matrix<iESEKF::Scalar, 3, 3> J_forward = -manif::skew(R * ex);
 
     std::cout << "J_forward: " << J_forward << std::endl;
     std::cout << "R: " << R << std::endl;

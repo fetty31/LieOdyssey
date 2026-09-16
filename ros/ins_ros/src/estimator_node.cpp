@@ -743,9 +743,6 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     from_ros_to_ins(msg, odom_meas);
     odom_meas.v = odom_meas.q.toRotationMatrix() * odom_meas.v; // body -> inertial
 
-    const double stamp = sensor_stamp(msg.header.stamp);
-    odom_meas.time = stamp;
-
     if ((!gps_topic_.empty()))
     {
         if(!lio_to_enu_.initialized())
@@ -812,7 +809,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     }
 
     measurements::StampedOdom stamped;
-    stamped.stamp = stamp;
+    stamped.stamp = odom_meas.time;
     stamped.group = group_meas;
     stamped.R = R_odom;
     stamped.R_inv = R_odom.inverse();
@@ -922,6 +919,7 @@ void INSEstimator::estimation_timer_callback()
     // Update with synchronized aiding measurements.
     process_gps_at(filter_time);
     process_odom_at(filter_time);
+    process_relative_odom_at(filter_time);
     process_wheel_at(filter_time);
     process_mag_at(filter_time);
     process_baro_at(filter_time);
@@ -1082,30 +1080,32 @@ void INSEstimator::process_odom_at(double filter_time)
 void INSEstimator::process_relative_odom_at(double filter_time)
 {
     if (odom_topic_.empty()) return;
-    auto odom_i = meas_handler_.peekClosestOdom(filter_time,
-                                                sync_tolerance_odom_,
-                                                sync_future_tolerance_);
-    if (!odom_i){
+
+    auto snapshot = meas_handler_.snapshotAt(filter_time);
+    if (!snapshot){
+        RCLCPP_WARN(get_logger(), "Could not find filter state reference for relative odometry.");
+        return;
+    }
+
+    auto odom_vec = meas_handler_.peekNewestOdom(2);
+    if(odom_vec.size() != 2){
         RCLCPP_WARN(get_logger(), "Could not find odometry reference for relative odometry.");
         return;
     }
 
-    auto snapshot = meas_handler_.snapshotAt(odom_i->stamp);
-    if (!snapshot){
-        RCLCPP_WARN(get_logger(), "Could not find filter state for relative odometry reference.");
-        return;
-    }
+    measurements::StampedOdom ref_odom = odom_vec[0];
+    measurements::StampedOdom current_odom = odom_vec[1];
 
     iESEKF::relative_odom::RelativeOdomMeasurement rel;
     rel.X_ref     = snapshot->state;
-    rel.Y_ref     = odom_i->group;
+    rel.Y_ref     = ref_odom.group;
     rel.Y_cur     = current_odom.group;
-    rel.t_ref     = odom_i->stamp;
+    rel.t_ref     = ref_odom.stamp;
     rel.t_cur     = current_odom.stamp;
 
     print_state("Before relative odometry update", state_);
-    filter_.update<iESEKF::Group, iESEKF::Measurement, iESEKF::HMat>(
-        rel, opt->R, opt->R_inv, ins_ros::iESEKF::relative_odom::H_fun);
+    filter_.update<iESEKF::relative_odom::RelativeOdomMeasurement, iESEKF::Measurement, iESEKF::HMat>(
+        rel, current_odom.R, current_odom.R_inv, ins_ros::iESEKF::relative_odom::H_fun);
     refresh_state_from_filter(filter_time);
     meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
     print_state("After relative odometry update", state_);

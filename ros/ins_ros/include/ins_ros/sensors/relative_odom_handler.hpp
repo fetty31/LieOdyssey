@@ -57,8 +57,8 @@ struct RelativeOdomMeasurement
  *
  * then:
  *
- *      H = ∂r / ∂δx
- *        = J_X
+ *      H = ∂h/dδx = - ∂r/∂δx
+ *        = -J_X
  *
  * This formulation avoids state augmentation because Xi is
  * considered a fixed historical state and only Xj is updated.
@@ -90,6 +90,24 @@ void H_fun(
     SGal3 Yij = Yi.inverse() * Yj;
     SGal3 Xij = Xi.inverse() * Xj;
 
+    std::cout << "Yi coeffs: "
+          << Yi.coeffs().transpose() << "\n";
+
+    std::cout << "Yj coeffs: "
+            << Yj.coeffs().transpose() << "\n";
+
+    std::cout << "Xi coeffs: "
+          << Xi.coeffs().transpose() << "\n";
+
+    std::cout << "Xj coeffs: "
+            << Xj.coeffs().transpose() << "\n";
+
+    std::cout << "Yij coeffs: "
+            << Yij.coeffs().transpose() << "\n";
+
+    std::cout << "Xij coeffs: "
+            << Xij.coeffs().transpose() << "\n";
+
     Tangent xi;
     SGal3::Jacobian J_Yij;
     SGal3::Jacobian J_Xij;
@@ -98,12 +116,16 @@ void H_fun(
 
     r = xi.coeffs();
 
+    std::cout << "residual: " << r << std::endl;
+
     H = iESEKF::HMat::Zero(
         10,
         iESEKF::Group::Impl::DoF
     );
 
-    H.block<10, 10>(0, 0) = J_Xij;
+    // From minus() operation we get jacobian J_Xij (= residual jacobian w.r.t Xij)
+    //  thus H = dh/dx = -dr/dx (sign inversion)
+    H.block<10, 10>(0, 0) = -J_Xij;
 
 }
 

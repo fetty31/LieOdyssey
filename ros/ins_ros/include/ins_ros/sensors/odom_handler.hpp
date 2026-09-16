@@ -31,7 +31,8 @@ void H_fun(const iESEKF::Filter& /*kf*/,
         iESEKF::Group::Impl::DoF
     );
 
-    // Derivative wrt filter state
+    // From minus() operation we get jacobian J_X (= residual jacobian w.r.t X)
+    //  thus H = dh/dx = -dr/dx (sign inversion)
     H.block<10,10>(0,0) = -J_X;
 }
 
