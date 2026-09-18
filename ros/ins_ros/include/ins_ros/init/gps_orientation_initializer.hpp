@@ -22,7 +22,7 @@ public:
         double delta_distance_threshold = 0.1;
 
         // Maximum physically plausible robot speed.
-        double max_speed = 2.5;
+        double max_speed = 20.5;
 
         // Minimum number of GPS points used by PCA.
         std::size_t min_samples = 3;
@@ -42,13 +42,13 @@ public:
     void reset()
     {
         initialized_ = false;
-        last_position_valid_ = false;
         last_position_.setZero();
         path_segment_.clear();
 
         distance_traveled_ = 0.0;
         heading_ = 0.0;
-        last_time_ = 0.0;
+        last_time_ = -1.0;
+        last_dt_ = 0.0;
     }
 
     /**
@@ -70,15 +70,11 @@ public:
             position_enu.head<2>();
 
         // First position
-        if (!last_position_valid_)
+        if (last_time_ < 0.0)
         {
             last_position_ = current_position;
-            last_position_valid_ = true;
-
             path_segment_.push_back(current_position);
-
             last_time_ = timestamp;
-
             return false;
         }
 
@@ -97,10 +93,10 @@ public:
             return false;
         }
 
-        const double speed =
+        const double speed_magnitude =
             delta_distance / delta_time;
 
-        if (speed > params_.max_speed)
+        if (speed_magnitude > params_.max_speed)
         {
             // Don't update the reference point.
             // This measurement is considered invalid.
@@ -114,6 +110,7 @@ public:
 
         // Update
         last_time_ = timestamp;
+        last_dt_ = delta_time;
 
         distance_traveled_ += delta_distance;
 
@@ -148,6 +145,34 @@ public:
     double heading() const
     {
         return heading_;
+    }
+
+    double velocity() const
+    {
+        if(path_segment_.size() < 2)
+            return 0.0;
+        
+        if(last_dt_ <= 0.0)
+            return 0.0;
+
+        const Eigen::Vector2d forward =
+            Eigen::Rotation2Dd(heading_) * Eigen::Vector2d::UnitX();
+
+        const auto& p1 = path_segment_.back();
+        const auto& p0 = path_segment_[path_segment_.size()-2];
+        const Eigen::Vector2d delta = p1 - p0;
+
+        return delta.dot(forward) / delta_time;
+    }
+
+    const double stamp() const 
+    {
+        return last_time_;
+    }
+
+    Eigen::Vector2d position() const
+    {
+        return last_position_;
     }
 
     Eigen::Quaterniond orientation() const
@@ -233,12 +258,12 @@ public:
     Parameters params_;
 
     bool initialized_ = false;
-    bool last_position_valid_ = false;
 
     Eigen::Vector2d last_position_ =
         Eigen::Vector2d::Zero();
 
     double last_time_ = 0.0;
+    double last_dt_ = 0.0;
 
     std::vector<Eigen::Vector2d> path_segment_;
 

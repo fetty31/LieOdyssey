@@ -100,18 +100,26 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // --- Fixed-frequency estimation loop ---
         void estimation_timer_callback();
-        void process_imu_up_to(double t_target);
-        void process_gps_at(double filter_time);
-        void process_odom_at(double filter_time);
-        void process_relative_odom_at(double filter_time);
-        void process_wheel_at(double filter_time);
-        void process_mag_at(double filter_time);
-        void process_baro_at(double filter_time);
-        void process_yaw_at(double filter_time);
+
+        void processMeasurement(const measurements::StampedGps& gps);
+        void processMeasurement(const measurements::StampedOdom& odom);
+        void processMeasurement(const measurements::StampedWheel& wheel);
+        void processMeasurement(const measurements::StampedMag& mag);
+        void processMeasurement(const measurements::StampedBaro& baro);
+        void processMeasurement(const measurements::StampedYaw& yaw);
+
+        void process_gps(const measurements::StampedGps& gps);
+        void process_odom(const measurements::StampedOdom& odom);
+        void process_wheel(const measurements::StampedWheel& wheel);
+        void process_mag(const measurements::StampedMag& mag);
+        void process_baro(const measurements::StampedBaro& baro);
+
+        // void process_relative_odom_at(double filter_time);
+
         void refresh_state_from_filter(double stamp);
 
         // GPS latency handling: rewind to snapshot, update, re-propagate IMU.
-        bool apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time);
+        // bool apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time);
         void apply_gps_direct(const measurements::StampedGps& gps);
 
         bool try_initialize_orientation();
@@ -126,7 +134,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void setup_timer();
 
         // --- ROS <-> Library conversion helpers ---
-        double sensor_stamp(const rclcpp::Time& header_stamp);
+        double stampToSec(const rclcpp::Time& header_stamp);
+        void initializeTime(double t);
+        void handleTimeReset(double t);
+        void handleTimeJump(double t, double dt);
+
         void from_ros_to_ins(const sensor_msgs::msg::Imu& in, iESEKF::IMUmeas& out);
         void from_ros_to_ins(const geometry_msgs::msg::PoseStamped& in, ins_ros::State& out);
         void from_ros_to_ins(const nav_msgs::msg::Odometry& in, ins_ros::State& out);
@@ -245,7 +257,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         double sync_tolerance_yaw_{0.10};
         double sync_future_tolerance_{0.02};
         std::size_t imu_buffer_capacity_{2000};
-        std::size_t aiding_buffer_capacity_{200};
+        std::size_t measurement_capacity_{1000};
 
         // Process noise parameters
         double gyro_noise_;

@@ -2,7 +2,7 @@
 
 using namespace ins_ros::iESEKF;
 
-void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros::State& state)
+void ins_ros::iESEKF::group_to_state(const Group& g, const double& /*time*/, ins_ros::State& state)
 {
 	iESEKF::Bundle X = g.impl(); 
 
@@ -12,7 +12,8 @@ void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros
 	state.v = X.subgroup<0>().linearVelocity();
 
 	// time (here we use the global time)
-	state.time = time;
+	// state.time = time;
+	state.time = X.subgroup<0>().t();
 
 	// biases
 	state.bias.w = X.subgroup<1>().coeffs();
@@ -22,7 +23,7 @@ void ins_ros::iESEKF::group_to_state(const Group& g, const double& time, ins_ros
 	state.g = X.subgroup<3>().coeffs();
 }
 
-void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g, double time_ref)
+void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
 {
     using NativeBundle = manif::Bundle<iESEKF::Scalar, 
                                             manif::SGal3,  // pose + velocity 
@@ -33,7 +34,7 @@ void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g, doub
 	using SGal3 = manif::SGal3<iESEKF::Scalar>;
 	using R3    = manif::R3<iESEKF::Scalar>;
 
-	iESEKF::Scalar sgal3_time = (time_ref > 0) ? static_cast<iESEKF::Scalar>(state.time - time_ref) : 0.0; 
+	iESEKF::Scalar sgal3_time = static_cast<iESEKF::Scalar>(state.time); 
 
 	auto X0 = NativeBundle(SGal3(state.p,                    // x y z                  0
 								state.q,                     // rotation               6

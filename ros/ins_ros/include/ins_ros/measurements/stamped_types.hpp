@@ -54,8 +54,9 @@ struct StampedYaw {
   Eigen::Matrix<iESEKF::Scalar, 2, 2> R_inv{Eigen::Matrix<iESEKF::Scalar, 2, 2>::Identity() * 100.0};
 };
 
-// --- Filter snapshot for delayed-measurement rewind ---
-
+/**
+ * @brief State snapshot used for delayed-measurement rewind/repropagation.
+ */
 struct StateSnapshot {
   double stamp{-1.0};
   iESEKF::Group state{};

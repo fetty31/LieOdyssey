@@ -76,7 +76,7 @@ ins_ros_node:
             z: 0.1
 
       gps:
-        enabled: false
+        enabled: true
 
         topic: /kitti/oxts/gps/fix
 

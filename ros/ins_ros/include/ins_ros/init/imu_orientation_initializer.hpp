@@ -49,7 +49,8 @@ public:
 
     bool add_measurement(
         const Eigen::Vector3d& accel,
-        const Eigen::Vector3d& gyro)
+        const Eigen::Vector3d& gyro, 
+        const double& stamp)
     {
         if (initialized_)
             return true;
@@ -105,6 +106,9 @@ public:
         // Gyroscope bias
         gyro_bias_ = gyro_mean;
 
+        // Timestamp
+        stamp_ = stamp;
+
         initialized_ = true;
 
         return true;
@@ -118,6 +122,16 @@ public:
     const Eigen::Quaterniond& orientation() const
     {
         return orientation_;
+    }
+
+    const double stamp() const
+    {
+        return stamp_;
+    }
+
+    std::size samples() const
+    {
+        return sample_count_;
     }
 
     Eigen::Matrix3d rotation() const
@@ -191,6 +205,7 @@ private:
     void reset_accumulation()
     {
         sample_count_ = 0;
+        stamp_ = -1.0;
 
         accel_sum_.setZero();
         gyro_sum_.setZero();
@@ -203,6 +218,8 @@ public:
     bool initialized_ = false;
 
     std::size_t sample_count_ = 0;
+
+    double stamp_ = -1.0;
 
     Eigen::Vector3d accel_sum_ =
         Eigen::Vector3d::Zero();

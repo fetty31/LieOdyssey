@@ -29,7 +29,7 @@ using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement 
 
 // Type-conversion helper
 void group_to_state(const Group& g, const double& time, ins_ros::State& state);
-void state_to_group(const ins_ros::State& state, Group& g, double time_ref=-1.0);
+void state_to_group(const ins_ros::State& state, Group& g);
 
 // Covariance retrieval (Pose + Vel.)
 std::vector<double> get_pose_covariance(const MatDoF& P);
