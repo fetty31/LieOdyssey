@@ -26,28 +26,7 @@ void MeasurementHandler::clear()
   measurement_queue_.clear();
   imu_history_.clear();
   state_history_.clear();
-}
-
-// -----------------------------------------------------------------------------
-// Push
-// -----------------------------------------------------------------------------
-
-template <typename T>
-void push(const T& measurement)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    QueuedMeasurement queued{Measurement{measurement}};
-
-    insertMeasurement(queued);
-
-    if constexpr (std::is_same_v<T, iESEKF::IMUmeas>)
-    {
-        insertSorted(imu_history_, measurement);
-        pruneHistory(measurement.stamp);
-    }
-
-    enforceCapacity();
+  processed_history_.clear();
 }
 
 // -----------------------------------------------------------------------------
@@ -81,67 +60,13 @@ MeasurementHandler::pop()
     return measurement;
 }
 
-template <typename T>
-std::optional<T> MeasurementHandler::popOfType()
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto it = measurement_queue_.begin();
-         it != measurement_queue_.end();
-         ++it)
-    {
-        if (std::holds_alternative<T>(it->measurement))
-        {
-            T measurement = std::get<T>(it->measurement);
-            measurement_queue_.erase(it);
-            return measurement;
-        }
-    }
-
-    return std::nullopt;
-}
-
-template <typename T>
-std::optional<T> MeasurementHandler::peekOfType() const
-{
-  for (const auto& measurement : measurement_queue_)
-  {
-    if (std::holds_alternative<T>(measurement.measurement))
-      return std::get<T>(measurement.measurement);
-  }
-
-  return std::nullopt;
-}
-
-template <typename T>
-std::vector<T> MeasurementHandler::peekNOfType(std::size_t n) const
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    std::vector<T> result;
-    result.reserve(n);
-
-    for (const auto& queued : measurement_queue_)
-    {
-        if (const auto* measurement = std::get_if<T>(&queued.measurement))
-        {
-            result.push_back(*measurement);
-
-            if (result.size() >= n)
-                break;
-        }
-    }
-
-    return result;
-}
-
 void MeasurementHandler::insertMeasurement(
     const QueuedMeasurement& measurement)
 {
-  const double stamp = stamp(measurement);
+  const double stamp = getStamp(measurement);
 
   if (measurement_queue_.empty() ||
-      stamp >= stamp(measurement_queue_.back()))
+      stamp >= getStamp(measurement_queue_.back()))
   {
     measurement_queue_.push_back(measurement);
     return;
@@ -152,7 +77,7 @@ void MeasurementHandler::insertMeasurement(
       measurement_queue_.end(),
       stamp,
       [](double t, const QueuedMeasurement& m) {
-        return t < stamp(m);
+        return t < getStamp(m);
       });
 
   measurement_queue_.insert(it, measurement);
@@ -164,30 +89,49 @@ bool MeasurementHandler::hasMeasurements() const
   return !measurement_queue_.empty();
 }
 
-double MeasurementHandler::lateststamp() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  if (measurement_queue_.empty())
-    return -1.0;
-
-  return stamp(measurement_queue_.back());
-}
-
-double MeasurementHandler::nextstamp() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  if (measurement_queue_.empty())
-    return -1.0;
-
-  return stamp(measurement_queue_.front());
-}
-
-std::size_t MeasurementHandler::measurementsQueued() const
+std::size_t MeasurementHandler::queuedCount() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return measurement_queue_.size();
+}
+
+void MeasurementHandler::markProcessed(
+    const QueuedMeasurement& measurement)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    processed_history_.push_back(measurement);
+}
+
+std::vector<QueuedMeasurement>
+MeasurementHandler::processedBetween(
+    double t0,
+    double t1) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<QueuedMeasurement> result;
+
+    for (const auto& measurement : processed_history_)
+    {
+        const double t = getStamp(measurement);
+
+        if (t > t0 && t <= t1)
+            result.push_back(measurement);
+    }
+
+    return result;
+}
+
+void MeasurementHandler::pruneProcessedHistory(double t_min)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    while (!processed_history_.empty() &&
+           getStamp(processed_history_.front()) < t_min)
+    {
+        processed_history_.pop_front();
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -274,7 +218,7 @@ void MeasurementHandler::pruneOlderThan(double t_min)
   std::lock_guard<std::mutex> lock(mutex_);
 
   while (!measurement_queue_.empty() &&
-         stamp(measurement_queue_.front()) < t_min)
+         getStamp(measurement_queue_.front()) < t_min)
   {
     measurement_queue_.pop_front();
   }
@@ -296,29 +240,6 @@ void MeasurementHandler::pruneOlderThan(double t_min)
 // Private helpers
 // -----------------------------------------------------------------------------
 
-template <typename T>
-void MeasurementHandler::insertSorted(
-    std::deque<T>& buffer,
-    const T& sample)
-{
-  if (buffer.empty() ||
-      sample.stamp >= buffer.back().stamp)
-  {
-    buffer.push_back(sample);
-    return;
-  }
-
-  auto it = std::upper_bound(
-      buffer.begin(),
-      buffer.end(),
-      sample.stamp,
-      [](double stamp, const T& element) {
-        return stamp < element.stamp;
-      });
-
-  buffer.insert(it, sample);
-}
-
 void MeasurementHandler::enforceCapacity()
 {
   while (measurement_queue_.size() >
@@ -338,6 +259,12 @@ void MeasurementHandler::enforceCapacity()
   {
     state_history_.pop_front();
   }
+
+  while (processed_history_.size() >
+        options_.processed_capacity)
+  {
+    processed_history_.pop_front();
+  }
 }
 
 void MeasurementHandler::pruneHistory(double t_newest)
@@ -356,9 +283,15 @@ void MeasurementHandler::pruneHistory(double t_newest)
   {
     state_history_.pop_front();
   }
+
+  while (!processed_history_.empty() && 
+        processed_history_.front().stamp < t_min)
+  {
+    processed_history_.pop_front();
+  }
 }
 
-double MeasurementHandler::stamp(const QueuedMeasurement& measurement)
+double MeasurementHandler::getStamp(const QueuedMeasurement& measurement)
 {
   return std::visit(
       [](const auto& m) -> double {

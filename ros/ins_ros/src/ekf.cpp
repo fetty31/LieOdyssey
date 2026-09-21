@@ -2,7 +2,7 @@
 
 using namespace ins_ros::iESEKF;
 
-void ins_ros::iESEKF::group_to_state(const Group& g, const double& /*time*/, ins_ros::State& state)
+void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
 {
 	iESEKF::Bundle X = g.impl(); 
 

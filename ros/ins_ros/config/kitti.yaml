@@ -26,10 +26,10 @@ ins_ros_node:
         tolerance: 1.e-5
 
       rate: 100.0
-      history_window: 50.0
+      history_window: 5.0
       buffer:
         imu_capacity: 2000
-        aiding_capacity: 200
+        aiding_capacity: 20000
 
       process_noise:
         gyro: 6.01e-4
@@ -94,7 +94,7 @@ ins_ros_node:
           z: 0.93
 
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /lio_ros/state
 

@@ -124,12 +124,12 @@ public:
         return orientation_;
     }
 
-    const double stamp() const
+    double stamp() const
     {
         return stamp_;
     }
 
-    std::size samples() const
+    std::size_t samples() const
     {
         return sample_count_;
     }

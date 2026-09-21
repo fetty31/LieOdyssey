@@ -101,6 +101,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // --- Fixed-frequency estimation loop ---
         void estimation_timer_callback();
 
+        bool propagateTo(double t);
+
+        void processMeasurement(const iESEKF::IMUmeas& imu);
         void processMeasurement(const measurements::StampedGps& gps);
         void processMeasurement(const measurements::StampedOdom& odom);
         void processMeasurement(const measurements::StampedWheel& wheel);
@@ -113,14 +116,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void process_wheel(const measurements::StampedWheel& wheel);
         void process_mag(const measurements::StampedMag& mag);
         void process_baro(const measurements::StampedBaro& baro);
+        void process_yaw(const measurements::StampedYaw& yaw);
+        // void process_relative_odom(const measurements::StampedOdom& odom);
 
-        // void process_relative_odom_at(double filter_time);
-
-        void refresh_state_from_filter(double stamp);
-
-        // GPS latency handling: rewind to snapshot, update, re-propagate IMU.
-        // bool apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time);
-        void apply_gps_direct(const measurements::StampedGps& gps);
+        void refresh_state_from_filter();
 
         bool try_initialize_orientation();
 

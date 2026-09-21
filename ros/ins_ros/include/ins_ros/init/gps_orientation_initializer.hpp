@@ -147,25 +147,34 @@ public:
         return heading_;
     }
 
-    double velocity() const
+    Eigen::Vector2d velocity() const
     {
-        if(path_segment_.size() < 2)
-            return 0.0;
-        
-        if(last_dt_ <= 0.0)
-            return 0.0;
-
-        const Eigen::Vector2d forward =
-            Eigen::Rotation2Dd(heading_) * Eigen::Vector2d::UnitX();
+        if ((path_segment_.size() < 2) || (last_dt_ <= 0.0))
+            return Eigen::Vector2d::Zero();
 
         const auto& p1 = path_segment_.back();
-        const auto& p0 = path_segment_[path_segment_.size()-2];
+        const auto& p0 = path_segment_[path_segment_.size() - 2];
+
         const Eigen::Vector2d delta = p1 - p0;
 
-        return delta.dot(forward) / delta_time;
+        return delta / last_dt_;
     }
 
-    const double stamp() const 
+    Eigen::Vector2d velocityBody() const
+    {
+        if ((path_segment_.size() < 2) || (last_dt_ <= 0.0))
+            return Eigen::Vector2d::Zero();
+
+        const auto& p1 = path_segment_.back();
+        const auto& p0 = path_segment_[path_segment_.size() - 2];
+
+        const Eigen::Vector2d delta = p1 - p0;
+        const Eigen::Vector2d velocity_world = delta / last_dt_;
+
+        return Eigen::Rotation2Dd(-heading_) * velocity_world;
+    }
+
+    double stamp() const 
     {
         return last_time_;
     }

@@ -19,7 +19,7 @@ void ins_ros::State::progress(double t) {
 
     group.plus(dx * ins_ros::iESEKF::Scalar(dt));
 
-    ins_ros::iESEKF::group_to_state(group, t, *this);
+    ins_ros::iESEKF::group_to_state(group, *this);
 }   
 
 ins_ros::State::Isometry ins_ros::State::get_transform() const {

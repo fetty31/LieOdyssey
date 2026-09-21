@@ -858,56 +858,56 @@ void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
     /////////////////////////////////        ESTIMATION TIMER              /////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
 
-void INSEstimator::estimation_timer_callback()
-{
-    // Gate 1: ENU frame must exist if GPS is enabled.
-    if (!gps_topic_.empty() && !enu_converter_.initialized())
-    {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-            "Local ENU frame not initialized. Dropping buffered IMU.");
-        return;
-    }
+// void INSEstimator::estimation_timer_callback()
+// {
+//     // Gate 1: ENU frame must exist if GPS is enabled.
+//     if (!gps_topic_.empty() && !enu_converter_.initialized())
+//     {
+//         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+//             "Local ENU frame not initialized. Dropping buffered IMU.");
+//         return;
+//     }
 
-    if (!filter_time_initialized_) return;
+//     if (!filter_time_initialized_) return;
 
-    // Gate 2: orientation must be initialized before filtering.
-    if (!orientation_initialized_)
-    {
-        if (!try_initialize_orientation())
-        {
-            return;
-        }
-        filter_time_ = state_.time;
-        meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
-        refresh_state_from_filter(filter_time_);
-        return;
-    }
+//     // Gate 2: orientation must be initialized before filtering.
+//     if (!orientation_initialized_)
+//     {
+//         if (!try_initialize_orientation())
+//         {
+//             return;
+//         }
+//         filter_time_ = state_.time;
+//         meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
+//         refresh_state_from_filter(filter_time_);
+//         return;
+//     }
 
-    const double t_target = meas_handler_.latestImuStamp();
-    if (t_target < 0.0) return;
-    if (t_target <= filter_time_) return;
+//     const double t_target = meas_handler_.latestImuStamp();
+//     if (t_target < 0.0) return;
+//     if (t_target <= filter_time_) return;
 
-    // Predict with all new IMU up to the target stamp.
-    process_imu_up_to(t_target);
-    const double filter_time = filter_time_;
+//     // Predict with all new IMU up to the target stamp.
+//     process_imu_up_to(t_target);
+//     const double filter_time = filter_time_;
 
-    // Update with synchronized aiding measurements.
-    process_gps_at(filter_time);
-    // process_odom_at(filter_time);
-    process_relative_odom_at(filter_time);
-    process_wheel_at(filter_time);
-    process_mag_at(filter_time);
-    process_baro_at(filter_time);
-    process_yaw_at(filter_time);
+//     // Update with synchronized aiding measurements.
+//     process_gps_at(filter_time);
+//     // process_odom_at(filter_time);
+//     process_relative_odom_at(filter_time);
+//     process_wheel_at(filter_time);
+//     process_mag_at(filter_time);
+//     process_baro_at(filter_time);
+//     process_yaw_at(filter_time);
 
-    // Publish current belief.
-    publish_odom();
-    publish_pose();
-    if (publish_tf_) broadcast_tf(state_);
+//     // Publish current belief.
+//     publish_odom();
+//     publish_pose();
+//     if (publish_tf_) broadcast_tf(state_);
 
-    // Keep history bounded.
-    meas_handler_.pruneOlderThan(filter_time - history_window_s_);
-}
+//     // Keep history bounded.
+//     meas_handler_.pruneOlderThan(filter_time - history_window_s_);
+// }
 
 void INSEstimator::estimation_timer_callback()
 {
@@ -920,10 +920,11 @@ void INSEstimator::estimation_timer_callback()
         return;
     }
 
+    // Gate 2: ensure filter time reference is set
     if (!filter_time_initialized_)
         return;
 
-    // Gate 2: orientation must be initialized before filtering.
+    // Gate 3: orientation must be initialized before filtering.
     if (!orientation_initialized_)
     {
         if (!try_initialize_orientation())
@@ -936,33 +937,49 @@ void INSEstimator::estimation_timer_callback()
             filter_.getState(),
             filter_.getCovariance());
 
-        refresh_state_from_filter(filter_time_);
+        refresh_state_from_filter();
         return;
     }
 
     // Process measurements in chronological order.
     while (meas_handler_.hasMeasurements())
     {
+        RCLCPP_DEBUG(
+            get_logger(),
+            "Queue: %zu total | IMU: %zu | GPS: %zu | ODOM: %zu | "
+            "WHEEL: %zu | MAG: %zu | BARO: %zu | YAW: %zu",
+            meas_handler_.queuedCount(),
+            meas_handler_.queuedCountOfType<iESEKF::IMUmeas>(),
+            meas_handler_.queuedCountOfType<measurements::StampedGps>(),
+            meas_handler_.queuedCountOfType<measurements::StampedOdom>(),
+            meas_handler_.queuedCountOfType<measurements::StampedWheel>(),
+            meas_handler_.queuedCountOfType<measurements::StampedMag>(),
+            meas_handler_.queuedCountOfType<measurements::StampedBaro>(),
+            meas_handler_.queuedCountOfType<measurements::StampedYaw>());
+
         const auto next = meas_handler_.peek();
         if (!next)
             break;
 
-        const double t = measurements::MeasurementHandler::stamp(*next);
+        const double t = measurements::MeasurementHandler::getStamp(*next);
+
+        RCLCPP_DEBUG(get_logger(), "Measurement processing at time: %.7f"
+                                    " (filter time %.7f)", 
+                                    t, filter_time_);
 
         // Ignore measurements that are already in the past.
-        // These should normally be handled by the OOSM/rewind logic
-        // if late measurements are expected.
-        if (t < filter_time_)
-        {
-            RCLCPP_WARN_THROTTLE(
-                get_logger(), *get_clock(), 5000,
-                "Dropping stale measurement at %.6f "
-                "(filter time %.6f)",
-                t, filter_time_);
+        // To-Do: handle late measurements by the OOSM/rewind logic
+        // if (t < filter_time_)
+        // {
+        //     RCLCPP_WARN(
+        //         get_logger(),
+        //         "Dropping stale measurement at %.6f "
+        //         "(filter time %.6f)",
+        //         t, filter_time_);
 
-            meas_handler_.pop();
-            continue;
-        }
+        //     meas_handler_.pop();
+        //     continue;
+        // }
 
         auto measurement = meas_handler_.pop();
         if (!measurement)
@@ -990,19 +1007,21 @@ void INSEstimator::estimation_timer_callback()
 
 void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
 {
+    RCLCPP_DEBUG(get_logger(), "Propagating IMU");
+
     if (imu.stamp <= filter_time_)
         return;
 
-    filter.predict(imu);
+    filter_.predict(imu);
 
-    filter_time_ = imu.stamp;
+    RCLCPP_DEBUG(get_logger(), "Filter predict called");
+
+    refresh_state_from_filter();
 
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time_);
 }
 
 bool INSEstimator::propagateTo(double t)
@@ -1032,7 +1051,7 @@ bool INSEstimator::propagateTo(double t)
             continue;
         }
 
-        filter.predict(imu);
+        filter_.predict(imu);
 
         filter_time_ = imu.stamp;
     }
@@ -1042,23 +1061,27 @@ bool INSEstimator::propagateTo(double t)
 
 void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
 {
-    if (gps.stamp < filter_time_)
-        return;
+    RCLCPP_DEBUG(get_logger(), "Process GPS");
 
-    if (gps.stamp > filter_time_)
-    {
-        if (!propagateTo(gps.stamp))
-            return;
-    }
+    // if (gps.stamp < filter_time_)
+    //     return;
 
-    apply_gps_direct(gps);
+    // if (gps.stamp > filter_time_)
+    // {
+    //     if (!propagateTo(gps.stamp))
+    //         return;
+    // }
+
+    RCLCPP_DEBUG(get_logger(), "Updating with GPS");
+
+    process_gps(gps);
+
+    refresh_state_from_filter();
 
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time_);
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
@@ -1071,12 +1094,12 @@ void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
 
     process_odom(odom);
 
+    refresh_state_from_filter();
+
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time_);
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
@@ -1089,12 +1112,12 @@ void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
 
     process_wheel(wheel);
 
+    refresh_state_from_filter();
+
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time_);
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
@@ -1107,12 +1130,12 @@ void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
 
     process_mag(mag);
 
+    refresh_state_from_filter();
+
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time);
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
@@ -1125,80 +1148,37 @@ void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
 
     process_baro(baro);
 
+    refresh_state_from_filter();
+
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time);
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
 {
+    RCLCPP_DEBUG(get_logger(), "Process Yaw");
+
     if (yaw.stamp > filter_time_)
     {
         if (!propagateTo(yaw.stamp))
             return;
     }
 
+    RCLCPP_DEBUG(get_logger(), "Updating with Yaw");
+
     process_yaw(yaw);
+
+    refresh_state_from_filter();
 
     meas_handler_.pushStateSnapshot(
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
-
-    refresh_state_from_filter(filter_time);
 }
 
-// bool INSEstimator::apply_gps_with_rewind(const measurements::StampedGps& gps, double filter_time)
-// {
-//     auto snap = meas_handler_.snapshotAt(gps.stamp);
-//     if (!snap)
-//     {
-//         RCLCPP_WARN(get_logger(), "No state snapshot for GPS rewind at %.6f; applying direct update.", gps.stamp);
-//         return false;
-//     }
-//     auto imus = meas_handler_.imuBetween(gps.stamp, filter_time);
-//     if (imus.empty())
-//     {
-//         RCLCPP_DEBUG(get_logger(), "No IMU between GPS stamp and filter time; applying direct update.");
-//         return false;
-//     }
-
-//     RCLCPP_DEBUG(get_logger(), "GPS delayed by %.3f s: rewind to %.6f and re-propagate %zu IMU.",
-//         filter_time - gps.stamp, gps.stamp, imus.size());
-
-//     // Save current belief.
-//     const auto X_cur = filter_.getState();
-//     const auto P_cur = filter_.getCovariance();
-//     (void)X_cur; (void)P_cur;  // kept for future re-application of in-window aiding
-
-//     // Rewind, update at measurement time, then re-propagate (past -> future recovery).
-//     filter_.setState(snap->state);
-//     filter_.setCovariance(snap->covariance);
-
-//     filter_.update<
-//         iESEKF::gps::GPSMeasurement,
-//         iESEKF::Measurement,
-//         iESEKF::HMat>(gps.meas, gps.R, gps.R_inv, ins_ros::iESEKF::gps::H_fun);
-
-//     meas_handler_.truncateSnapshotsAfter(gps.stamp);
-//     meas_handler_.pushStateSnapshot(gps.stamp, filter_.getState(), filter_.getCovariance());
-
-//     for (const auto& imu : imus)
-//     {
-//         if (imu.dt <= 0.0 || imu.dt >= 0.1) continue;
-//         filter_.predict(imu);
-//         meas_handler_.pushStateSnapshot(imu.stamp, filter_.getState(), filter_.getCovariance());
-//     }
-
-//     refresh_state_from_filter(filter_time);
-//     print_state("After delayed GPS update + re-propagation", state_);
-//     return true;
-// }
-
-void INSEstimator::apply_gps_direct(const measurements::StampedGps& gps)
+void INSEstimator::process_gps(const measurements::StampedGps& gps)
 {
     filter_.update<
         iESEKF::gps::GPSMeasurement,
@@ -1298,9 +1278,10 @@ void INSEstimator::process_yaw(const measurements::StampedYaw& yaw)
         yaw.yaw, yaw.R, yaw.R_inv, ins_ros::iESEKF::yaw::H_fun);
 }
 
-void INSEstimator::refresh_state_from_filter(double stamp)
+void INSEstimator::refresh_state_from_filter()
 {
-    iESEKF::group_to_state(filter_.getState(), stamp, state_);
+    iESEKF::group_to_state(filter_.getState(), state_);
+    filter_time_ = state_.time;
 }
 
 bool INSEstimator::try_initialize_orientation()
@@ -1424,11 +1405,11 @@ void INSEstimator::initialize_orientation()
         state_.v.x(),
         state_.v.y(),
         state_.v.z(),
-        p_antenna_enu.x(),
-        p_antenna_enu.y(),
-        p_antenna_enu.z(),
+        p_init_enu.x(),
+        p_init_enu.y(),
+        p_init_enu.z(),
         t_antenna,
-        t_ref);
+        state_.time);
 }
 
 
@@ -1471,7 +1452,7 @@ void INSEstimator::handleTimeReset(double t)
     filter_time_ = 0.0;
 
     // Correct time base of backend filter
-    iESEKF::group_to_state(filter_.getState(), filter_time_, state_);
+    iESEKF::group_to_state(filter_.getState(), state_);
     state_.time = filter_time_;
     setState();
 

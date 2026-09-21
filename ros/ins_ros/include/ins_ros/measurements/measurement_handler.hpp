@@ -54,6 +54,9 @@ public:
     // Maximum number of state snapshots.
     std::size_t state_capacity = 10000;
 
+    // Maximum number of processed measurements saved for rewind
+    std::size_t processed_capacity = 500;
+
     // Amount of history retained for rewind/repropagation.
     double history_window_s = 10.0;
   };
@@ -74,8 +77,26 @@ public:
   // Push measurements
   // ---------------------------------------------------------------------------
 
+  /**
+   * @brief Add measurement to the buffer.
+   */
   template <typename T>
-  void push(const T& measurement);
+  void push(const T& measurement)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    QueuedMeasurement queued{Measurement{measurement}};
+
+    insertMeasurement(queued);
+
+    if constexpr (std::is_same_v<T, iESEKF::IMUmeas>)
+    {
+        insertSorted(imu_history_, measurement);
+        pruneHistory(measurement.stamp);
+    }
+
+    enforceCapacity();
+  }   
 
   // ---------------------------------------------------------------------------
   // Global chronological measurement queue
@@ -91,7 +112,16 @@ public:
    * type without consuming it.
    */
   template <typename T>
-  std::optional<T> peekOfType() const;
+  std::optional<T> peekOfType() const
+  {
+    for (const auto& measurement : measurement_queue_)
+    {
+    if (std::holds_alternative<T>(measurement.measurement))
+        return std::get<T>(measurement.measurement);
+    }
+
+    return std::nullopt;
+  }
 
   /**
    * @brief Return a vector of n unprocessed measurements of a specific
@@ -101,7 +131,26 @@ public:
    * the number of measurements present, that is n is a limit size condition
    */
   template <typename T>
-  std::vector<T> peekNOfType(std::size_t n) const;
+  std::vector<T> peekNOfType(std::size_t n) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<T> result;
+    result.reserve(n);
+
+    for (const auto& queued : measurement_queue_)
+    {
+        if (const auto* measurement = std::get_if<T>(&queued.measurement))
+        {
+            result.push_back(*measurement);
+
+            if (result.size() >= n)
+                break;
+        }
+    }
+
+    return result;
+  }
 
   /**
    * @brief Remove and return the oldest unprocessed measurement.
@@ -113,7 +162,24 @@ public:
    * of a specific type.
    */
   template <typename T>
-  std::optional<T> popOfType();
+  std::optional<T> popOfType()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (auto it = measurement_queue_.begin();
+        it != measurement_queue_.end();
+        ++it)
+    {
+        if (std::holds_alternative<T>(it->measurement))
+        {
+            T measurement = std::get<T>(it->measurement);
+            measurement_queue_.erase(it);
+            return measurement;
+        }
+    }
+
+    return std::nullopt;
+  }
 
   /**
    * @brief Check whether there are unprocessed measurements.
@@ -121,23 +187,46 @@ public:
   bool hasMeasurements() const;
 
   /**
-   * @brief Timestamp of the oldest queued measurement.
-   *
-   * Returns -1.0 if the queue is empty.
-   */
-  double nextMeasurementStamp() const;
-
-  /**
-   * @brief Timestamp of the newest queued measurement.
-   *
-   * Returns -1.0 if the queue is empty.
-   */
-  double latestMeasurementStamp() const;
-
-  /**
    * @brief Number of measurements waiting for processing.
    */
-  std::size_t measurementsQueued() const;
+  std::size_t queuedCount() const;
+
+  /**
+   * @brief Number of measurements waiting for processing
+   * of a specific type.
+   */
+  template <typename T>
+  std::size_t queuedCountOfType() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    return static_cast<std::size_t>(
+      std::count_if(
+          measurement_queue_.begin(),
+          measurement_queue_.end(),
+          [](const QueuedMeasurement& queued) {
+            return std::holds_alternative<T>(queued.measurement);
+          }));
+  }
+
+  // --------------------------------------------------------------------------- 
+  // Processed measurements
+  // ---------------------------------------------------------------------------
+
+  /**
+  * @brief Store a measurement after it has been processed.
+  */
+  void markProcessed(const QueuedMeasurement& measurement);
+
+  /**
+  * @brief Return all processed measurements in (t0, t1].
+  */
+  std::vector<QueuedMeasurement> processedBetween(double t0, double t1) const;  
+
+  /**
+  * @brief Remove processed measurements older than t_min.
+  */
+  void pruneProcessedHistory(double t_min);
 
   // ---------------------------------------------------------------------------
   // IMU history
@@ -190,7 +279,7 @@ public:
   *
   * Implemented using std::visit over the Measurement variant.
   */
-  static double stamp(
+  static double getStamp(
       const QueuedMeasurement& measurement);
 
 private:
@@ -212,7 +301,25 @@ private:
   template <typename T>
   static void insertSorted(
       std::deque<T>& buffer,
-      const T& sample);
+      const T& sample)
+  {
+    if (buffer.empty() ||
+        sample.stamp >= buffer.back().stamp)
+    {
+    buffer.push_back(sample);
+    return;
+    }
+
+    auto it = std::upper_bound(
+        buffer.begin(),
+        buffer.end(),
+        sample.stamp,
+        [](double stamp, const T& element) {
+        return stamp < element.stamp;
+        });
+
+    buffer.insert(it, sample);
+  }      
 
   // ---------------------------------------------------------------------------
   // Capacity/history
@@ -260,6 +367,11 @@ private:
   std::deque<StateSnapshot> state_history_;
 
   /**
+   * @brief Processed sensor measurements by the filter (used for rewind)
+   */
+  std::deque<QueuedMeasurement> processed_history_;
+
+  /**
    * @brief Protects all queues and configuration.
    *
    * Mutable so const query methods can lock the mutex.
@@ -268,54 +380,3 @@ private:
 };
 
 }  // namespace ins_ros::measurements
-
-class MeasurementHandler
-{
-public:
-
-    template <typename T>
-    void push(const T& measurement);
-
-    std::optional<QueuedMeasurement> peek() const;
-
-    std::optional<QueuedMeasurement> pop();
-
-    bool hasMeasurements() const;
-
-    double nextMeasurementStamp() const;
-
-    double latestMeasurementStamp() const;
-
-    std::size_t measurementsQueued() const;
-
-    // Historical data
-    std::vector<iESEKF::IMUmeas>
-    imuBetween(double t0, double t1) const;
-
-    void pushStateSnapshot(
-        double stamp,
-        const iESEKF::Group& state,
-        const iESEKF::MatDoF& covariance);
-
-    std::optional<StateSnapshot>
-    snapshotAt(double t) const;
-
-private:
-
-    template <typename T>
-    void insertSorted(std::deque<T>& buffer, const T& sample);
-
-    void insertMeasurement(const QueuedMeasurement& measurement);
-
-    static double stamp(const QueuedMeasurement& measurement);
-
-    std::deque<QueuedMeasurement> measurement_queue_;
-
-    std::deque<iESEKF::IMUmeas> imu_history_;
-
-    std::deque<StateSnapshot> state_history_;
-
-    Options options_;
-
-    mutable std::mutex mutex_;
-};
