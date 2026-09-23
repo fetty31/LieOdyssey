@@ -7,8 +7,8 @@ ins_ros_node:
     # General
     # ============================================================
     frames:
-      world: ona2/odom
-      body: ona2/base_footprint
+      world: odom
+      body: base_link
 
     tf:
       publish: true
@@ -42,18 +42,17 @@ ins_ros_node:
     # Measurement synchronization / latency handling
     sync:
       gps:
-        rewind_threshold: 0.05  # delay above this triggers rewind + re-propagation
-        max_age: 2.0            # older GPS is dropped as stale
+        tolerance: 0.005
       odom:
-        tolerance: 0.05
+        tolerance: 0.005
       wheel_odom:
-        tolerance: 0.05
+        tolerance: 0.005
       mag:
-        tolerance: 0.05
+        tolerance: 0.005
       baro:
-        tolerance: 0.05
+        tolerance: 0.005
       yaw:
-        tolerance: 0.10
+        tolerance: 0.005
       future_tolerance: 0.02
 
     # ============================================================
@@ -64,7 +63,7 @@ ins_ros_node:
       imu:
         enabled: true
 
-        topic: /ona2/sensors/imu_front/imu_uncalib
+        topic: /input/imu
 
         estimate_orientation: true  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
         estimate_bias: true         # estimate IMU bias (gyro + accel) from IMU measurements
@@ -99,7 +98,7 @@ ins_ros_node:
       odometry:
         enabled: false
 
-        topic: /fast_limo/state
+        topic: /vio/odom
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
           pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)

@@ -100,7 +100,20 @@ void MeasurementHandler::markProcessed(
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    processed_history_.push_back(measurement);
+    // Normally measurements arrive chronologically, so this is just
+    // a push_back. OOSM insertion is handled by sorted insertion.
+    const double stamp = getStamp(measurement);
+
+    auto it = std::upper_bound(
+        processed_history_.begin(),
+        processed_history_.end(),
+        stamp,
+        [](double t, const QueuedMeasurement& q)
+        {
+            return t < getStamp(q);
+        });
+
+    processed_history_.insert(it, measurement);
 }
 
 std::vector<QueuedMeasurement>
@@ -116,8 +129,13 @@ MeasurementHandler::processedBetween(
     {
         const double t = getStamp(measurement);
 
-        if (t > t0 && t <= t1)
-            result.push_back(measurement);
+        if (t <= t0)
+            continue;
+
+        if (t > t1)
+            break;
+
+        result.push_back(measurement);
     }
 
     return result;
@@ -132,6 +150,26 @@ void MeasurementHandler::pruneProcessedHistory(double t_min)
     {
         processed_history_.pop_front();
     }
+}
+
+// -----------------------------------------------------------------------------
+// Odom utils
+// -----------------------------------------------------------------------------
+
+std::optional<StampedOdom>
+MeasurementHandler::peekLatestProcessedOdom() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (auto it = processed_history_.rbegin();
+         it != processed_history_.rend();
+         ++it)
+    {
+        if (std::holds_alternative<StampedOdom>(it->measurement))
+            return std::get<StampedOdom>(it->measurement);
+    }
+
+    return std::nullopt;
 }
 
 // -----------------------------------------------------------------------------
@@ -155,6 +193,63 @@ MeasurementHandler::imuBetween(double t0, double t1) const
   }
 
   return out;
+}
+
+std::optional<iESEKF::IMUmeas>
+MeasurementHandler::interpolateImuAt(double t) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (imu_history_.size() < 2)
+        return std::nullopt;
+
+    // Find the first sample strictly after t.
+    auto it = std::upper_bound(
+        imu_history_.begin(),
+        imu_history_.end(),
+        t,
+        [](double stamp, const iESEKF::IMUmeas& imu)
+        {
+            return stamp < imu.stamp;
+        });
+
+    // Need one sample before and one after t.
+    if (it == imu_history_.begin() ||
+        it == imu_history_.end())
+    {
+        return std::nullopt;
+    }
+
+    const auto& next = *it;
+    const auto& prev = *(it - 1);
+
+    const double dt_samples =
+        next.stamp - prev.stamp;
+
+    if (dt_samples <= 0.0)
+        return std::nullopt;
+
+    const double alpha =
+        (t - prev.stamp) / dt_samples;
+
+    iESEKF::IMUmeas interpolated;
+
+    interpolated.stamp = t;
+
+    interpolated.accel =
+        (1.0 - alpha) * prev.accel +
+        alpha * next.accel;
+
+    interpolated.gyro =
+        (1.0 - alpha) * prev.gyro +
+        alpha * next.gyro;
+
+    // dt is NOT the interpolation interval between the two
+    // measurements. It is the propagation interval represented
+    // by this synthesized sample. The caller will set this.
+    interpolated.dt = 0.0;
+
+    return interpolated;
 }
 
 // -----------------------------------------------------------------------------
@@ -207,6 +302,17 @@ MeasurementHandler::snapshotAt(double t_query) const
         best = state_history_.front();
 
     return best;
+}
+
+void MeasurementHandler::eraseStateHistoryAfter(double t)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    while (!state_history_.empty() &&
+           state_history_.back().stamp > t)
+    {
+        state_history_.pop_back();
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -285,7 +391,7 @@ void MeasurementHandler::pruneHistory(double t_newest)
   }
 
   while (!processed_history_.empty() && 
-        processed_history_.front().stamp < t_min)
+        getStamp(processed_history_.front()) < t_min)
   {
     processed_history_.pop_front();
   }

@@ -111,13 +111,15 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void processMeasurement(const measurements::StampedBaro& baro);
         void processMeasurement(const measurements::StampedYaw& yaw);
 
+        bool handleOOSM(const measurements::QueuedMeasurement& oosm);
+
         void process_gps(const measurements::StampedGps& gps);
         void process_odom(const measurements::StampedOdom& odom);
+        void process_relative_odom(const measurements::StampedOdom& odom);
         void process_wheel(const measurements::StampedWheel& wheel);
         void process_mag(const measurements::StampedMag& mag);
         void process_baro(const measurements::StampedBaro& baro);
         void process_yaw(const measurements::StampedYaw& yaw);
-        // void process_relative_odom(const measurements::StampedOdom& odom);
 
         void refresh_state_from_filter();
 
@@ -187,6 +189,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Extrinsics
         utils::FrameTransform imu_to_base_;
+        utils::FrameTransform wheel_to_base_;
         utils::FrameTransform lio_to_base_;
         utils::FrameTransform initial_enu_base_;
 
@@ -248,12 +251,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         double estimation_rate_{100.0};
         double history_window_s_{5.0};
         double gps_rewind_threshold_{0.05};
-        double gps_max_age_{2.0};
-        double sync_tolerance_odom_{0.05};
-        double sync_tolerance_wheel_{0.05};
-        double sync_tolerance_mag_{0.05};
-        double sync_tolerance_baro_{0.05};
-        double sync_tolerance_yaw_{0.10};
+        double sync_tolerance_gps_{0.005};
+        double sync_tolerance_odom_{0.005};
+        double sync_tolerance_wheel_{0.005};
+        double sync_tolerance_mag_{0.005};
+        double sync_tolerance_baro_{0.005};
+        double sync_tolerance_yaw_{0.005};
         double sync_future_tolerance_{0.02};
         std::size_t imu_buffer_capacity_{2000};
         std::size_t measurement_capacity_{1000};

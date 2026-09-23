@@ -12,6 +12,7 @@ INSEstimator::INSEstimator(const std::string& node_name)
               iESEKF::degeneracy_callback)
     , tf_buffer_(this->get_clock())
     , imu_to_base_(tf_buffer_, get_logger())
+    , wheel_to_base_(tf_buffer_, get_logger())
     , lio_to_base_(tf_buffer_, get_logger())
     , initial_enu_base_(tf_buffer_, get_logger())
     , lio_to_enu_(tf_buffer_, get_logger())
@@ -44,6 +45,7 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     // Frame transforms
     imu_to_base_.reset();
     lio_to_base_.reset();
+    wheel_to_base_.reset();
     initial_enu_base_.reset();
     lio_to_enu_.reset();
 
@@ -223,13 +225,12 @@ void INSEstimator::declare_parameters()
     declare_parameter<int>("filter.buffer.measurement_capacity", 200);
 
     // Synchronization / latency handling
-    declare_parameter<double>("sync.gps.rewind_threshold", 0.05);
-    declare_parameter<double>("sync.gps.max_age", 2.0);
-    declare_parameter<double>("sync.odom.tolerance", 0.05);
-    declare_parameter<double>("sync.wheel_odom.tolerance", 0.05);
-    declare_parameter<double>("sync.mag.tolerance", 0.05);
-    declare_parameter<double>("sync.baro.tolerance", 0.05);
-    declare_parameter<double>("sync.yaw.tolerance", 0.10);
+    declare_parameter<double>("sync.gps.tolerance", 0.005);
+    declare_parameter<double>("sync.odom.tolerance", 0.005);
+    declare_parameter<double>("sync.wheel_odom.tolerance", 0.005);
+    declare_parameter<double>("sync.mag.tolerance", 0.005);
+    declare_parameter<double>("sync.baro.tolerance", 0.005);
+    declare_parameter<double>("sync.yaw.tolerance", 0.005);
     declare_parameter<double>("sync.future_tolerance", 0.02);
 
     // IMU
@@ -324,8 +325,7 @@ void INSEstimator::load_parameters()
     imu_buffer_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.imu_capacity").as_int());
     measurement_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.measurement_capacity").as_int());
 
-    gps_rewind_threshold_ = get_parameter("sync.gps.rewind_threshold").as_double();
-    gps_max_age_ = get_parameter("sync.gps.max_age").as_double();
+    sync_tolerance_gps_ = get_parameter("sync.gps.tolerance").as_double();
     sync_tolerance_odom_ = get_parameter("sync.odom.tolerance").as_double();
     sync_tolerance_wheel_ = get_parameter("sync.wheel_odom.tolerance").as_double();
     sync_tolerance_mag_ = get_parameter("sync.mag.tolerance").as_double();
@@ -741,7 +741,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
                 get_logger(),
                 *get_clock(),
                 1000,
-                "Skipping POSE (LIO/VIO) measurement, missing ENU frame initialization.");
+                "Skipping ODOMETRY (LIO/VIO) measurement, missing ENU frame initialization.");
                 return;
             }
 
@@ -810,10 +810,23 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
 void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
 {
+    if (!wheel_to_base_.initialized())
+    {
+        if (!wheel_to_base_.initialize(msg.header.frame_id, body_frame_))
+            return;
+    }
+
+    Eigen::Vector3d wheel_odom;
+    wheel_odom(0) = msg.twist.linear.x;
+    wheel_odom(1) = msg.twist.linear.y;
+    wheel_odom(2) = 0.0;
+
+    auto base_odom = wheel_to_base_.transform(wheel_odom);
+
     iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
-    meas(0) = msg.twist.linear.x;
-    meas(1) = msg.twist.linear.y;
-    meas(2) = 0.0;
+    meas(0) = base_odom(0);
+    meas(1) = base_odom(1);
+    meas(2) = base_odom(2);
 
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
     Mat3 R_w = Mat3::Zero();
@@ -855,59 +868,8 @@ void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
 }
 
 /* //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /////////////////////////////////        ESTIMATION TIMER              /////////////////////////////////////////////////////////////
+    /////////////////////////////////        ESTIMATION MAIN LOOP          /////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// */
-
-// void INSEstimator::estimation_timer_callback()
-// {
-//     // Gate 1: ENU frame must exist if GPS is enabled.
-//     if (!gps_topic_.empty() && !enu_converter_.initialized())
-//     {
-//         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-//             "Local ENU frame not initialized. Dropping buffered IMU.");
-//         return;
-//     }
-
-//     if (!filter_time_initialized_) return;
-
-//     // Gate 2: orientation must be initialized before filtering.
-//     if (!orientation_initialized_)
-//     {
-//         if (!try_initialize_orientation())
-//         {
-//             return;
-//         }
-//         filter_time_ = state_.time;
-//         meas_handler_.pushStateSnapshot(filter_time_, filter_.getState(), filter_.getCovariance());
-//         refresh_state_from_filter(filter_time_);
-//         return;
-//     }
-
-//     const double t_target = meas_handler_.latestImuStamp();
-//     if (t_target < 0.0) return;
-//     if (t_target <= filter_time_) return;
-
-//     // Predict with all new IMU up to the target stamp.
-//     process_imu_up_to(t_target);
-//     const double filter_time = filter_time_;
-
-//     // Update with synchronized aiding measurements.
-//     process_gps_at(filter_time);
-//     // process_odom_at(filter_time);
-//     process_relative_odom_at(filter_time);
-//     process_wheel_at(filter_time);
-//     process_mag_at(filter_time);
-//     process_baro_at(filter_time);
-//     process_yaw_at(filter_time);
-
-//     // Publish current belief.
-//     publish_odom();
-//     publish_pose();
-//     if (publish_tf_) broadcast_tf(state_);
-
-//     // Keep history bounded.
-//     meas_handler_.pruneOlderThan(filter_time - history_window_s_);
-// }
 
 void INSEstimator::estimation_timer_callback()
 {
@@ -957,40 +919,56 @@ void INSEstimator::estimation_timer_callback()
             meas_handler_.queuedCountOfType<measurements::StampedBaro>(),
             meas_handler_.queuedCountOfType<measurements::StampedYaw>());
 
-        const auto next = meas_handler_.peek();
-        if (!next)
+        auto measurement = meas_handler_.pop();
+        if (!measurement)
             break;
 
-        const double t = measurements::MeasurementHandler::getStamp(*next);
+        const double t = measurements::MeasurementHandler::getStamp(*measurement);
 
         RCLCPP_DEBUG(get_logger(), "Measurement processing at time: %.7f"
                                     " (filter time %.7f)", 
                                     t, filter_time_);
 
-        // Ignore measurements that are already in the past.
-        // To-Do: handle late measurements by the OOSM/rewind logic
+        // OOSM: Out-Of-Sequence Measurement
         // if (t < filter_time_)
-        // {
-        //     RCLCPP_WARN(
-        //         get_logger(),
-        //         "Dropping stale measurement at %.6f "
-        //         "(filter time %.6f)",
-        //         t, filter_time_);
+        if (false)
+        {
+            RCLCPP_DEBUG(
+                get_logger(),
+                "Detected OOSM at %.7f, filter time %.7f",
+                t,
+                filter_time_);
 
-        //     meas_handler_.pop();
-        //     continue;
-        // }
+            const bool success = handleOOSM(*measurement);
+            
+            // The delayed measurement is now either incorporated or dropped.
+            if (!success)
+            {
+                RCLCPP_WARN(
+                    get_logger(),
+                    "OOSM processing failed for measurement at %.7f",
+                    t);
+            }else{
+                //
+                // handleOOSM() succeeded, so the delayed measurement is marked as processed
+                meas_handler_.markProcessed(*measurement);
 
-        auto measurement = meas_handler_.pop();
-        if (!measurement)
-            break;
+            }
 
+            continue;
+        }
+
+        // Normal chronological processing
         std::visit(
             [this](const auto& m)
             {
                 processMeasurement(m);
             },
-            measurement->measurement);
+            measurement->measurement
+        );
+
+        // Store it for potential future OOSM replay.
+        meas_handler_.markProcessed(*measurement);
     }
 
     // Publish current belief.
@@ -1014,8 +992,6 @@ void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
 
     filter_.predict(imu);
 
-    RCLCPP_DEBUG(get_logger(), "Filter predict called");
-
     refresh_state_from_filter();
 
     meas_handler_.pushStateSnapshot(
@@ -1026,53 +1002,109 @@ void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
 
 bool INSEstimator::propagateTo(double t)
 {
+    RCLCPP_DEBUG(
+        get_logger(),
+        "propagateTo %.7f from %.7f",
+        t,
+        filter_time_);
+
     if (t <= filter_time_)
         return true;
 
+    // Propagate through all complete IMU samples before t.
     const auto imu_samples =
         meas_handler_.imuBetween(filter_time_, t);
-
-    if (imu_samples.empty())
-        return false;
 
     for (const auto& imu : imu_samples)
     {
         if (imu.stamp <= filter_time_)
             continue;
-        
+
+        // Do not consume the sample if it is at/after the target.
+        // Its input will be interpolated below.
+        if (imu.stamp >= t)
+            break;
+
         if (imu.dt <= 0.0 || imu.dt >= 0.1)
         {
-            // First sample after init or time gap: advance the time base
-            // without integrating.
-            // if (imu.stamp > filter_time_)
-            // {
-            //     filter_time_ = imu.stamp;
-            // }
+            RCLCPP_WARN(
+                get_logger(),
+                "Skipping IMU at %.7f with invalid dt %.7f",
+                imu.stamp,
+                imu.dt);
+
             continue;
         }
 
+        RCLCPP_DEBUG(
+            get_logger(),
+            "Propagating complete IMU to %.7f",
+            imu.stamp);
+
         filter_.predict(imu);
 
-        filter_time_ = imu.stamp;
+        refresh_state_from_filter();
     }
 
-    return filter_time_ >= t;
+    // If we haven't reached t, create an interpolated IMU sample
+    //    exactly at t.
+    if (filter_time_ < t)
+    {
+        auto interpolated =
+            meas_handler_.interpolateImuAt(t);
+
+        if (!interpolated)
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Cannot propagate from %.7f to %.7f: "
+                "no IMU samples bracketing target time",
+                filter_time_,
+                t);
+
+            return false;
+        }
+
+        interpolated->dt = t - filter_time_;
+
+        if (interpolated->dt <= 0.0 ||
+            interpolated->dt >= 0.1)
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Invalid interpolated IMU dt %.7f",
+                interpolated->dt);
+
+            return false;
+        }
+
+        RCLCPP_DEBUG(
+            get_logger(),
+            "Propagating interpolated IMU to %.7f "
+            "(dt %.7f)",
+            t,
+            interpolated->dt);
+
+        filter_.predict(*interpolated);
+
+        refresh_state_from_filter();
+    }
+
+    return std::abs(filter_time_ - t) < 1e-9;
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
 {
-    RCLCPP_DEBUG(get_logger(), "Process GPS");
+    RCLCPP_DEBUG(get_logger(), "Updating with GPS: [%.3f, %.3f, %.3f]",
+                                gps.meas.position_enu.x(),
+                                gps.meas.position_enu.y(),
+                                gps.meas.position_enu.z());
 
-    // if (gps.stamp < filter_time_)
-    //     return;
-
-    // if (gps.stamp > filter_time_)
-    // {
-    //     if (!propagateTo(gps.stamp))
-    //         return;
-    // }
-
-    RCLCPP_DEBUG(get_logger(), "Updating with GPS");
+    if (gps.stamp > (filter_time_ + sync_tolerance_gps_))
+    {
+        if (!propagateTo(gps.stamp))
+            return;
+    }
 
     process_gps(gps);
 
@@ -1086,15 +1118,28 @@ void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
 
 void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
 {
-    if (odom.stamp > filter_time_)
+    RCLCPP_DEBUG(get_logger(), "Updating with FULL Odometry");
+
+    if (odom.stamp > (filter_time_ + sync_tolerance_odom_))
     {
         if (!propagateTo(odom.stamp))
             return;
     }
 
-    process_odom(odom);
+    print_state("Before odometry update", state_);
+
+    // If GPS active --> process relative odom in order to avoid frame alignment
+    if (!gps_topic_.empty()){
+        process_relative_odom(odom);
+    } 
+    else
+    {
+        process_odom(odom);
+    }
 
     refresh_state_from_filter();
+
+    print_state("After odometry update", state_);
 
     meas_handler_.pushStateSnapshot(
         filter_time_,
@@ -1104,7 +1149,12 @@ void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
 
 void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
 {
-    if (wheel.stamp > filter_time_)
+    RCLCPP_DEBUG(get_logger(), "Updating with Wheel Odom: [%.3f, %.3f]", 
+                    wheel.meas.x(), 
+                    wheel.meas.y()
+                );
+
+    if (wheel.stamp > (filter_time_ + sync_tolerance_wheel_))
     {
         if (!propagateTo(wheel.stamp))
             return;
@@ -1122,7 +1172,12 @@ void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
 
 void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
 {
-    if (mag.stamp > filter_time_)
+    RCLCPP_DEBUG(get_logger(), "Updating with Mag: [%.3f, %.3f, %.3f]", 
+                                mag.meas.x(),
+                                mag.meas.y(),
+                                mag.meas.z());
+
+    if (mag.stamp > (filter_time_ + sync_tolerance_mag_))
     {
         if (!propagateTo(mag.stamp))
             return;
@@ -1140,7 +1195,9 @@ void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
 
 void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
 {
-    if (baro.stamp > filter_time_)
+    RCLCPP_DEBUG(get_logger(), "Updating with Baro: %.3f", baro.pressure);
+
+    if (baro.stamp > (filter_time_ + sync_tolerance_baro_))
     {
         if (!propagateTo(baro.stamp))
             return;
@@ -1158,15 +1215,13 @@ void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
 
 void INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
 {
-    RCLCPP_DEBUG(get_logger(), "Process Yaw");
+    RCLCPP_DEBUG(get_logger(), "Updating with Yaw: %.3f", yaw.yaw);
 
-    if (yaw.stamp > filter_time_)
+    if (yaw.stamp > (filter_time_ + sync_tolerance_yaw_))
     {
         if (!propagateTo(yaw.stamp))
             return;
     }
-
-    RCLCPP_DEBUG(get_logger(), "Updating with Yaw");
 
     process_yaw(yaw);
 
@@ -1176,6 +1231,135 @@ void INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+}
+
+bool INSEstimator::handleOOSM(
+    const measurements::QueuedMeasurement& oosm)
+{
+    const double t_oosm =
+        measurements::MeasurementHandler::getStamp(oosm);
+
+    const double t_current = filter_time_;
+
+    RCLCPP_WARN(
+        get_logger(),
+        "Handling OOSM at %.6f, current filter time %.6f "
+        "(delay %.3f s)",
+        t_oosm,
+        t_current,
+        t_current - t_oosm);
+
+    // Make sure the delayed measurement is still inside
+    // the available fixed-lag history.
+    if (t_current - t_oosm > history_window_s_)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "OOSM is %.3f s old, exceeding history window %.3f s. "
+            "Dropping measurement.",
+            t_current - t_oosm,
+            history_window_s_);
+
+        return false;
+    }
+
+    // Find the latest state snapshot at or before the OOSM.
+    const auto snapshot = meas_handler_.snapshotAt(t_oosm);
+    if (!snapshot)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "No state snapshot available before OOSM at %.6f. "
+            "Dropping measurement.",
+            t_oosm);
+
+        return false;
+    }
+
+    const double t_rewind = snapshot->stamp;
+
+    RCLCPP_DEBUG(
+        get_logger(),
+        "Rewinding from %.6f to %.6f",
+        t_current,
+        t_rewind);
+
+    // Collect everything that needs to be replayed.
+    auto replay =
+        meas_handler_.processedBetween(t_rewind, t_current);
+
+    // Add the delayed measurement itself.
+    replay.push_back(oosm);
+
+    // Chronological ordering.
+    //
+    // stable_sort is intentional: if two measurements have exactly
+    // the same timestamp, preserve their existing relative order.
+    std::stable_sort(
+        replay.begin(),
+        replay.end(),
+        [](const auto& a, const auto& b)
+        {
+            return measurements::MeasurementHandler::getStamp(a) <
+                   measurements::MeasurementHandler::getStamp(b);
+        });
+
+    // Restore filter state/covariance.
+    iESEKF::group_to_state(snapshot->group, state_);
+    state_.time = t_rewind;
+    setState();
+    filter_.setCovariance(snapshot->covariance);
+
+    filter_time_ = state_.time;
+
+    // Delete the invalid state-history tail.
+    meas_handler_.eraseStateHistoryAfter(t_rewind);
+
+    // Replay everything chronologically.
+    for (const auto& queued : replay)
+    {
+        std::visit(
+            [this](const auto& measurement)
+            {
+                processMeasurement(measurement);
+            },
+            queued.measurement);
+    }
+
+    // Make sure we ended at the same time as before the rewind.
+    if (filter_time_ < t_current)
+    {
+        RCLCPP_DEBUG(
+            get_logger(),
+            "Replay ended at %.6f, original time was %.6f. "
+            "Propagating to original filter time.",
+            filter_time_,
+            t_current);
+
+        if (!propagateTo(t_current))
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Could not propagate replayed state back to %.6f",
+                t_current);
+
+            return false;
+        }
+
+        refresh_state_from_filter();
+
+        meas_handler_.pushStateSnapshot(
+            filter_time_,
+            filter_.getState(),
+            filter_.getCovariance());
+    }
+
+    RCLCPP_DEBUG(
+        get_logger(),
+        "OOSM replay completed. Filter time: %.6f",
+        filter_time_);
+
+    return true;
 }
 
 void INSEstimator::process_gps(const measurements::StampedGps& gps)
@@ -1192,67 +1376,54 @@ void INSEstimator::process_odom(const measurements::StampedOdom& odom)
         odom.group, odom.R, odom.R_inv, ins_ros::iESEKF::odom::H_fun);
 }
 
-// void INSEstimator::process_relative_odom_at(double filter_time)
-// {
-//     if (odom_topic_.empty()) return;
+void INSEstimator::process_relative_odom(const measurements::StampedOdom& odom)
+{
+    RCLCPP_DEBUG(
+        get_logger(),
+        "Process relative ODOMETRY at %.9f",
+        odom.stamp);
 
-//     RCLCPP_DEBUG(get_logger(), "ODOM buffer size: %li", meas_handler_.odomQueued());
+    // Previous processed odometry = reference.
+    auto ref_odom = meas_handler_.peekLatestProcessedOdom();
 
-//     // Get last received odom stamp
-//     auto last_odom = meas_handler_.peekLatestOdom();
-//     if (!last_odom){
-//         RCLCPP_WARN(get_logger(), "Could not find any odom measurement for relative odometry.");
-//         return;
-//     }
-//     const double last_odom_stamp = last_odom->stamp;
+    if (!ref_odom)
+    {
+        RCLCPP_DEBUG(
+            get_logger(),
+            "No previous processed odometry available.");
+        return;
+    }
 
-//     // Retrieve closest N odometry measurements
-//     std::size_t N = 10;
-//     auto odom_vec = meas_handler_.takeSyncNOdom(last_odom_stamp, N, sync_tolerance_odom_, sync_future_tolerance_);
-//     // auto odom_vec = meas_handler_.peekNewestOdom(N, sync_tolerance_odom_);
-//     if(odom_vec.size() != N){
-//         RCLCPP_WARN(get_logger(), "Could not find %li odometry references for relative odometry.", N);
-//         return;
-//     }
+    auto snapshot =
+        meas_handler_.snapshotAt(ref_odom->stamp);
 
-//     measurements::StampedOdom ref_odom = odom_vec[0];
-//     measurements::StampedOdom current_odom = odom_vec[N-1];
+    if (!snapshot)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "Could not find state snapshot at %.9f",
+            ref_odom->stamp);
+        return;
+    }
 
-//     RCLCPP_DEBUG(get_logger(), "STATE buffer size: %li", meas_handler_.stateQueued());
+    iESEKF::relative_odom::RelativeOdomMeasurement rel;
+    rel.X_ref = snapshot->group;
 
-//     // Get reference state -> closest to oldest odometry meas 
-//     auto snapshot = meas_handler_.snapshotAt(ref_odom.stamp);
-//     if (!snapshot){
-//         RCLCPP_WARN(get_logger(), "Could not find filter state reference for relative odometry.");
-//         return;
-//     }
+    rel.Y_ref = ref_odom->group;
+    rel.Y_cur = odom.group;
 
-//     RCLCPP_DEBUG(
-//         get_logger(),
-//         "Relative Odom: t_ref_odom=%.9f t_cur_odom=%.9f",
-//         ref_odom.stamp,
-//         current_odom.stamp);
+    rel.t_ref = ref_odom->stamp;
+    rel.t_cur = odom.stamp;
 
-//     RCLCPP_DEBUG(
-//         get_logger(),
-//         "Relative Odom: t_ref_state=%.9f t_now_state=%.9f",
-//         snapshot->stamp,
-//         state_.time);
-
-//     iESEKF::relative_odom::RelativeOdomMeasurement rel;
-//     rel.X_ref     = snapshot->state;
-//     rel.Y_ref     = ref_odom.group;
-//     rel.Y_cur     = current_odom.group;
-//     rel.t_ref     = ref_odom.stamp;
-//     rel.t_cur     = current_odom.stamp;
-
-//     print_state("Before relative odometry update", state_);
-//     filter_.update<iESEKF::relative_odom::RelativeOdomMeasurement, iESEKF::Measurement, iESEKF::HMat>(
-//         rel, current_odom.R, current_odom.R_inv, ins_ros::iESEKF::relative_odom::H_fun);
-//     refresh_state_from_filter(filter_time);
-//     meas_handler_.pushStateSnapshot(filter_time, filter_.getState(), filter_.getCovariance());
-//     print_state("After relative odometry update", state_);
-// }
+    filter_.update<
+        iESEKF::relative_odom::RelativeOdomMeasurement,
+        iESEKF::Measurement,
+        iESEKF::HMat>(
+        rel,
+        odom.R,
+        odom.R_inv,
+        ins_ros::iESEKF::relative_odom::H_fun);
+}
 
 void INSEstimator::process_wheel(const measurements::StampedWheel& wheel)
 {

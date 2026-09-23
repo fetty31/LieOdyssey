@@ -59,7 +59,7 @@ struct StampedYaw {
  */
 struct StateSnapshot {
   double stamp{-1.0};
-  iESEKF::Group state{};
+  iESEKF::Group group{};
   iESEKF::MatDoF covariance{iESEKF::MatDoF::Identity() * 1e-3};
 };
 

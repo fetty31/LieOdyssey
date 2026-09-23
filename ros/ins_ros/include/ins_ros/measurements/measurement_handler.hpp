@@ -229,6 +229,17 @@ public:
   void pruneProcessedHistory(double t_min);
 
   // ---------------------------------------------------------------------------
+  // Odom utils
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @brief Get last processed Odometry measurement 
+   * (used in relative odometry measurement)
+   *
+   */
+  std::optional<StampedOdom> peekLatestProcessedOdom() const;
+
+  // ---------------------------------------------------------------------------
   // IMU history
   // ---------------------------------------------------------------------------
 
@@ -237,8 +248,14 @@ public:
    *
    * Does not consume the IMU history.
    */
-  std::vector<iESEKF::IMUmeas>
-  imuBetween(double t0, double t1) const;
+  std::vector<iESEKF::IMUmeas> imuBetween(double t0, double t1) const;
+
+  /**
+   * @brief Interpolate IMU data to given t
+   *
+   * Does not consume the IMU history.
+   */
+  std::optional<iESEKF::IMUmeas> interpolateImuAt(double t) const;
 
   // ---------------------------------------------------------------------------
   // State history
@@ -262,6 +279,13 @@ public:
    */
   std::optional<StateSnapshot>
   snapshotAt(double t_query) const;
+
+  /**
+   * @brief Remove history states after rewind
+   *
+   * States with stamp > t are removed.
+   */
+  void eraseStateHistoryAfter(double t);
 
   // ---------------------------------------------------------------------------
   // History management
@@ -306,8 +330,8 @@ private:
     if (buffer.empty() ||
         sample.stamp >= buffer.back().stamp)
     {
-    buffer.push_back(sample);
-    return;
+      buffer.push_back(sample);
+      return;
     }
 
     auto it = std::upper_bound(
@@ -315,7 +339,7 @@ private:
         buffer.end(),
         sample.stamp,
         [](double stamp, const T& element) {
-        return stamp < element.stamp;
+          return stamp < element.stamp;
         });
 
     buffer.insert(it, sample);
