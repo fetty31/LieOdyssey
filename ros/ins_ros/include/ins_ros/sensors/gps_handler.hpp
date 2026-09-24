@@ -25,27 +25,23 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     // Measurement: position only (3D GPS fix in ENU)
     r = iESEKF::Measurement::Zero(3);
 
-    // Extract position & orientation estimate in world frame (ENU)
-    State::V3 p_hat = X_now.impl().subgroup<0>().translation();
-    auto R_hat = X_now.impl().subgroup<0>().quat().toRotationMatrix();
+    // Extract SGal3 estimate in world frame (ENU)
+    iESEKF::Bundle s = X_now.impl(); 
+	manif::SGal3<Scalar> SGal3_s = s.subgroup<0>();
 
-    State::V3 p_gps_hat = p_hat + R_hat * y.lever_arm;
+	// Compute prediction
+	Eigen::Matrix<Scalar, 3, manif::SGal3<Scalar>::DoF> J_act;
+    State::V3 p_gps_hat = SGal3_s.act(
+        y.lever_arm,
+        J_act
+    );
 
-    std::cout << "GPS PREDICTED: " << p_hat << std::endl;
-    std::cout << "GPS RECEIVED: " << y.position_enu << std::endl;
-    std::cout << "GPS LEVER ARM: " << y.lever_arm << std::endl;
-    
     // Residual in ENU frame
     r.segment<3>(0) = y.position_enu - p_gps_hat;
 
     // Jacobian
     H = iESEKF::HMat::Zero(3, DoF);
-
-    // dh/dp = Identity
-    H.block<3,3>(0, 0) = Eigen::Matrix<Scalar, 3, 3>::Identity(); 
-
-    // dh/dq = - skew(R_hat*lever_arm)
-    H.block<3,3>(0, 6) = -manif::skew(R_hat * y.lever_arm);
+    H.block<3, manif::SGal3<Scalar>::DoF>(0,0) = J_act;
 }
 
 } // namespace ins_ros::iESEKF::gps

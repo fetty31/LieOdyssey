@@ -9,6 +9,7 @@ def generate_launch_description():
 
     rviz_config = LaunchConfiguration('rviz')
     param_config = LaunchConfiguration('config')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     rviz_config_arg = DeclareLaunchArgument(
         'rviz',
@@ -26,13 +27,22 @@ def generate_launch_description():
         description = 'Path to yaml config'
     )
 
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='False',
+        description='Use simulation time'
+    )
+
     node = Node(
         package='ins_ros',
         namespace='',
         executable='ins_ros_node',
         name='ins_ros_node',
         output='screen',
-        parameters=[param_config],
+        parameters=[
+            param_config,
+            {'use_sim_time': use_sim_time}
+        ],
         arguments=[
             '--ros-args',
             '--log-level',
@@ -57,11 +67,11 @@ def generate_launch_description():
         ]],
         shell=True
     )
-
     
     return LaunchDescription([
         rviz_config_arg,
         param_config_arg,
+        use_sim_time_arg,
         node,
         rviz_conditioned
     ])

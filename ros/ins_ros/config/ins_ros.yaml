@@ -7,11 +7,16 @@ ins_ros_node:
     # General
     # ============================================================
     frames:
-      world: ona2/odom
-      body: ona2/base_footprint
+      world: odom
+      body: base_link
 
     tf:
-      publish: false
+      publish: true
+
+    # Timing: stamp incoming measurements at receive time instead of trusting
+    # msg headers (enable when sensor clocks are not synced with the PC clock)
+    timing:
+      use_receive_stamp: true
 
     # ============================================================
     # Filter
@@ -21,11 +26,34 @@ ins_ros_node:
         max: 5
         tolerance: 1.e-5
 
+      # Fixed-frequency estimation loop (callbacks only buffer, timer filters)
+      rate: 100.0
+      history_window: 5.0
+      buffer:
+        imu_capacity: 2000
+        aiding_capacity: 200
+
       process_noise:
         gyro: 0.015
         accel: 0.15
         gyro_bias: 1.54e-5
         accel_bias: 3.38e-4
+
+    # Measurement synchronization / latency handling
+    sync:
+      gps:
+        tolerance: 0.005
+      odom:
+        tolerance: 0.005
+      wheel_odom:
+        tolerance: 0.005
+      mag:
+        tolerance: 0.005
+      baro:
+        tolerance: 0.005
+      yaw:
+        tolerance: 0.005
+      future_tolerance: 0.02
 
     # ============================================================
     # Sensors
@@ -35,7 +63,7 @@ ins_ros_node:
       imu:
         enabled: true
 
-        topic: /ona2/sensors/imu_front/imu_uncalib
+        topic: /input/imu
 
         estimate_orientation: true  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
         estimate_bias: true         # estimate IMU bias (gyro + accel) from IMU measurements
@@ -63,14 +91,14 @@ ins_ros_node:
             z: 10.0
 
         lever_arm:
-          x: 0.4
+          x: -0.4
           y: 0.0
           z: 0.5
 
       odometry:
         enabled: false
 
-        topic: /fast_limo/state
+        topic: /vio/odom
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
           pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)

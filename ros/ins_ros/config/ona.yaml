@@ -7,8 +7,8 @@ ins_ros_node:
     # General
     # ============================================================
     frames:
-      world: odom
-      body: base_link
+      world: ona2/odom
+      body: ona2/base_footprint
 
     tf:
       publish: true
@@ -16,7 +16,7 @@ ins_ros_node:
     # Timing: stamp incoming measurements at receive time instead of trusting
     # msg headers (enable when sensor clocks are not synced with the PC clock)
     timing:
-      use_receive_stamp: true   
+      use_receive_stamp: true
 
     # ============================================================
     # Filter
@@ -31,11 +31,11 @@ ins_ros_node:
       history_window: 5.0
       buffer:
         imu_capacity: 2000
-        aiding_capacity: 20000
+        aiding_capacity: 200
 
       process_noise:
-        gyro: 6.01e-4
-        accel: 1.53e-2
+        gyro: 0.015
+        accel: 0.15
         gyro_bias: 1.54e-5
         accel_bias: 3.38e-4
 
@@ -63,46 +63,46 @@ ins_ros_node:
       imu:
         enabled: true
 
-        topic: /kitti/oxts/imu
+        topic: /ona2/sensors/imu_front/imu_uncalib
 
-        estimate_orientation: false  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
-        estimate_bias: false         # estimate IMU bias (gyro + accel) from IMU measurements
+        estimate_orientation: true  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
+        estimate_bias: true         # estimate IMU bias (gyro + accel) from IMU measurements
         bias:
           gyro:
-            x: 0.01
-            y: 0.01
-            z: 0.01
+            x: 0.0
+            y: 0.0
+            z: 0.0
           accel:
-            x: 0.1
-            y: 0.1
-            z: 0.1
+            x: 0.0
+            y: 0.0
+            z: 0.0
 
       gps:
         enabled: true
 
-        topic: /kitti/oxts/gps/fix
+        topic: /fix
 
-        trust_covariance: false # whether to trust the covariance from the GPS message or not
+        trust_covariance: true # whether to trust the covariance from the GPS message or not
 
         covariance: # fixed covariance if trust_covariance is false
           position:
             x: 0.01
             y: 0.01
-            z: 0.01
+            z: 10.0
 
         lever_arm:
-          x: -1.405
-          y: 0.32
-          z: 0.93
+          x: -0.4
+          y: 0.0
+          z: 0.5
 
       odometry:
-        enabled: false
+        enabled: true
 
-        topic: /lio_ros/state
+        topic: /fast_limo/state
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
           pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
-          velocity: false  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
+          velocity: true  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
 
         covariance:
           position:
@@ -121,7 +121,7 @@ ins_ros_node:
       wheel_odom:
         enabled: false
 
-        topic: /kitti/oxts/gps/vel
+        topic: /input/wheel_odom
 
         covariance:
           velocity:

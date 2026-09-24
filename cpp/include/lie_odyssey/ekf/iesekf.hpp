@@ -161,8 +161,7 @@ public:
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
                 std::function<void(const iESEKF<Group>&, const Group&, const Measurement&, Residual&, HMat&)> H_fun)
     {
-
-        Group X_now = X_;   // predicted state (reference frame)
+        Group X_now = X_;
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
         
@@ -173,7 +172,7 @@ public:
 
             // Current error state
             Jacobian J;
-            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
+            Tangent dx = X_now.minus(X_, J);
 
             // Get residual and linearized measurement model
             Residual r;

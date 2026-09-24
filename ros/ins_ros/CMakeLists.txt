@@ -31,6 +31,7 @@ add_library(${PROJECT_NAME}_core SHARED
   src/ekf.cpp
   src/state.cpp
   src/geo/enu_converter.cpp
+  src/measurements/measurement_handler.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core
