@@ -71,13 +71,13 @@ void H_fun(const iESEKF::Filter& /*kf*/,
     //
     // dh/d(delta) =
     //
-    //   [ 0  I  -skew(z_hat)  0 ]
+    //   [ 0  I  skew(z_hat)  0 ]
 
     // velocity part (dh/dv)
     H.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
 
     // orientation part (dh/dθ)
-    H.block<3, 3>(0, 6) = -manif::skew(z_hat);
+    H.block<3, 3>(0, 6) = manif::skew(z_hat);
 }
 
 } // namespace ins_ros::iESEKF::wheel

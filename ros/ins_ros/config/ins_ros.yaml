@@ -31,7 +31,7 @@ ins_ros_node:
       history_window: 5.0
       buffer:
         imu_capacity: 2000
-        aiding_capacity: 200
+        measurement_capacity: 200
 
       process_noise:
         gyro: 0.015
@@ -53,7 +53,7 @@ ins_ros_node:
         tolerance: 0.005
       yaw:
         tolerance: 0.005
-      future_tolerance: 0.02
+      OOSM_tolerance: 0.005
 
     # ============================================================
     # Sensors

@@ -257,7 +257,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         double sync_tolerance_mag_{0.005};
         double sync_tolerance_baro_{0.005};
         double sync_tolerance_yaw_{0.005};
-        double sync_future_tolerance_{0.02};
+        double sync_oosm_tolerance_{0.005};
         std::size_t imu_buffer_capacity_{2000};
         std::size_t measurement_capacity_{1000};
 

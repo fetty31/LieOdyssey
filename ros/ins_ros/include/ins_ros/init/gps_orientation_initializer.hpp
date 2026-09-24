@@ -271,7 +271,7 @@ public:
     Eigen::Vector2d last_position_ =
         Eigen::Vector2d::Zero();
 
-    double last_time_ = 0.0;
+    double last_time_ = -1.0;
     double last_dt_ = 0.0;
 
     std::vector<Eigen::Vector2d> path_segment_;

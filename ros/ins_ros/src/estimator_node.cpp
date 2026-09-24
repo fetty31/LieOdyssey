@@ -231,7 +231,7 @@ void INSEstimator::declare_parameters()
     declare_parameter<double>("sync.mag.tolerance", 0.005);
     declare_parameter<double>("sync.baro.tolerance", 0.005);
     declare_parameter<double>("sync.yaw.tolerance", 0.005);
-    declare_parameter<double>("sync.future_tolerance", 0.02);
+    declare_parameter<double>("sync.OOSM_tolerance", 0.005);
 
     // IMU
     declare_parameter<bool>("sensors.imu.enabled", true);
@@ -331,7 +331,7 @@ void INSEstimator::load_parameters()
     sync_tolerance_mag_ = get_parameter("sync.mag.tolerance").as_double();
     sync_tolerance_baro_ = get_parameter("sync.baro.tolerance").as_double();
     sync_tolerance_yaw_ = get_parameter("sync.yaw.tolerance").as_double();
-    sync_future_tolerance_ = get_parameter("sync.future_tolerance").as_double();
+    sync_oosm_tolerance_ = get_parameter("sync.OOSM_tolerance").as_double();
 
     // Sensors
         // IMU
@@ -930,8 +930,8 @@ void INSEstimator::estimation_timer_callback()
                                     t, filter_time_);
 
         // OOSM: Out-Of-Sequence Measurement
-        // if (t < filter_time_)
-        if (false)
+        if (t < (filter_time_ - sync_oosm_tolerance_))
+        // if (false)
         {
             RCLCPP_DEBUG(
                 get_logger(),
@@ -994,10 +994,10 @@ void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
 
     refresh_state_from_filter();
 
-    meas_handler_.pushStateSnapshot(
-        filter_time_,
-        filter_.getState(),
-        filter_.getCovariance());
+    // meas_handler_.pushStateSnapshot(
+    //     filter_time_,
+    //     filter_.getState(),
+    //     filter_.getCovariance());
 }
 
 bool INSEstimator::propagateTo(double t)
