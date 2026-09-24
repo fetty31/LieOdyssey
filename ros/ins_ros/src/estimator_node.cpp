@@ -892,14 +892,13 @@ void INSEstimator::estimation_timer_callback()
         if (!try_initialize_orientation())
             return;
 
-        filter_time_ = state_.time;
+        refresh_state_from_filter();
 
         meas_handler_.pushStateSnapshot(
             filter_time_,
             filter_.getState(),
             filter_.getCovariance());
 
-        refresh_state_from_filter();
         return;
     }
 
@@ -930,8 +929,8 @@ void INSEstimator::estimation_timer_callback()
                                     t, filter_time_);
 
         // OOSM: Out-Of-Sequence Measurement
-        if (t < (filter_time_ - sync_oosm_tolerance_))
-        // if (false)
+        // if (t < (filter_time_ - sync_oosm_tolerance_))
+        if (false)
         {
             RCLCPP_DEBUG(
                 get_logger(),
@@ -1015,6 +1014,8 @@ bool INSEstimator::propagateTo(double t)
     const auto imu_samples =
         meas_handler_.imuBetween(filter_time_, t);
 
+    RCLCPP_DEBUG(get_logger(), "Retrieved %lu IMU samples", imu_samples.size());
+
     for (const auto& imu : imu_samples)
     {
         if (imu.stamp <= filter_time_)
@@ -1050,6 +1051,9 @@ bool INSEstimator::propagateTo(double t)
     //    exactly at t.
     if (filter_time_ < t)
     {
+        RCLCPP_DEBUG(get_logger(), "Interpolate IMU sample from %.7f to %.7f", 
+                filter_time_, t);
+
         auto interpolated =
             meas_handler_.interpolateImuAt(t);
 
@@ -1526,6 +1530,8 @@ void INSEstimator::initialize_orientation()
         state_.time = 0.0;
     }
 
+    filter_time_ = state_.time;
+
     // Save the initial ENU <-> base_link alignment (base pose at init time,
     // used e.g. to align the LIO/VIO world frame in odom_callback).
     initial_enu_base_.setTransform(q_enu_base, initial_body_position_enu);
@@ -1538,6 +1544,8 @@ void INSEstimator::initialize_orientation()
         v_init_enu.cast<iESEKF::Scalar>(); 
     
     setState();
+
+    meas_handler_.pruneOlderThan(filter_time_);
     
     orientation_initialized_ = true;
 

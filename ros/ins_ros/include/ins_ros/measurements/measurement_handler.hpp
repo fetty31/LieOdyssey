@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 #include <cstddef>
+#include <iomanip>
 
 #include "ins_ros/measurements/stamped_types.hpp"
 

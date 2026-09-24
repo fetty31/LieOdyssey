@@ -200,6 +200,8 @@ MeasurementHandler::interpolateImuAt(double t) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    std::cout << "imu_history size: " << imu_history_.size() << std::endl;
+
     if (imu_history_.size() < 2)
         return std::nullopt;
 
