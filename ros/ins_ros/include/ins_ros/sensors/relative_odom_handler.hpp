@@ -83,30 +83,53 @@ void H_fun(
     SGal3 Xi = X_i.impl().subgroup<0>();
     SGal3 Xj = X_j.impl().subgroup<0>();
 
+    Xi.coeffs()(10) = 0.0;
+    Xj.coeffs()(10) = 0.0;
+
+    Xi.coeffs()(7) = 0.0;
+    Xi.coeffs()(8) = 0.0;
+    Xi.coeffs()(9) = 0.0;
+
+    Xj.coeffs()(7) = 0.0;
+    Xj.coeffs()(8) = 0.0;
+    Xj.coeffs()(9) = 0.0;
+
     // Odometry measurements
     SGal3 Yi = Y_i.impl().subgroup<0>();
     SGal3 Yj = Y_j.impl().subgroup<0>();
 
+    Yi.coeffs()(10) = 0.0;
+    Yj.coeffs()(10) = 0.0;
+
+    Yi.coeffs()(7) = 0.0;
+    Yi.coeffs()(8) = 0.0;
+    Yi.coeffs()(9) = 0.0;
+
+    Yj.coeffs()(7) = 0.0;
+    Yj.coeffs()(8) = 0.0;
+    Yj.coeffs()(9) = 0.0;
+
     SGal3 Yij = Yi.inverse() * Yj;
     SGal3 Xij = Xi.inverse() * Xj;
 
-    std::cout << "Yi coeffs: "
-          << Yi.coeffs().transpose() << "\n";
+    auto print_sgal3 = [](const std::string& name, const SGal3& X)
+    {
+        const auto c = X.coeffs();
 
-    std::cout << "Yj coeffs: "
-            << Yj.coeffs().transpose() << "\n";
+        std::cout << "\n[" << name << "]\n";
+        std::cout << "  coeffs: " << c.transpose() << "\n";
+        std::cout << "  t      : " << c(10) << "\n";
+        std::cout << "  pos    : " << c.template segment<3>(0).transpose() << "\n";
+        std::cout << "  rot    : " << c.template segment<4>(3).transpose() << "\n";
+        std::cout << "  vel    : " << c.template segment<3>(7).transpose() << "\n";
+    };
 
-    std::cout << "Xi coeffs: "
-          << Xi.coeffs().transpose() << "\n";
-
-    std::cout << "Xj coeffs: "
-            << Xj.coeffs().transpose() << "\n";
-
-    std::cout << "Yij coeffs: "
-            << Yij.coeffs().transpose() << "\n";
-
-    std::cout << "Xij coeffs: "
-            << Xij.coeffs().transpose() << "\n";
+    print_sgal3("Yi", Yi);
+    print_sgal3("Yj", Yj);
+    print_sgal3("Xi", Xi);
+    print_sgal3("Xj", Xj);
+    print_sgal3("Yij", Yij);
+    print_sgal3("Xij", Xij);
 
     Tangent xi;
     SGal3::Jacobian J_Yij;

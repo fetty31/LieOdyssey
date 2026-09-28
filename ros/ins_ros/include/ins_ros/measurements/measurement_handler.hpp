@@ -240,6 +240,13 @@ public:
    */
   std::optional<StampedOdom> peekLatestProcessedOdom() const;
 
+  /**
+   * @brief Get processed Odometry measurement at time t
+   * (used in relative odometry measurement)
+   *
+   */
+  std::optional<StampedOdom> peekProcessedOdomAt(double t) const;
+
   // ---------------------------------------------------------------------------
   // IMU history
   // ---------------------------------------------------------------------------
@@ -255,8 +262,16 @@ public:
    * @brief Interpolate IMU data to given t
    *
    * Does not consume the IMU history.
+   * Requires IMU_before < t < IMU_after for interpolation
    */
   std::optional<iESEKF::IMUmeas> interpolateImuAt(double t) const;
+
+  /**
+   * @brief Get closest IMU measurement to t (always older than t)
+   *
+   * Does not consume the IMU history.
+   */
+  std::optional<iESEKF::IMUmeas> latestImuAtOrBefore(double t) const;
 
   // ---------------------------------------------------------------------------
   // State history

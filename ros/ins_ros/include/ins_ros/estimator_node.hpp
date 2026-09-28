@@ -93,10 +93,15 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // --- Thin ROS callbacks: only convert + push into MeasurementHandler ---
         void imu_callback(const sensor_msgs::msg::Imu& msg);
         void gps_callback(const sensor_msgs::msg::NavSatFix& msg);
-        void wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg);
+        void wheel_twist_callback(const geometry_msgs::msg::TwistStamped& msg);
+        void wheel_odom_callback(const nav_msgs::msg::Odometry& msg);
         void odom_callback(const nav_msgs::msg::Odometry& msg);
         void mag_callback(const sensor_msgs::msg::MagneticField& msg);
         void baro_callback(const sensor_msgs::msg::FluidPressure& msg);
+
+        void wheel_odom_to_buffer(const rclcpp::Time& stamp,
+                                const std::string& frame_id,
+                                const geometry_msgs::msg::Twist& twist);
 
         // --- Fixed-frequency estimation loop ---
         void estimation_timer_callback();
@@ -208,7 +213,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::unique_ptr<init::IMUOrientationInitializer> imu_orientation_initializer_;
         std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_initializer_;
         std::unique_ptr<init::GPSOrientationInitializer> gps_orientation_continuous_;
+        init::GPSOrientationInitializer::Parameters gps_orientation_params_;
+        init::GPSOrientationInitializer::Parameters gps_orientation_continuous_params_;
+        init::IMUOrientationInitializer::Parameters imu_orientation_params_;
         bool orientation_initialized_{false};
+        bool estimate_continuous_gps_yaw_{false};
 
         // GPS / ENU converter
         std::string gps_topic_{""};
@@ -229,6 +238,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Wheel odom
         std::string wheel_odom_topic_{""};
+        std::string wheel_odom_msg_type_{""};
         State::V3 wheel_odom_noise_{State::V3::Zero()};
 
         // Magnetometer
@@ -270,7 +280,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // Subscribers
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr       imu_sub_;
         rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;
-        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr wheel_odom_sub_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr wheel_odom_twist_sub_;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<sensor_msgs::msg::MagneticField>::SharedPtr mag_sub_;
         rclcpp::Subscription<sensor_msgs::msg::FluidPressure>::SharedPtr baro_sub_;

@@ -16,7 +16,7 @@ ins_ros_node:
     # Timing: stamp incoming measurements at receive time instead of trusting
     # msg headers (enable when sensor clocks are not synced with the PC clock)
     timing:
-      use_receive_stamp: true   
+      use_receive_stamp: false   
 
     # ============================================================
     # Filter
@@ -42,18 +42,18 @@ ins_ros_node:
     # Measurement synchronization / latency handling
     sync:
       gps:
-        tolerance: 0.01
+        tolerance: 0.0
       odom:
-        tolerance: 0.01
+        tolerance: 0.0
       wheel_odom:
-        tolerance: 0.01
+        tolerance: 0.0
       mag:
-        tolerance: 0.005
+        tolerance: 0.0
       baro:
-        tolerance: 0.005
+        tolerance: 0.0
       yaw:
-        tolerance: 0.01
-      OOSM_tolerance: 0.005
+        tolerance: 0.0
+      OOSM_tolerance: 0.0
 
     # ============================================================
     # Sensors
@@ -65,8 +65,6 @@ ins_ros_node:
 
         topic: /kitti/oxts/imu
 
-        estimate_orientation: false  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
-        estimate_bias: false         # estimate IMU bias (gyro + accel) from IMU measurements
         bias:
           gyro:
             x: 0.01
@@ -76,6 +74,13 @@ ins_ros_node:
             x: 0.1
             y: 0.1
             z: 0.1
+
+        init:
+          orientation: # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
+            active: false 
+
+          bias: # estimate IMU bias (gyro + accel) from IMU measurements
+            active: false
 
       gps:
         enabled: true
@@ -95,8 +100,16 @@ ins_ros_node:
           y: 0.32
           z: 0.93
 
+        init:
+          orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
+            distance_threshold: 1.0
+
+        continuous_orientation: # optional continuous yaw measurement (computed from gps path)
+          active: true
+          distance_threshold: 1.0
+
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /lio_ros/state
 
@@ -106,20 +119,20 @@ ins_ros_node:
 
         covariance:
           position:
-            x: 0.01
-            y: 0.01
-            z: 0.01
+            x: 0.1
+            y: 0.1
+            z: 0.1
           orientation:
             x: 0.01
             y: 0.01
             z: 0.01
           velocity:
-            x: 0.1
-            y: 0.1
-            z: 0.1
+            x: 10.1
+            y: 10.1
+            z: 10.1
 
       wheel_odom:
-        enabled: false
+        enabled: true
 
         topic: /kitti/oxts/gps/vel
 

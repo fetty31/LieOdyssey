@@ -36,6 +36,7 @@ The project includes multiple __ROS packages__ that use the `lie_odyssey_cpp` li
     
 - [__`lio_ros`__](ros/lio_ros/README.md): A minimalist LiDAR-Inertial Odometry (LIO) implementation for ROS 2 
 - [__`gilda_lio`__](ros/gilda_lio/README.md): A LiDAR-Inertial Odometry (LIO) system with an Adaptive Gaussian Voxelmap (same idea as [Voxelmap++](https://github.com/uestc-icsp/VoxelMapPlus_Public))
+- [__`ins_ros`__](ros/ins_ros/README.md): An Inertial Navigation System (INS) estimator using the iESEKF on Lie groups, fusing IMU, GPS, wheel odometry, 3D odometry, magnetometer (to-do) and barometer (to-do) measurements
 
 ---
 

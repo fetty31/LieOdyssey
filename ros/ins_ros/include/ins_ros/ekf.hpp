@@ -32,10 +32,11 @@ void group_to_state(const Group& g, ins_ros::State& state);
 void state_to_group(const ins_ros::State& state, Group& g);
 
 // Covariance retrieval (Pose + Vel.)
-std::vector<double> get_pose_covariance(const MatDoF& P);
-std::vector<double> get_velocity_covariance(const MatDoF& P);
-void set_pose_covariance(const std::array<double, 36>& cov, Eigen::Matrix<Scalar, 6, 6>& P);
-void set_velocity_covariance(const std::array<double, 36>& cov, Eigen::Matrix<Scalar, 3, 3>& P);
+std::vector<double> get_pose_covariance(const MatDoF& P, const Group& g);
+std::vector<double> get_velocity_covariance(const MatDoF& P, const Group& g);
+void set_pose_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 6, 6>& P);
+void set_velocity_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 3, 3>& P);
+MatDoF get_tangent_to_inertial_jacob(const Group& g);
 
 // Propagation model (IMU dynamics)
 typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);

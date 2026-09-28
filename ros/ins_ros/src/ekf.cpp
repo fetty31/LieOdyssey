@@ -47,47 +47,119 @@ void ins_ros::iESEKF::state_to_group(const ins_ros::State& state, Group& g)
 	g = iESEKF::Group(iESEKF::Bundle(X0)); // cast to lie_odyssey type 
 }
 
-std::vector<double> ins_ros::iESEKF::get_pose_covariance(const MatDoF& P)
+MatDoF ins_ros::iESEKF::get_tangent_to_inertial_jacob(const Group& g)
 {
+	iESEKF::Bundle X = g.impl(); 
+	auto R = X.subgroup<0>().quat().toRotationMatrix();	
+	auto v = X.subgroup<0>().linearVelocity();
+
+	/* tangent-to-inertial jacobian
+	T = [R 0 0 v
+		 0 R 0 0
+		 0 0 R 0
+		 0 0 0 1]
+	(in this case T := bundleDoF x bundleDoF, 
+		so rows from 10-end are filled with zeros)
+	*/
+	MatDoF T = MatDoF::Zero();
+	T.block<3,3>(0,0) = R;
+	T.block<3,3>(3,3) = R;
+	T.block<3,3>(6,6) = R;
+	T.block<3,1>(0,9) = v;
+	T(9,9) = 1.0;
+
+	return T;
+}
+
+std::vector<double> ins_ros::iESEKF::get_pose_covariance(const MatDoF& P, const Group& g)
+{
+	auto T = get_tangent_to_inertial_jacob(g);	
+	auto P_inertial = T * P * T.transpose();
+
     Eigen::Matrix<double, 6, 6> P_pose;
-    P_pose.block<3, 3>(0, 0) = P.block<3, 3>(0, 0).cast<double>();
-    P_pose.block<3, 3>(0, 3) = P.block<3, 3>(0, 6).cast<double>();
-    P_pose.block<3, 3>(3, 0) = P.block<3, 3>(6, 0).cast<double>();
-    P_pose.block<3, 3>(3, 3) = P.block<3, 3>(6, 6).cast<double>();
+    P_pose.block<3, 3>(0, 0) = P_inertial.block<3, 3>(0, 0).cast<double>();
+    P_pose.block<3, 3>(0, 3) = P_inertial.block<3, 3>(0, 6).cast<double>();
+    P_pose.block<3, 3>(3, 0) = P_inertial.block<3, 3>(6, 0).cast<double>();
+    P_pose.block<3, 3>(3, 3) = P_inertial.block<3, 3>(6, 6).cast<double>();
 
     std::vector<double> cov(P_pose.size());
     Eigen::Map<Eigen::MatrixXd>(cov.data(), P_pose.rows(), P_pose.cols()) = P_pose;
     return cov;
 }
 
-std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P)
+std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P, const Group& g)
 {
+	auto T = get_tangent_to_inertial_jacob(g);	
+	auto P_inertial = T * P * T.transpose();
+
     Eigen::Matrix<double, 6, 6> P_odom = Eigen::Matrix<double, 6, 6>::Zero();
-    P_odom.block<3, 3>(0, 0) = P.block<3, 3>(3, 3).cast<double>();
+    P_odom.block<3, 3>(0, 0) = P_inertial.block<3, 3>(3, 3).cast<double>();
 
     std::vector<double> cov(P_odom.size());
     Eigen::Map<Eigen::MatrixXd>(cov.data(), P_odom.rows(), P_odom.cols()) = P_odom;
     return cov;
 }
 
+// void ins_ros::iESEKF::set_pose_covariance(
+//     const std::array<double, 36>& cov,
+//     Eigen::Matrix<Scalar, 6, 6>& P)
+// {
+//     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
+//         P_pose(cov.data());
+    
+//     P = P_pose.cast<Scalar>();
+// }
+
 void ins_ros::iESEKF::set_pose_covariance(
     const std::array<double, 36>& cov,
+    const Group& g,
     Eigen::Matrix<Scalar, 6, 6>& P)
 {
+    // ROS covariance is row-major:
+    // [x y z roll pitch yaw]
     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
-        P_pose(cov.data());
-    
-    P = P_pose.cast<Scalar>();
+        P_ros(cov.data());
+
+    iESEKF::Bundle X = g.impl();
+    const auto R = X.subgroup<0>().quat().toRotationMatrix();
+
+    // Inertial -> tangent mapping
+    Eigen::Matrix<double, 6, 6> T_inv =
+        Eigen::Matrix<double, 6, 6>::Zero();
+
+    T_inv.block<3, 3>(0, 0) = R.transpose();
+    T_inv.block<3, 3>(3, 3) = R.transpose();
+
+    P = (T_inv * P_ros * T_inv.transpose()).template cast<Scalar>();
 }
+
+// void ins_ros::iESEKF::set_velocity_covariance(
+//     const std::array<double, 36>& cov,
+//     Eigen::Matrix<Scalar, 3, 3>& P)
+// {
+//     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
+//         P_odom(cov.data());
+
+//     P = P_odom.block<3, 3>(0, 0).cast<Scalar>();
+// }
 
 void ins_ros::iESEKF::set_velocity_covariance(
     const std::array<double, 36>& cov,
+    const Group& g,
     Eigen::Matrix<Scalar, 3, 3>& P)
 {
+    // ROS covariance is row-major.
     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
-        P_odom(cov.data());
+        P_ros(cov.data());
 
-    P = P_odom.block<3, 3>(0, 0).cast<Scalar>();
+    iESEKF::Bundle X = g.impl();
+    const auto R = X.subgroup<0>().quat().toRotationMatrix();
+
+    const Eigen::Matrix3d P_vel_ros =
+        P_ros.block<3, 3>(0, 0);
+
+    // Inertial velocity covariance -> tangent velocity covariance.
+    P = (R.transpose() * P_vel_ros * R).template cast<Scalar>();
 }
 
 typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu) 

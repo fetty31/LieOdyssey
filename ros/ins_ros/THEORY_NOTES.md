@@ -27,11 +27,11 @@ The exact meaning of these coordinates depends on the Lie-group perturbation con
 
 In this implementation, the perturbation is right-plus:
 
-$$ X_{\text{true}} = X \oplus \delta x = X\operatorname{Exp}(\delta x) $$
+$$ X_{\text{true}} = X \oplus \delta x = X\mathrm{Exp}(\delta x) $$
 
 Therefore,
 
-$$ P = \operatorname{Cov}(\delta x) $$
+$$ P = \mathrm{Cov}(\delta x) $$
 
 is a covariance in the current right tangent coordinates.
 
@@ -39,7 +39,7 @@ is a covariance in the current right tangent coordinates.
 
 For a conventional Euclidean state, it is easy to think of a covariance as
 
-$$ P = \operatorname{Cov} \begin{bmatrix} \delta p\\ \delta v\\ \delta\theta \end{bmatrix}. $$
+$$ P = \mathrm{Cov} \begin{bmatrix} \delta p\\ \delta v\\ \delta\theta \end{bmatrix}. $$
 
 With a Lie-group state this is not necessarily true.
 
@@ -67,7 +67,7 @@ $$ \xi = \begin{bmatrix} \rho\\ \nu\\ \theta\\ s \end{bmatrix} $$
 
 so the covariance is
 
-$$ P = \operatorname{Cov} \begin{bmatrix} \rho\\ \nu\\ \theta\\ s \end{bmatrix}. $$
+$$ P = \mathrm{Cov} \begin{bmatrix} \rho\\ \nu\\ \theta\\ s \end{bmatrix}. $$
 
 Thus the covariance blocks are conceptually
 
@@ -134,39 +134,39 @@ $$ X_k $$
 
 and the true state is represented as
 
-$$ X_k^{true} = X_k\operatorname{Exp}(\delta x_k). $$
+$$ X_k^{true} = X_k\mathrm{Exp}(\delta x_k). $$
 
 The nominal prediction is
 
-$$ X_{k+1} = X_k\operatorname{Exp}(\xi_k). $$
+$$ X_{k+1} = X_k\mathrm{Exp}(\xi_k). $$
 
 Ignoring the state dependence of the dynamics for a moment, the true state propagates as
 
-$$ X_{k+1}^{true} = X_k \operatorname{Exp}(\delta x_k) \operatorname{Exp}(\xi_k). $$
+$$ X_{k+1}^{true} = X_k \mathrm{Exp}(\delta x_k) \mathrm{Exp}(\xi_k). $$
 
 But we want to express the new error relative to the new nominal state:
 
-$$ X_{k+1}^{true} = X_{k+1} \operatorname{Exp}(\delta x_{k+1}). $$
+$$ X_{k+1}^{true} = X_{k+1} \mathrm{Exp}(\delta x_{k+1}). $$
 
 Therefore,
 
-$$ X_k \operatorname{Exp}(\delta x_k) \operatorname{Exp}(\xi_k) = X_k \operatorname{Exp}(\xi_k) \operatorname{Exp}(\delta x_{k+1}). $$
+$$ X_k \mathrm{Exp}(\delta x_k) \mathrm{Exp}(\xi_k) = X_k \mathrm{Exp}(\xi_k) \mathrm{Exp}(\delta x_{k+1}). $$
 
 Canceling \(X_k\),
 
-$$ \operatorname{Exp}(\delta x_k) \operatorname{Exp}(\xi_k) = \operatorname{Exp}(\xi_k) \operatorname{Exp}(\delta x_{k+1}). $$
+$$ \mathrm{Exp}(\delta x_k) \mathrm{Exp}(\xi_k) = \mathrm{Exp}(\xi_k) \mathrm{Exp}(\delta x_{k+1}). $$
 
 Hence
 
-$$ \operatorname{Exp}(\delta x_{k+1}) = \operatorname{Exp}(-\xi_k) \operatorname{Exp}(\delta x_k) \operatorname{Exp}(\xi_k). $$
+$$ \mathrm{Exp}(\delta x_{k+1}) = \mathrm{Exp}(-\xi_k) \mathrm{Exp}(\delta x_k) \mathrm{Exp}(\xi_k). $$
 
 Using the adjoint identity,
 
-$$ \operatorname{Exp}(-\xi) \operatorname{Exp}(\delta x) \operatorname{Exp}(\xi) \approx \operatorname{Exp} \left( \operatorname{Ad}_{\operatorname{Exp}(\xi)}^{-1} \delta x \right), $$
+$$ \mathrm{Exp}(-\xi) \mathrm{Exp}(\delta x) \mathrm{Exp}(\xi) \approx \mathrm{Exp} \left( \mathrm{Ad}_{\mathrm{Exp}(\xi)}^{-1} \delta x \right), $$
 
 so
 
-$$ \boxed{ \delta x_{k+1} \approx \operatorname{Ad}_{\operatorname{Exp}(\xi_k)}^{-1} \delta x_k } $$
+$$ \boxed{ \delta x_{k+1} \approx \mathrm{Ad}_{\mathrm{Exp}(\xi_k)}^{-1} \delta x_k } $$
 
 which explains
 ```
@@ -207,11 +207,11 @@ new nominal state X_k+
 
 The covariance therefore remains a tangent covariance:
 
-$$ P_k = \operatorname{Cov}(\delta x_k) $$
+$$ P_k = \mathrm{Cov}(\delta x_k) $$
 
 becomes
 
-$$ P_{k+1}^- = \operatorname{Cov}(\delta x_{k+1}). $$
+$$ P_{k+1}^- = \mathrm{Cov}(\delta x_{k+1}). $$
 
 It has not been converted into a physical/world covariance.
 
@@ -267,7 +267,7 @@ $$ \boxed{ P_{k+1}^- = F_xP_kF_x^T + F_wQF_w^T } $$
 
 Because the state update is
 
-$$ X^+ = X\operatorname{Exp}(\xi), $$
+$$ X^+ = X\mathrm{Exp}(\xi), $$
 
 the derivative with respect to the increment \(\xi\) involves the differential of the exponential map.
 
@@ -320,7 +320,7 @@ ROS is the important example.
 
 The filter has
 
-$$ P_{\text{filter}} = \operatorname{Cov} \begin{bmatrix} \rho\\ \nu\\ \theta\\ s \end{bmatrix}. $$
+$$ P_{\text{filter}} = \mathrm{Cov} \begin{bmatrix} \rho\\ \nu\\ \theta\\ s \end{bmatrix}. $$
 
 Suppose we want to publish a ROS pose covariance representing physical inertial-frame position and orientation uncertainty.
 
@@ -405,7 +405,7 @@ A. Adjoint transport inside the filter
 
 During prediction:
 
-$$ \delta x_{k+1} = \operatorname{Ad}_{\operatorname{Exp}(\xi)}^{-1} \delta x_k +\cdots $$
+$$ \delta x_{k+1} = \mathrm{Ad}_{\mathrm{Exp}(\xi)}^{-1} \delta x_k +\cdots $$
 
 and therefore
 
@@ -507,19 +507,19 @@ The adjoint is what relates those two tangent representations.
 
 For right-plus,
 
-$$ X_{\text{true}} = X\operatorname{Exp}(\delta x). $$
+$$ X_{\text{true}} = X\mathrm{Exp}(\delta x). $$
 
 When the nominal state moves by
 
-$$ X^+ = X\operatorname{Exp}(\xi), $$
+$$ X^+ = X\mathrm{Exp}(\xi), $$
 
 the old perturbation is effectively moved from the left side of the new increment to the right side:
 
-$$ \operatorname{Exp}(\delta x) \operatorname{Exp}(\xi) = \operatorname{Exp}(\xi) \operatorname{Exp}(\delta x^+). $$
+$$ \mathrm{Exp}(\delta x) \mathrm{Exp}(\xi) = \mathrm{Exp}(\xi) \mathrm{Exp}(\delta x^+). $$
 
 This produces
 
-$$ \delta x^+ = \operatorname{Ad}_{\operatorname{Exp}(\xi)}^{-1} \delta x. $$
+$$ \delta x^+ = \mathrm{Ad}_{\mathrm{Exp}(\xi)}^{-1} \delta x. $$
 
 For a left-plus convention, the corresponding transport relationship would be different.
 

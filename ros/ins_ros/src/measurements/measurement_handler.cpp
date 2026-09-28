@@ -172,6 +172,38 @@ MeasurementHandler::peekLatestProcessedOdom() const
     return std::nullopt;
 }
 
+std::optional<StampedOdom>
+MeasurementHandler::peekProcessedOdomAt(double t) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (processed_history_.empty())
+        return std::nullopt;
+
+    // Find the first processed measurement strictly after t.
+    auto it = std::upper_bound(
+        processed_history_.begin(),
+        processed_history_.end(),
+        t,
+        [](double stamp, const auto& measurement)
+        {
+            return stamp < getStamp(measurement);
+        });
+
+    // Search backwards for the latest processed odometry
+    // at or before t.
+    while (it != processed_history_.begin())
+    {
+        --it;
+
+        if(std::holds_alternative<StampedOdom>(it->measurement))
+            return std::get<StampedOdom>(it->measurement);
+
+    }
+
+    return std::nullopt;
+}
+
 // -----------------------------------------------------------------------------
 // IMU history
 // -----------------------------------------------------------------------------
@@ -252,6 +284,31 @@ MeasurementHandler::interpolateImuAt(double t) const
     interpolated.dt = 0.0;
 
     return interpolated;
+}
+
+std::optional<iESEKF::IMUmeas>
+MeasurementHandler::latestImuAtOrBefore(double t) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (imu_history_.empty())
+        return std::nullopt;
+
+    auto it = std::upper_bound(
+        imu_history_.begin(),
+        imu_history_.end(),
+        t,
+        [](double stamp, const iESEKF::IMUmeas& imu)
+        {
+            return stamp < imu.stamp;
+        });
+
+    if (it == imu_history_.begin())
+        return std::nullopt;
+
+    --it;
+
+    return *it;
 }
 
 // -----------------------------------------------------------------------------

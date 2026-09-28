@@ -53,19 +53,21 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     previous_omega_base_ = State::V3::Zero();
     last_imu_stamp_ = -1.0;
 
-    // Orientation initializers
-    imu_orientation_initializer_ = std::make_unique<init::IMUOrientationInitializer>();
-    gps_orientation_initializer_ = std::make_unique<init::GPSOrientationInitializer>();
-    orientation_initialized_ = false;
-
-        // debug
-    init::GPSOrientationInitializer::Parameters params;
-    params.max_speed = 20.5;
-    gps_orientation_continuous_ = std::make_unique<init::GPSOrientationInitializer>(params);
-
     // Load parameters, setup subscriptions and publishers
     declare_parameters();
     load_parameters();
+
+    // Orientation initializers
+    imu_orientation_initializer_ = std::make_unique<init::IMUOrientationInitializer>(imu_orientation_params_);
+    gps_orientation_initializer_ = std::make_unique<init::GPSOrientationInitializer>(gps_orientation_params_);
+    gps_orientation_continuous_ = std::make_unique<init::GPSOrientationInitializer>(gps_orientation_continuous_params_);
+    orientation_initialized_ = false;
+
+    if( (!estimate_imu_orientation_) && (!estimate_imu_bias_)){
+        // If both bias and orientation estimation are disabled, we can assume the IMU is perfectly calibrated.
+        imu_orientation_initializer_->initialized_ = true;
+        RCLCPP_WARN(get_logger(), "IMU orientation initialization is disabled. Assuming roll=0º and pitch=0º.");
+    }
 
     // Apply buffer configuration to the measurement handler
     measurements::MeasurementHandler::Options handler_opts;
@@ -134,6 +136,7 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
+    wheel_odom_twist_sub_.reset();
     odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
@@ -160,6 +163,7 @@ INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::S
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
+    wheel_odom_twist_sub_.reset();
     odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
@@ -179,6 +183,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     imu_sub_.reset();
     gps_sub_.reset();
     wheel_odom_sub_.reset();
+    wheel_odom_twist_sub_.reset();
     odom_sub_.reset();
     mag_sub_.reset();
     baro_sub_.reset();
@@ -236,8 +241,11 @@ void INSEstimator::declare_parameters()
     // IMU
     declare_parameter<bool>("sensors.imu.enabled", true);
     declare_parameter<std::string>("sensors.imu.topic", "/imu/data");
-    declare_parameter<bool>("sensors.imu.estimate_bias", false);
-    declare_parameter<bool>("sensors.imu.estimate_orientation", false);
+    declare_parameter<bool>("sensors.imu.init.bias.active", false);
+    declare_parameter<bool>("sensors.imu.init.orientation.active", false);
+    declare_parameter<double>("sensors.imu.init.orientation.gravity_tolerance", 0.5);
+    declare_parameter<double>("sensors.imu.init.orientation.gyro_stationary_threshold", 0.1);
+    declare_parameter<int>("sensors.imu.init.orientation.min_samples", 200);
 
         // Fixed IMU biases
     declare_parameter<double>("sensors.imu.bias.accel.x", 0.0);
@@ -263,6 +271,18 @@ void INSEstimator::declare_parameters()
     declare_parameter<double>("sensors.gps.lever_arm.y", 0.0);
     declare_parameter<double>("sensors.gps.lever_arm.z", 0.0);
 
+        // GPS yaw calculation
+    declare_parameter<double>("sensors.gps.init.orientation.distance_threshold", 2.0);
+    declare_parameter<double>("sensors.gps.init.orientation.delta_distance_threshold", 0.1);
+    declare_parameter<double>("sensors.gps.init.orientation.max_speed", 30.0);
+    declare_parameter<int>("sensors.gps.init.orientation.min_samples", 3);
+
+    declare_parameter<bool>("sensors.gps.continuous_orientation.active", false);
+    declare_parameter<double>("sensors.gps.continuous_orientation.distance_threshold", 2.0);
+    declare_parameter<double>("sensors.gps.continuous_orientation.delta_distance_threshold", 0.1);
+    declare_parameter<double>("sensors.gps.continuous_orientation.max_speed", 30.0);
+    declare_parameter<int>("sensors.gps.continuous_orientation.min_samples", 3);
+
     // 3D Odometry
     declare_parameter<bool>("sensors.odometry.enabled", false);
     declare_parameter<std::string>("sensors.odometry.topic", "/odometry");
@@ -284,6 +304,7 @@ void INSEstimator::declare_parameters()
     // Wheel odometry
     declare_parameter<bool>("sensors.wheel_odom.enabled", false);
     declare_parameter<std::string>("sensors.wheel_odom.topic", "/wheel/odometry");
+    declare_parameter<std::string>("sensors.wheel_odom.type", "twist_stamped");
 
         // velocity noise
     declare_parameter<double>("sensors.wheel_odom.covariance.velocity.x", 0.1);
@@ -342,8 +363,15 @@ void INSEstimator::load_parameters()
         throw std::runtime_error("IMU is disabled");
     }
     imu_topic_ = get_parameter("sensors.imu.topic").as_string();
-    estimate_imu_bias_ = get_parameter("sensors.imu.estimate_bias").as_bool();
-    estimate_imu_orientation_ = get_parameter("sensors.imu.estimate_orientation").as_bool();
+    estimate_imu_bias_ = get_parameter("sensors.imu.init.bias.active").as_bool();
+    estimate_imu_orientation_ = get_parameter("sensors.imu.init.orientation.active").as_bool();
+    
+    imu_orientation_params_.gravity_tolerance 
+        = get_parameter("sensors.imu.init.orientation.gravity_tolerance").as_double();
+    imu_orientation_params_.gyro_stationary_threshold 
+        = get_parameter("sensors.imu.init.orientation.gyro_stationary_threshold").as_double();
+    int imu_min_samples = get_parameter("sensors.imu.init.orientation.min_samples").as_int();
+    imu_orientation_params_.min_samples = static_cast<std::size_t>(imu_min_samples);
 
     if(!estimate_imu_bias_)
     {
@@ -354,15 +382,11 @@ void INSEstimator::load_parameters()
         state_.bias.w(0) = get_parameter("sensors.imu.bias.gyro.x").as_double();
         state_.bias.w(1) = get_parameter("sensors.imu.bias.gyro.y").as_double();
         state_.bias.w(2) = get_parameter("sensors.imu.bias.gyro.z").as_double();
-        if(!estimate_imu_orientation_){
-            // If both bias and orientation estimation are disabled, we can assume the IMU is perfectly calibrated.
-            imu_orientation_initializer_->initialized_ = true;
-            RCLCPP_WARN(get_logger(), "IMU orientation initialization is disabled. Assuming roll=0º and pitch=0º.");
-        }
     }
 
         // GPS
     gps_topic_.clear();
+    estimate_continuous_gps_yaw_ = false;
 
     bool gps_enabled = get_parameter("sensors.gps.enabled").as_bool();
     if (!gps_enabled)
@@ -379,6 +403,25 @@ void INSEstimator::load_parameters()
         double lever_arm_y = get_parameter("sensors.gps.lever_arm.y").as_double();
         double lever_arm_z = get_parameter("sensors.gps.lever_arm.z").as_double();
         gps_lever_arm_ = State::V3(lever_arm_x, lever_arm_y, lever_arm_z);
+
+        gps_orientation_params_.distance_threshold 
+            = get_parameter("sensors.gps.init.orientation.distance_threshold").as_double();
+        gps_orientation_params_.delta_distance_threshold 
+            = get_parameter("sensors.gps.init.orientation.delta_distance_threshold").as_double();
+        gps_orientation_params_.max_speed 
+            = get_parameter("sensors.gps.init.orientation.max_speed").as_double();
+        int gps_min_samples = get_parameter("sensors.gps.init.orientation.min_samples").as_int();
+        gps_orientation_params_.min_samples = static_cast<std::size_t>(gps_min_samples);
+
+        estimate_continuous_gps_yaw_ = get_parameter("sensors.gps.continuous_orientation.active").as_bool();
+        gps_orientation_continuous_params_.distance_threshold 
+            = get_parameter("sensors.gps.continuous_orientation.distance_threshold").as_double();
+        gps_orientation_continuous_params_.delta_distance_threshold 
+            = get_parameter("sensors.gps.continuous_orientation.delta_distance_threshold").as_double();
+        gps_orientation_continuous_params_.max_speed 
+            = get_parameter("sensors.gps.continuous_orientation.max_speed").as_double();
+        gps_min_samples = get_parameter("sensors.gps.continuous_orientation.min_samples").as_int();
+        gps_orientation_continuous_params_.min_samples = static_cast<std::size_t>(gps_min_samples);
     }
     
         // 3D Odometry
@@ -409,6 +452,7 @@ void INSEstimator::load_parameters()
     if (wheel_odom_enabled)
     {
         wheel_odom_topic_ = get_parameter("sensors.wheel_odom.topic").as_string();
+        wheel_odom_msg_type_ = get_parameter("sensors.wheel_odom.type").as_string();
         double wheel_odom_noise_x = get_parameter("sensors.wheel_odom.covariance.velocity.x").as_double();
         double wheel_odom_noise_y = get_parameter("sensors.wheel_odom.covariance.velocity.y").as_double();
         double wheel_odom_noise_z = get_parameter("sensors.wheel_odom.covariance.velocity.z").as_double();
@@ -475,10 +519,18 @@ void INSEstimator::setup_subscriptions()
 
     if(!wheel_odom_topic_.empty())
     {
-        wheel_odom_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-            wheel_odom_topic_, 
-            sensor_qos,
-            std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
+        if(wheel_odom_msg_type_ == "twist_stamped"){
+            wheel_odom_twist_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
+                wheel_odom_topic_, 
+                sensor_qos,
+                std::bind(&INSEstimator::wheel_twist_callback, this, std::placeholders::_1));
+        }
+        else{
+            wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+                wheel_odom_topic_, 
+                sensor_qos,
+                std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
+        }
         RCLCPP_INFO(get_logger(), "  Wheel odom: %s", wheel_odom_topic_.c_str());
     }
 
@@ -568,7 +620,11 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         return;
     }
 
+    // Handle time reset (to-do: improve approach)
     // static const double MAX_DT = 0.1;
+
+    // const double t = (use_receive_stamp_) ? this->get_clock()->now().seconds() 
+    //                                         : rclcpp::Time(msg.header.stamp).seconds();
 
     // if (imu.dt < 0.0) // Timestamp went backwards.
     // {
@@ -577,7 +633,7 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
     // }
     // else if(imu.dt > MAX_DT) // Large jump
     // {
-    //     handleTimeJump(t, dt);
+    //     handleTimeJump(t, imu.dt);
     //     imu.dt = 0.0;
     // }
 
@@ -600,7 +656,7 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
         }
         else
         {
-            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
+            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
                 "IMU orientation initializer: %zu samples collected",
                 imu_orientation_initializer_->sample_count_);
         }
@@ -669,19 +725,22 @@ void INSEstimator::gps_callback(
         }
     }
 
-    // Continuous heading refinement -> pushed as yaw measurement for the timer.
-    if (gps_orientation_continuous_->add_position(p_gps_enu, stamp))
-    {
-        measurements::StampedYaw yaw_meas;
-        yaw_meas.stamp = stamp;
-        yaw_meas.yaw = gps_orientation_continuous_->heading();
-        yaw_meas.R.setIdentity();
-        yaw_meas.R *= 0.01;
-        yaw_meas.R_inv = yaw_meas.R.inverse();
-        meas_handler_.push(yaw_meas);
-        publish_yaw_debug(yaw_meas.yaw, p_gps_enu);
-        gps_orientation_continuous_->reset();
+    // Continuous heading refinement -> pushed as yaw measurement
+    if (estimate_continuous_gps_yaw_){
+        if (gps_orientation_continuous_->add_position(p_gps_enu, stamp))
+        {
+            measurements::StampedYaw yaw_meas;
+            yaw_meas.stamp = stamp;
+            yaw_meas.yaw = gps_orientation_continuous_->heading();
+            yaw_meas.R.setIdentity();
+            yaw_meas.R *= 0.01;
+            yaw_meas.R_inv = yaw_meas.R.inverse();
+            meas_handler_.push(yaw_meas);
+            publish_yaw_debug(yaw_meas.yaw, p_gps_enu);
+            gps_orientation_continuous_->reset();
+        }
     }
+    
 
     measurements::StampedGps meas;
     meas.stamp = stamp;
@@ -775,7 +834,9 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     if(trust_odom_pose_covariance_)
     {
         Eigen::Matrix<iESEKF::Scalar, 6, 6> pose_cov;
-        iESEKF::set_pose_covariance(msg.pose.covariance, pose_cov);
+        iESEKF::set_pose_covariance(msg.pose.covariance,
+                                    filter_.getState(),
+                                    pose_cov);
         R_odom.block<3, 3>(0, 0) = pose_cov.block<3, 3>(0, 0);
         R_odom.block<3, 3>(6, 6) = pose_cov.block<3, 3>(3, 3);
     }
@@ -788,7 +849,9 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     if(trust_odom_velocity_covariance_)
     {
         Eigen::Matrix<iESEKF::Scalar, 3, 3> twist_cov;
-        iESEKF::set_velocity_covariance(msg.twist.covariance, twist_cov);
+        iESEKF::set_velocity_covariance(msg.twist.covariance, 
+                                        filter_.getState(),
+                                        twist_cov);
         R_odom.block<3, 3>(3, 3) = twist_cov;
     }
     else
@@ -808,17 +871,34 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     debug_odom_pub_->publish(debug_msg);
 }
 
-void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& msg)
+void INSEstimator::wheel_twist_callback(const geometry_msgs::msg::TwistStamped& msg)
+{
+    wheel_odom_to_buffer(rclcpp::Time(msg.header.stamp), 
+                        msg.header.frame_id, 
+                        msg.twist);
+}
+
+void INSEstimator::wheel_odom_callback(const nav_msgs::msg::Odometry& msg)
+{
+    wheel_odom_to_buffer(rclcpp::Time(msg.header.stamp), 
+                        msg.child_frame_id, 
+                        msg.twist.twist);
+}
+
+void INSEstimator::wheel_odom_to_buffer(
+    const rclcpp::Time& stamp,
+    const std::string& frame_id,
+    const geometry_msgs::msg::Twist& twist)
 {
     if (!wheel_to_base_.initialized())
     {
-        if (!wheel_to_base_.initialize(msg.header.frame_id, body_frame_))
+        if (!wheel_to_base_.initialize(frame_id, body_frame_))
             return;
     }
 
     Eigen::Vector3d wheel_odom;
-    wheel_odom(0) = msg.twist.linear.x;
-    wheel_odom(1) = msg.twist.linear.y;
+    wheel_odom(0) = twist.linear.x;
+    wheel_odom(1) = twist.linear.y;
     wheel_odom(2) = 0.0;
 
     auto base_odom = wheel_to_base_.transform(wheel_odom);
@@ -835,10 +915,11 @@ void INSEstimator::wheel_odom_callback(const geometry_msgs::msg::TwistStamped& m
     R_w(2, 2) = wheel_odom_noise_.z();
 
     measurements::StampedWheel stamped;
-    stamped.stamp = stampToSec(msg.header.stamp);
+    stamped.stamp = stampToSec(stamp);
     stamped.meas = meas;
     stamped.R = R_w;
     stamped.R_inv = R_w.inverse();
+
     meas_handler_.push(stamped);
 }
 
@@ -929,8 +1010,8 @@ void INSEstimator::estimation_timer_callback()
                                     t, filter_time_);
 
         // OOSM: Out-Of-Sequence Measurement
-        // if (t < (filter_time_ - sync_oosm_tolerance_))
-        if (false)
+        if (t < (filter_time_ - sync_oosm_tolerance_))
+        // if (false)
         {
             RCLCPP_DEBUG(
                 get_logger(),
@@ -993,10 +1074,10 @@ void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
 
     refresh_state_from_filter();
 
-    // meas_handler_.pushStateSnapshot(
-    //     filter_time_,
-    //     filter_.getState(),
-    //     filter_.getCovariance());
+    meas_handler_.pushStateSnapshot(
+        filter_time_,
+        filter_.getState(),
+        filter_.getCovariance());
 }
 
 bool INSEstimator::propagateTo(double t)
@@ -1010,19 +1091,20 @@ bool INSEstimator::propagateTo(double t)
     if (t <= filter_time_)
         return true;
 
-    // Propagate through all complete IMU samples before t.
     const auto imu_samples =
         meas_handler_.imuBetween(filter_time_, t);
 
-    RCLCPP_DEBUG(get_logger(), "Retrieved %lu IMU samples", imu_samples.size());
+    RCLCPP_DEBUG(
+        get_logger(),
+        "Retrieved %lu IMU samples",
+        imu_samples.size());
 
     for (const auto& imu : imu_samples)
     {
         if (imu.stamp <= filter_time_)
             continue;
 
-        // Do not consume the sample if it is at/after the target.
-        // Its input will be interpolated below.
+        // This sample is beyond the requested propagation time.
         if (imu.stamp >= t)
             break;
 
@@ -1039,57 +1121,65 @@ bool INSEstimator::propagateTo(double t)
 
         RCLCPP_DEBUG(
             get_logger(),
-            "Propagating complete IMU to %.7f",
-            imu.stamp);
+            "Propagating IMU to %.7f (dt %.7f)",
+            imu.stamp,
+            imu.dt);
 
         filter_.predict(imu);
 
-        refresh_state_from_filter();
+        refresh_state_from_filter(); // advances filter_time_
     }
 
-    // If we haven't reached t, create an interpolated IMU sample
-    //    exactly at t.
+    // There is still an interval between the current filter time
+    // and the requested target.
     if (filter_time_ < t)
     {
-        RCLCPP_DEBUG(get_logger(), "Interpolate IMU sample from %.7f to %.7f", 
-                filter_time_, t);
+        const double dt = t - filter_time_;
 
-        auto interpolated =
-            meas_handler_.interpolateImuAt(t);
+        RCLCPP_DEBUG(
+            get_logger(),
+            "Final propagation from %.7f to %.7f (dt %.7f)",
+            filter_time_,
+            t,
+            dt);
 
-        if (!interpolated)
+        auto last_imu =
+            meas_handler_.latestImuAtOrBefore(filter_time_);
+
+        if (!last_imu)
         {
             RCLCPP_WARN(
                 get_logger(),
                 "Cannot propagate from %.7f to %.7f: "
-                "no IMU samples bracketing target time",
+                "no IMU available at or before current time",
                 filter_time_,
                 t);
 
             return false;
         }
 
-        interpolated->dt = t - filter_time_;
-
-        if (interpolated->dt <= 0.0 ||
-            interpolated->dt >= 0.1)
+        if (dt <= 0.0 || dt >= 0.1)
         {
             RCLCPP_WARN(
                 get_logger(),
-                "Invalid interpolated IMU dt %.7f",
-                interpolated->dt);
+                "Invalid final propagation dt %.7f",
+                dt);
 
             return false;
         }
 
+        last_imu->dt = dt;
+        last_imu->stamp = t;
+
         RCLCPP_DEBUG(
             get_logger(),
-            "Propagating interpolated IMU to %.7f "
-            "(dt %.7f)",
+            "Propagating held/ZoH IMU to %.7f "
+            "(dt %.7f, source %.7f)",
             t,
-            interpolated->dt);
+            dt,
+            last_imu->stamp);
 
-        filter_.predict(*interpolated);
+        filter_.predict(*last_imu);
 
         refresh_state_from_filter();
     }
@@ -1388,13 +1478,14 @@ void INSEstimator::process_relative_odom(const measurements::StampedOdom& odom)
         odom.stamp);
 
     // Previous processed odometry = reference.
+    // auto ref_odom = meas_handler_.peekProcessedOdomAt(filter_time_ - 1.0);
     auto ref_odom = meas_handler_.peekLatestProcessedOdom();
 
     if (!ref_odom)
     {
-        RCLCPP_DEBUG(
+        RCLCPP_WARN(
             get_logger(),
-            "No previous processed odometry available.");
+            "No previous processed odometry available! Skipping relative odom meas");
         return;
     }
 
@@ -1741,7 +1832,8 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
     if (pose_cov.has_value()) {
         out.pose.covariance = *pose_cov;
     }else{
-        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance());
+        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance(),
+                                                        filter_.getState());
         for (int i = 0; i < 36; ++i)
             out.pose.covariance[i]  = pose_cov_vec[i];
     }
@@ -1749,7 +1841,8 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
     if(twist_cov.has_value()) {
         out.twist.covariance = *twist_cov;
     }else{
-        auto twist_cov_vec = iESEKF::get_velocity_covariance(filter_.getCovariance());
+        auto twist_cov_vec = iESEKF::get_velocity_covariance(filter_.getCovariance(), 
+                                                            filter_.getState());
         for (int i = 0; i < 36; ++i)
             out.twist.covariance[i]  = twist_cov_vec[i];
     }
@@ -1782,7 +1875,8 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg:
     if (pose_cov.has_value()) {
         out.pose.covariance = *pose_cov;
     }else{
-        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance());
+        auto pose_cov_vec = iESEKF::get_pose_covariance(filter_.getCovariance(),
+                                                        filter_.getState());
         for (int i = 0; i < 36; ++i)
             out.pose.covariance[i]  = pose_cov_vec[i];
     }

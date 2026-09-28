@@ -16,7 +16,7 @@ ins_ros_node:
     # Timing: stamp incoming measurements at receive time instead of trusting
     # msg headers (enable when sensor clocks are not synced with the PC clock)
     timing:
-      use_receive_stamp: true
+      use_receive_stamp: false
 
     # ============================================================
     # Filter
@@ -42,17 +42,17 @@ ins_ros_node:
     # Measurement synchronization / latency handling
     sync:
       gps:
-        tolerance: 0.005
+        tolerance: 0.0
       odom:
-        tolerance: 0.005
+        tolerance: 0.0
       wheel_odom:
-        tolerance: 0.005
+        tolerance: 0.0
       mag:
-        tolerance: 0.005
+        tolerance: 0.0
       baro:
-        tolerance: 0.005
+        tolerance: 0.0
       yaw:
-        tolerance: 0.005
+        tolerance: 0.0
       OOSM_tolerance: 0.005
 
     # ============================================================
@@ -65,17 +65,12 @@ ins_ros_node:
 
         topic: /ona2/sensors/imu_front/imu_uncalib
 
-        estimate_orientation: true  # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
-        estimate_bias: true         # estimate IMU bias (gyro + accel) from IMU measurements
-        bias:
-          gyro:
-            x: 0.0
-            y: 0.0
-            z: 0.0
-          accel:
-            x: 0.0
-            y: 0.0
-            z: 0.0
+        init:
+          orientation: # estimate initial orientation (roll+pitch) from IMU measurements (yaw is not observable from IMU)
+            active: true 
+
+          bias: # estimate IMU bias (gyro + accel) from IMU measurements
+            active: true
 
       gps:
         enabled: true
@@ -88,15 +83,23 @@ ins_ros_node:
           position:
             x: 0.01
             y: 0.01
-            z: 10.0
+            z: 0.5
 
         lever_arm:
           x: -0.4
           y: 0.0
           z: 0.5
 
+        init:
+          orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
+            distance_threshold: 1.0
+
+        continuous_orientation: # optional continuous yaw measurement (computed from gps path)
+          active: true
+          distance_threshold: 1.0
+
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /fast_limo/state
 
@@ -119,12 +122,14 @@ ins_ros_node:
             z: 0.1
 
       wheel_odom:
-        enabled: false
+        enabled: true
 
-        topic: /input/wheel_odom
+        topic: /ona2/local_odom_combined
+
+        type: odometry  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 
         covariance:
           velocity:
             x: 0.1
             y: 0.1
-            z: 0.01
+            z: 10.01
