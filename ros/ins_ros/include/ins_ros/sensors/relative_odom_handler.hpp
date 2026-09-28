@@ -83,31 +83,9 @@ void H_fun(
     SGal3 Xi = X_i.impl().subgroup<0>();
     SGal3 Xj = X_j.impl().subgroup<0>();
 
-    Xi.coeffs()(10) = 0.0;
-    Xj.coeffs()(10) = 0.0;
-
-    Xi.coeffs()(7) = 0.0;
-    Xi.coeffs()(8) = 0.0;
-    Xi.coeffs()(9) = 0.0;
-
-    Xj.coeffs()(7) = 0.0;
-    Xj.coeffs()(8) = 0.0;
-    Xj.coeffs()(9) = 0.0;
-
     // Odometry measurements
     SGal3 Yi = Y_i.impl().subgroup<0>();
     SGal3 Yj = Y_j.impl().subgroup<0>();
-
-    Yi.coeffs()(10) = 0.0;
-    Yj.coeffs()(10) = 0.0;
-
-    Yi.coeffs()(7) = 0.0;
-    Yi.coeffs()(8) = 0.0;
-    Yi.coeffs()(9) = 0.0;
-
-    Yj.coeffs()(7) = 0.0;
-    Yj.coeffs()(8) = 0.0;
-    Yj.coeffs()(9) = 0.0;
 
     SGal3 Yij = Yi.inverse() * Yj;
     SGal3 Xij = Xi.inverse() * Xj;

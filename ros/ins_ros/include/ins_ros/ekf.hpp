@@ -35,6 +35,7 @@ void state_to_group(const ins_ros::State& state, Group& g);
 std::vector<double> get_pose_covariance(const MatDoF& P, const Group& g);
 std::vector<double> get_velocity_covariance(const MatDoF& P, const Group& g);
 void set_pose_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 6, 6>& P);
+void set_position_covariance(const std::array<double, 9>& cov, const Group& g, Eigen::Matrix<Scalar, 3, 3>& P);
 void set_velocity_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 3, 3>& P);
 MatDoF get_tangent_to_inertial_jacob(const Group& g);
 

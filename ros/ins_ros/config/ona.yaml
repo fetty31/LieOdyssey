@@ -23,12 +23,12 @@ ins_ros_node:
     # ============================================================
     filter:
       iterations:
-        max: 5
+        max: 3
         tolerance: 1.e-5
 
       # Fixed-frequency estimation loop (callbacks only buffer, timer filters)
       rate: 100.0
-      history_window: 5.0
+      history_window: 20.0
       buffer:
         imu_capacity: 2000
         measurement_capacity: 200
@@ -53,7 +53,7 @@ ins_ros_node:
         tolerance: 0.0
       yaw:
         tolerance: 0.0
-      OOSM_tolerance: 0.005
+      OOSM_tolerance: 1.0
 
     # ============================================================
     # Sensors
@@ -85,7 +85,7 @@ ins_ros_node:
             y: 0.01
             z: 0.5
 
-        lever_arm:
+        lever_arm: # GPS antena's position relative to body, expressed in body frame
           x: -0.4
           y: 0.0
           z: 0.5
@@ -93,10 +93,12 @@ ins_ros_node:
         init:
           orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
             distance_threshold: 1.0
+            max_speed: 1.5
 
         continuous_orientation: # optional continuous yaw measurement (computed from gps path)
           active: true
           distance_threshold: 1.0
+          max_speed: 1.5
 
       odometry:
         enabled: false
@@ -125,11 +127,12 @@ ins_ros_node:
         enabled: true
 
         topic: /ona2/local_odom_combined
+        # topic: /fast_limo/state
 
         type: odometry  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 
         covariance:
           velocity:
-            x: 0.1
-            y: 0.1
-            z: 10.01
+            x: 0.01
+            y: 0.01
+            z: 1.0

@@ -11,8 +11,7 @@ void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
 	state.q = X.subgroup<0>().quat();
 	state.v = X.subgroup<0>().linearVelocity();
 
-	// time (here we use the global time)
-	// state.time = time;
+	// time (in case of SGal3 time is part of the group)
 	state.time = X.subgroup<0>().t();
 
 	// biases
@@ -100,16 +99,6 @@ std::vector<double> ins_ros::iESEKF::get_velocity_covariance(const MatDoF& P, co
     return cov;
 }
 
-// void ins_ros::iESEKF::set_pose_covariance(
-//     const std::array<double, 36>& cov,
-//     Eigen::Matrix<Scalar, 6, 6>& P)
-// {
-//     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
-//         P_pose(cov.data());
-    
-//     P = P_pose.cast<Scalar>();
-// }
-
 void ins_ros::iESEKF::set_pose_covariance(
     const std::array<double, 36>& cov,
     const Group& g,
@@ -133,15 +122,23 @@ void ins_ros::iESEKF::set_pose_covariance(
     P = (T_inv * P_ros * T_inv.transpose()).template cast<Scalar>();
 }
 
-// void ins_ros::iESEKF::set_velocity_covariance(
-//     const std::array<double, 36>& cov,
-//     Eigen::Matrix<Scalar, 3, 3>& P)
-// {
-//     Eigen::Map<const Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>
-//         P_odom(cov.data());
+void ins_ros::iESEKF::set_position_covariance(
+    const std::array<double, 9>& cov,
+    const Group& g,
+	Eigen::Matrix<Scalar, 3, 3>& P)
+{
+	// Assuming ROS navsatfix covariance (ENU in row-major)
+    Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>
+        P_enu(cov.data());
 
-//     P = P_odom.block<3, 3>(0, 0).cast<Scalar>();
-// }
+    iESEKF::Bundle X = g.impl();
+
+    const auto R =
+        X.subgroup<0>().quat().toRotationMatrix();
+
+    // ENU/inertial -> filter tangent frame
+    P = (R.transpose() * P_enu * R).template cast<Scalar>();
+}
 
 void ins_ros::iESEKF::set_velocity_covariance(
     const std::array<double, 36>& cov,

@@ -240,6 +240,9 @@ public:
 
         transformed.q.normalize();
 
+        // Velocity
+        transformed.v = R_ * state.v;
+
         return transformed;
     }
 

@@ -741,7 +741,6 @@ void INSEstimator::gps_callback(
         }
     }
     
-
     measurements::StampedGps meas;
     meas.stamp = stamp;
     meas.meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
@@ -752,10 +751,13 @@ void INSEstimator::gps_callback(
     if ((msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {
-        R_gps <<
-            msg.position_covariance[0], msg.position_covariance[1], msg.position_covariance[2],
-            msg.position_covariance[3], msg.position_covariance[4], msg.position_covariance[5],
-            msg.position_covariance[6], msg.position_covariance[7], msg.position_covariance[8];
+        // R_gps <<
+        //     msg.position_covariance[0], msg.position_covariance[1], msg.position_covariance[2],
+        //     msg.position_covariance[3], msg.position_covariance[4], msg.position_covariance[5],
+        //     msg.position_covariance[6], msg.position_covariance[7], msg.position_covariance[8];
+        iESEKF::set_position_covariance(msg.position_covariance, 
+                                        filter_.getState(),
+                                        R_gps);
     }
     else
     {
@@ -901,7 +903,7 @@ void INSEstimator::wheel_odom_to_buffer(
     wheel_odom(1) = twist.linear.y;
     wheel_odom(2) = 0.0;
 
-    auto base_odom = wheel_to_base_.transform(wheel_odom);
+    auto base_odom = wheel_to_base_.rotate(wheel_odom);
 
     iESEKF::Measurement meas = iESEKF::Measurement::Zero(3);
     meas(0) = base_odom(0);
@@ -1243,9 +1245,10 @@ void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
 
 void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
 {
-    RCLCPP_DEBUG(get_logger(), "Updating with Wheel Odom: [%.3f, %.3f]", 
+    RCLCPP_DEBUG(get_logger(), "Updating with Wheel Odom: [%.3f, %.3f, %.3f]", 
                     wheel.meas.x(), 
-                    wheel.meas.y()
+                    wheel.meas.y(),
+                    wheel.meas.z()
                 );
 
     if (wheel.stamp > (filter_time_ + sync_tolerance_wheel_))
@@ -1338,10 +1341,10 @@ bool INSEstimator::handleOOSM(
     RCLCPP_WARN(
         get_logger(),
         "Handling OOSM at %.6f, current filter time %.6f "
-        "(delay %.3f s)",
+        "(delay %.3f ms)",
         t_oosm,
         t_current,
-        t_current - t_oosm);
+        (t_current - t_oosm)*1000.0);
 
     // Make sure the delayed measurement is still inside
     // the available fixed-lag history.
@@ -2012,7 +2015,9 @@ void INSEstimator::print_state(const std::string& prefix, const State& state)
 
 void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
 {
-    // Publish GPS position in INS frame (body w.r.t ENU)
+    // Recover body origin position from GPS antenna position.
+    // gps_position: GPS antenna position in ENU
+    // gps_lever_arm_: GPS antenna position w.r.t. body, expressed in body frame.
     auto R = state_.q.toRotationMatrix().cast<double>();
     auto gps_body = gps_position - R * gps_lever_arm_.cast<double>();
 
