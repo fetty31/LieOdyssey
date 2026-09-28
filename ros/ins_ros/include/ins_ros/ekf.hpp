@@ -1,0 +1,56 @@
+#pragma once
+
+#include <lie_odyssey/lie_odyssey.hpp>
+#include "ins_ros/state.hpp"
+
+#include <array>
+
+namespace ins_ros::iESEKF {
+
+using Scalar = ins_ros::State::Scalar;
+
+using IMUmeas = lie_odyssey::IMUmeas<Scalar>;
+
+using Bundle = lie_odyssey::BundleManif<Scalar, 
+                                    manif::SGal3,   // pose + velocity + time 
+                                    manif::R3,      // angular velocity bias
+                                    manif::R3,      // acceleration bias
+                                    manif::R3       // gravity 
+                                    >;
+
+using Group = lie_odyssey::LieGroup<Bundle>;
+
+using Filter  = lie_odyssey::iESEKF<Group>;
+using Tangent = Filter::Tangent;
+using MatDoF  = Filter::MatDoF;
+
+using Measurement = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
+using HMat = Eigen::Matrix<Scalar, Eigen::Dynamic, Bundle::DoF>; // Measurement Jacobian (N measurement x Group DoF)
+
+// Type-conversion helper
+void group_to_state(const Group& g, ins_ros::State& state);
+void state_to_group(const ins_ros::State& state, Group& g);
+
+// Covariance retrieval (Pose + Vel.)
+std::vector<double> get_pose_covariance(const MatDoF& P, const Group& g);
+std::vector<double> get_velocity_covariance(const MatDoF& P, const Group& g);
+void set_pose_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 6, 6>& P);
+void set_velocity_covariance(const std::array<double, 36>& cov, const Group& g, Eigen::Matrix<Scalar, 3, 3>& P);
+MatDoF get_tangent_to_inertial_jacob(const Group& g);
+
+// Propagation model (IMU dynamics)
+typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
+typename Filter::Tangent f_cv(const Filter& kf, const IMUmeas& imu);
+typename Filter::Tangent f_state(const ins_ros::State& state);
+
+// Jacobians of the dynamics
+typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
+typename Filter::Jacobian df_dx_cv(const Filter& kf, const IMUmeas& imu);
+
+typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/);
+
+// Degeneracy handler
+void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);
+
+} // namespace ins_ros::iESEKF 

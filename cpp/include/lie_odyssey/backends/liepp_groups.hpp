@@ -93,11 +93,115 @@ class BaseLiePP {
     Tangent Log() { return Native::log(g_); }
 
     // Right Plus/Minus operators
-    void plus(Tangent& u){ g_ *= Native::exp(u); } // right plus X' = X ⊕ u
-    Tangent minus(Derived& X)
+    void plus(const Tangent& u)
+    { 
+      Native delta = g_ * Native::exp(u); // right plus X' = X ⊕ u
+      g_ = delta; 
+    } 
+
+    void plus(const Tangent& u, Jacobian& J_dX)
+    {
+      /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
+      */
+      Native delta = Native::exp(u);
+      J_dX = delta.invAdjoint();
+      plus(u);
+    } 
+
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi)
+    {
+      /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
+      */
+      Native delta = Native::exp(u);
+      J_dX = delta.invAdjoint();
+      J_xi = rightJacobian(u);
+      plus(u);
+    } 
+
+    Tangent minus(const Derived& X) const
     { 
       const Derived& self = static_cast<const Derived&>(*this);
-      return Log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
+      return Native::log( X.Inverse().native()*self.g_ );  // right minus t = Y ⊖ X
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dthis) const
+    { 
+      Tangent res = minus(X);
+      J_dthis = invRightJacobian(res);
+      
+      return res;
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const
+    { 
+      Tangent res = minus(X);
+        
+      // J_dthis: Jacobian w.r.t 'this' (the state being minused from)
+      // J_dX: Jacobian w.r.t 'X' (the reference state)
+      
+      // According to Sola (2018) for Right-Minus error \eta = X^-1 * Y:
+      // The Jacobian w.r.t. the right element (Y/this) is the inverse Right Jacobian
+      J_dthis = invRightJacobian(res);
+      
+      // The Jacobian w.r.t. the left element (X) involves the inverse Adjoint
+      // J_dX = -invRightJacobian(res) * Adjoint(this^-1 * X) 
+      // Often simplified in EKF to:
+      J_dX = -invLeftJacobian(res) * X.g_.invAdjoint();
+
+      return res;
+    }
+
+    // Left Plus/Minus operators
+    void lplus(const Tangent& u)
+    { 
+      Native delta = g_ * Native::exp(u); // left plus X' = u ⊕ X
+      g_ = delta; 
+    } 
+
+    void lplus(const Tangent& u, Jacobian& J_dX)
+    {
+      /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
+      */
+      Native delta = Native::exp(u);
+      J_dX = delta.Adjoint();
+      lplus(u);
+    } 
+
+    void lplus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi)
+    {
+      /* Jacobian expressions from J.Solà page 11 (https://arxiv.org/pdf/1812.01537)
+      */
+      Native delta = Native::exp(u);
+      J_dX = delta.Adjoint();
+      J_xi = leftJacobian(u);
+      lplus(u);
+    } 
+
+    Tangent lminus(const Derived& X) const
+    { 
+      const Derived& self = static_cast<const Derived&>(*this);
+      return Native::log( self.g_ * X.Inverse().native() ); // left minus t = Y ⊖ X = Log( self * X.inverse() )
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis) const
+    { 
+      Tangent res = lminus(X);
+      J_dthis = invLeftJacobian(res);
+
+      return res;
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const
+    { 
+      Tangent res = lminus(X);
+      
+      // According to Sola (2018), for \eta = Y * X^-1:
+      // J_dthis = J_left^-1(res)
+      // J_dX    = -Adjoint(this) * J_right^-1(res)  [approx -Adjoint(this)]
+      J_dthis = invLeftJacobian(res);
+      J_dX    = -Adjoint() * invRightJacobian(res);
+      
+      return res;
     }
 
     // Group ops
@@ -261,4 +365,4 @@ class Gal3TGLiePP : public BaseLiePP<Gal3TGLiePP<Scalar>, group::Gal3TG<Scalar>>
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_BACKENDS_LIEPLUSPLUS_HPP__

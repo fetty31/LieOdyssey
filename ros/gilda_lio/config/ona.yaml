@@ -1,0 +1,96 @@
+# Ona config
+
+gilda_lio_node:
+  ros__parameters:
+    topics:
+      input:
+        lidar: /ona2/sensors/pandar_front/cloud
+        imu: /ona2/sensors/imu_front/imu_uncalib
+
+    frames: # output frames (the transform between frames will be broadcasted)
+      world: map
+      body: base_link
+      tf_pub: true
+
+    num_threads: 20 # OpenMP threads (will be equal to $(nproc) if it is set higher)
+
+    sensor_type: "HESAI"  # LiDAR type (OUSTER \ VELODYNE \ HESAI \ LIVOX)
+
+    debug: true       # fill useful intermediate pcl (deskewed, final_raw...) for visualizing purposes
+    map_debug: false  # publish voxelmap gaussians for visualizing purposes (big overhead, deactivate for real-time use)
+
+    time_offset: true           # whether to take into account a possible sync offset between IMU and LiDAR (set to true if they are not properly in sync)
+    end_of_sweep: false         # whether the sweep reference time is w.r.t. the start or the end of the scan (only applies to VELODYNE/OUSTER)
+    motion_compensation: false   # whether to perform motion compensation (deskewing)
+
+    calibration:  # automatic IMU calibration (if all set to false, no calibration will be done)
+      gravity_align: false     # estimate gravity vector
+      accel: false             # estimate lin. accel. bias
+      gyro: false              # estimate ang. vel. bias
+      time: 3.0               # [s] time to estimate (during this time, the robot must be at stand still)
+
+    extrinsics: # w.r.t baselink [SI]
+      imu:
+        t: [ 0.87, 0.44, 0.17 ]
+        R: [ 1.,  0.,  0.,
+              0.,  1.,  0.,
+              0.,  0.,  1. ]
+      lidar:
+        t: [ 0.87,  -0.44,  -0.201 ]
+        R: [ 1.,  0.,  0.,
+              0.,  1.,  0.,
+              0.,  0.,  1. ]
+
+    intrinsics:
+      accel:
+        bias: [ 0.01, 0.01, 0.01 ]  # [m/s^2]
+        sm:   [ 1.,  0.,  0.,
+                0.,  1.,  0.,
+                0.,  0.,  1. ]
+      gyro:
+        bias: [ 0.01, 0.01, 0.01 ]  # [rad/s]
+
+    filters:
+      cropBox: # prism crop
+        active: true
+        box:
+          min: [ -1.0, -1.0, -1.0 ]  # [m]
+          max: [ 1.0, 1.0, 1.0 ]     # [m]
+
+      voxelGrid:
+        active: true
+        leafSize: [ 0.25, 0.25, 0.25 ]
+
+      minDistance: # sphere crop
+        active: true
+        value: 3.0  # [m]
+
+      rateSampling: # quick downsample
+        active: false
+        value: 4
+
+    iESEKF:  # Iterative Error-State Kalman Filter on Manifolds
+      MAX_NUM_ITERS: 3                # max num of iterations of the KF (limits comp. load)
+      MAX_NUM_MATCHES: 5000           # max num of matches to account for when computing Jacobians (limits comp. load)
+      MAX_NUM_PC2MATCH: 10000         # max num of points to consider when matching with map (limits comp. load)
+      TOLERANCE: 0.001                     
+      LIDAR_NOISE: 0.05                   
+
+      Mapping:
+        NUM_MATCH_POINTS: 5           # num of points that constitute a match
+        MAX_DIST_PLANE: 2.0           # [m] max distance between points of every match
+        PLANES_THRESHOLD: 5.0e-2      # [m] threshold to consider if match points are part of a plane 
+        GaussIVox: # voxelmap
+          update_size: 1              # number of accumulated points to re-compute gaussian 
+          buffer_size: 50             # max number of points before merging gaussians (number of points which make covariance converge)
+          resolution: 0.25            # voxel resolution [m]
+          chi_square: 7.815           # chi-square threshold for mahalanobis distance (used for merging strategy)
+          noise_floor: 0.00001        # regularization noise term, represents the minimum covariance (highest confidence on a gaussian)
+          lidar_angle_noise: 0.001    # LiDAR angular error/std [rad]
+          lidar_range_noise: 0.0001   # LiDAR range error/std [m]
+
+      covariance:
+        gyro: 0.015
+        accel: 0.15
+        bias_gyro: 1.54e-5
+        bias_accel: 3.38e-4

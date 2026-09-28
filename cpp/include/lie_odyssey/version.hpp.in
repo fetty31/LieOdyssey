@@ -1,0 +1,13 @@
+#pragma once
+
+namespace lie_odyssey {
+
+// Version string from CMake
+constexpr char LIE_ODYSSEY_VERSION[] = "@PROJECT_VERSION@";
+
+// separate components
+constexpr int LIE_ODYSSEY_VERSION_MAJOR = @PROJECT_VERSION_MAJOR@;
+constexpr int LIE_ODYSSEY_VERSION_MINOR = @PROJECT_VERSION_MINOR@;
+constexpr int LIE_ODYSSEY_VERSION_PATCH = @PROJECT_VERSION_PATCH@;
+
+} // namespace lie_odyssey

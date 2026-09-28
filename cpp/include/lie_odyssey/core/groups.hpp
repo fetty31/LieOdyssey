@@ -38,7 +38,7 @@ public:
     static LieGroup Exp(const Tangent& u) { 
         return LieGroup(Impl::Exp(u)); 
     }
-    Tangent Log() const { 
+    Tangent Log() { 
         return impl_.Log(); 
     }
 
@@ -55,9 +55,50 @@ public:
         impl_.plus(u); 
     }
 
+    void plus(const Tangent& u, Jacobian& J_dX) { 
+        impl_.plus(u, J_dX); 
+    }
+
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) { 
+        impl_.plus(u, J_dX, J_xi); 
+    }
+
     Tangent minus(const LieGroup& X) const { 
         // X ⊖ this = Log( X^{-1} * this )
         return impl_.minus(X.impl_); 
+    }
+
+    Tangent minus(const LieGroup& X, Jacobian& J_dthis) const { 
+        return impl_.minus(X.impl_, J_dthis); 
+    }
+
+    Tangent minus(const LieGroup& X, Jacobian& J_dthis, Jacobian& J_dX) const { 
+        return impl_.minus(X.impl_, J_dthis, J_dX); 
+    }
+
+    // Left plus / minus
+    void lplus(const Tangent& u) { 
+        impl_.lplus(u); 
+    }
+
+    void lplus(const Tangent& u, Jacobian& J_dX) { 
+        impl_.lplus(u, J_dX); 
+    }
+
+    void lplus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) { 
+        impl_.lplus(u, J_dX, J_xi); 
+    }
+
+    Tangent lminus(const LieGroup& X) const { 
+        return impl_.lminus(X.impl_); 
+    }
+
+    Tangent lminus(const LieGroup& X, Jacobian& J_dthis) const { 
+        return impl_.lminus(X.impl_, J_dthis); 
+    }
+
+    Tangent lminus(const LieGroup& X, Jacobian& J_dthis, Jacobian& J_dX) const { 
+        return impl_.lminus(X.impl_, J_dthis, J_dX); 
     }
 
     // Adjoint
@@ -100,4 +141,4 @@ private:
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_CORE_GROUPS_HPP__

@@ -1,0 +1,615 @@
+#ifndef __LIEODYSSEY_IESEKF_FILTER_HPP__
+#define __LIEODYSSEY_IESEKF_FILTER_HPP__
+
+#include <Eigen/Dense>
+#include "lie_odyssey/core/groups.hpp"
+#include "lie_odyssey/core/imu_data.hpp"
+
+namespace lie_odyssey {
+
+// -------------------- Iterative Error-State Extended Kalman Filter (iESEKF) on Manifolds --------------------
+template <typename Group>
+class iESEKF {
+public:
+    using Scalar  = typename Group::Impl::Native::Scalar;
+    using Tangent = typename Group::Tangent;
+    static constexpr int DoF = Group::Impl::DoF;
+
+    using VecTangent = Eigen::Matrix<Scalar, DoF, 1>;
+
+    using Jacobian = typename Group::Jacobian;          // same as MatDoF
+    using NoiseMatrix = Eigen::Matrix<Scalar,12,12>;    // w = (n_w, n_a, n_{b_w}, n_{b_a})
+
+    using MatDoF = Eigen::Matrix<Scalar,DoF,DoF>;
+    using MappingMatrix = Eigen::Matrix<Scalar,DoF,12>;
+
+    // User-defined dynamics
+    using TangentFunction = std::function<Tangent(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
+    using JacobianXFun  = std::function<Jacobian(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
+    using JacobianWFun  = std::function<MappingMatrix(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
+    using DegeneracyCallback = std::function<void(const iESEKF<Group>&, Tangent&, const MatDoF&)>;
+
+    iESEKF(
+           const MatDoF& P = MatDoF::Identity()*Scalar(1e-3),
+           const NoiseMatrix& Q = NoiseMatrix::Identity()*Scalar(1e-3),
+           TangentFunction f = nullptr,
+           JacobianXFun f_dx = nullptr,
+           JacobianWFun f_dw = nullptr,
+           DegeneracyCallback degen_callback = nullptr)
+        : X_(), P_(P), Q_(Q),
+        f_(f), f_dx_(f_dx), f_dw_(f_dw), degeneracy_callback_(degen_callback),
+        max_iters_(3), tol_(Scalar(1e-9))
+    {
+        // Provide safe defaults (identity dynamics)
+        if (!f_) {
+            f_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return VecTangent::Zero(); }; // cast
+        }
+        if (!f_dx_) {
+            f_dx_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return Jacobian::Identity(); };
+        }
+        if (!f_dw_) {
+            f_dw_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return MappingMatrix::Zero(); };
+        }
+
+        // Safe callback, do not handle degeneracy
+        if (!degeneracy_callback_) {
+            degeneracy_callback_ = [](const iESEKF<Group>&, Tangent&, const MatDoF&) { return; };
+        }
+    }
+
+    // -------------------- Prediction --------------------
+    virtual void predict(const IMUmeas<Scalar>& imu) 
+    {
+        // Propagate state using user dynamics
+        Jacobian J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX  == Adj(exp(xi))^-1
+        Jacobian J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi  == Jr
+        X_.plus(f_(*this, imu) * Scalar( imu.dt ), J_dX, J_xi);
+
+        // Update covariance
+        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * Scalar( imu.dt );   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
+        MappingMatrix Fw = J_xi * f_dw_(*this, imu) * Scalar( imu.dt );     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
+
+        P_ = Fx * P_ * Fx.transpose() + Fw * Q_ * Fw.transpose(); 
+    }
+
+    // -------------------- Measurement Update --------------------
+    // y: measurement
+    // R: measurement noise
+    // R_inv: measurement noise inverse
+    // h_fun: measurement function returning residual (y-ypred)
+    // H_fun: Jacobian of measurement w.r.t tangent function
+    template <typename Measurement, typename Residual, typename HMat>
+    void update(const Measurement& y,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
+                std::function<Residual(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
+                std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
+    {
+
+        Group X_now = X_;     // predicted state (reference frame)
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+        
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+
+        for(int iter=0; iter < max_iters_; ++iter) {
+
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
+
+            // Linearize measurement
+            HMat H = H_fun(*this, X_now);     // (Eigen::Dynamic x DoF) = (N measurements x DoF)
+
+            // Residual at this point
+            Residual r = h_fun(*this, X_now, y);   // y - h(X ⊕ dx)
+
+            // Update covariance
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();           // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
+
+            K = aux * H.transpose() * R_inv;
+            KH = K*H;
+
+            // Update error state
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
+
+            // Update state
+            X_now.plus(dx);
+
+            // Check convergence
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        // Apply final correction
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // y: measurement
+    // R: measurement noise
+    // R_inv: measurement noise inverse
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename Residual, typename HMat>
+    void update(const Measurement& y,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
+                std::function<void(const iESEKF<Group>&, const Group&, const Measurement&, Residual&, HMat&)> H_fun)
+    {
+        Group X_now = X_;
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+        
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+
+        for(int iter=0; iter < max_iters_; ++iter) {
+
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);
+
+            // Get residual and linearized measurement model
+            Residual r;
+            HMat H;
+            H_fun(*this, X_now, y, r, H);    // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            // Update covariance
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();           // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
+
+            K = aux * H.transpose() * R_inv;
+            KH = K*H;
+
+            // Update error state
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
+
+            // Update state
+            X_now.plus(dx);
+
+            // Check convergence
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        // Apply final correction
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // R: measurement noise
+    // R_inv: measurement noise inverse
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename HMat>
+    void update(const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R_inv,
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+    {
+
+        Group X_now = X_;   // predicted state (reference frame)
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+        
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+
+        for(int iter=0; iter < max_iters_; ++iter) {
+
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
+
+            // Get residual and linearized measurement model
+            Measurement r;
+            HMat H;
+            H_fun(*this, X_now, r, H);       // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            // Update covariance
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * R_inv * H; // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();           // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                    // (HT R^−1 H + P^−1)^−1
+
+            K = aux * H.transpose() * R_inv;
+            KH = K*H;
+
+            // Update error state
+            dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
+
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
+
+            // Update state
+            X_now.plus(dx);
+
+            // Check convergence
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        // Apply final correction
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // R: measurement noise (same for all measurements)
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename HMat>
+    void update(Scalar R,
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+    {
+
+        using MatDyn = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+
+        Group X_now = X_;     // predicted state (reference frame)
+        MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
+        MatDoF P_now;         // transformed covariance (P^κ)
+
+        Eigen::Matrix<Scalar, DoF, Eigen::Dynamic> K;
+        MatDoF KH;
+        
+        for(int iter=0; iter < max_iters_; ++iter) {
+
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
+
+            // // Get residual and linearized measurement model
+            Measurement r;
+            HMat H;
+            H_fun(*this, X_now, r, H);  // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                        // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            // Update covariance
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Kalman gain (K = (HT R^−1 H + P^−1)^−1 HT R^−1)
+            MatDoF HRH = H.transpose() * H / R;   // (HT R^−1 H)
+            MatDoF aux = P_now.inverse();         // (P^−1)
+            aux += HRH;                             
+            aux = aux.inverse();                  // (HT R^−1 H + P^−1)^−1
+
+            K = aux * H.transpose() / R;
+            KH = K * H;
+            
+            // Update error state
+            dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            // Degeneracy handling 
+            degeneracy_callback_(*this, dx, HRH);
+
+            // Update state
+            X_now.plus(dx);
+
+            // Check convergence
+            // if((dx.coeffs().array().abs() <= tol_).all())
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        // Apply final correction
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        // Enforce symmetry
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // R: scalar measurement noise (same for all measurements)
+    // S: selection matrix (select which DoF to update)
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename HMat>
+    void update(Scalar R,
+                const Eigen::Matrix<Scalar, Eigen::Dynamic, DoF>& S,
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+    {
+        using MatDyn = Eigen::Matrix<Scalar,Eigen::Dynamic,Eigen::Dynamic>;
+        using HFull  = Eigen::Matrix<Scalar,Eigen::Dynamic,DoF>;
+
+        Group X_now = X_;  // predicted state (reference frame)
+
+        MatDoF P_pred = P_; // fixed predicted covariance (P̂_k)
+        MatDoF P_now;       // transformed covariance (P^κ)
+
+        Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K;
+        MatDyn K_sub; 
+        MatDoF KH;
+
+        for(int iter = 0; iter < max_iters_; ++iter)
+        {
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);
+
+            // User supplies Jacobian only wrt active state
+            Measurement r;
+            HMat H_sub; 
+
+            H_fun(*this, X_now, r, H_sub);  // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
+                                            // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Reduced covariance
+            MatDyn Pss = S * P_now * S.transpose(); // active block (subDoF x subDoF)
+
+            // Cross covariance
+            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> Pxs = P_now * S.transpose(); // (DoF x subDoF)
+
+            // Information matrix
+            MatDyn Lambda =
+                Pss.inverse() +
+                H_sub.transpose() * H_sub / R;
+
+            // Invert once
+            MatDyn Lambda_inv = Lambda.inverse();
+
+            // Full Kalman gain
+            K.resize(DoF, r.rows());
+
+            K =
+                Pxs *
+                Lambda_inv *
+                H_sub.transpose() / R;
+
+            // Full-state Jacobian
+            HFull H_full = H_sub * S;
+            KH = K * H_full;
+
+            // Update error state
+            dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            degeneracy_callback_(
+                *this,
+                dx,
+                H_full.transpose() * H_full / R
+            );
+
+            X_now.plus(dx);
+
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        P_ = Scalar(0.5) * (P_ + P_.transpose());
+    }
+
+    // -------------------- Measurement Update --------------------
+    // R: scalar measurement noise (same for all measurements)
+    // S: selection matrix (select which DoF to update)
+    // H_fun: measurement function -> fills residual z and measurement jacobian H
+    template <typename Measurement, typename HMat>
+    void update(const Eigen::Matrix<Scalar,
+                                    Eigen::Dynamic, Eigen::Dynamic>& R,
+                const Eigen::Matrix<Scalar, Eigen::Dynamic, DoF>& S,
+                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+    {
+        using MatDyn = Eigen::Matrix<Scalar,Eigen::Dynamic,Eigen::Dynamic>;
+        using HFull  = Eigen::Matrix<Scalar,Eigen::Dynamic,DoF>;
+
+        Group X_now = X_;  // predicted state (reference frame)
+
+        MatDoF P_pred = P_; // fixed predicted covariance (P̂_k)
+        MatDoF P_now;       // transformed covariance (P^κ)
+
+        Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> K;
+        MatDyn K_sub; 
+        MatDoF KH;
+
+        auto R_inv = R.inverse();
+
+        for(int iter = 0; iter < max_iters_; ++iter)
+        {
+            // Current error state
+            Jacobian J;
+            Tangent dx = X_now.minus(X_, J);
+
+            // User supplies Jacobian only wrt active state
+            Measurement r;
+            HMat H_sub; 
+
+            H_fun(*this, X_now, r, H_sub);  // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
+                                            // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+
+            Jacobian J_inv = J.inverse();
+            P_now = J_inv * P_pred * J_inv.transpose();
+
+            // Reduced covariance
+            MatDyn Pss = S * P_now * S.transpose(); // active block (subDoF x subDoF)
+
+            // Cross covariance
+            Eigen::Matrix<Scalar,DoF,Eigen::Dynamic> Pxs = P_now * S.transpose(); // (DoF x subDoF)
+
+            // Information matrix
+            MatDyn Lambda =
+                Pss.inverse() +
+                H_sub.transpose() *
+                R_inv *
+                H_sub;
+
+            // Invert once
+            MatDyn Lambda_inv = Lambda.inverse();
+
+            // Full Kalman gain
+            K =
+                Pxs *
+                Lambda.inverse() *
+                H_sub.transpose() *
+                R_inv;
+
+            // Full-state Jacobian
+            HFull H_full = H_sub * S;
+            KH = K * H_full;
+
+            // Update error state
+            dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
+
+            degeneracy_callback_(
+                *this,
+                dx,
+                H_full.transpose() * R_inv * H_full
+            );
+
+            X_now.plus(dx);
+
+            if(dx.coeffs().norm() < tol_)
+                break;
+        }
+
+        X_ = X_now;
+
+        // Joseph covariance update
+        MatDoF I = MatDoF::Identity();
+
+        P_ =
+            (I - KH) * P_now * (I - KH).transpose()
+            + K * R * K.transpose();
+
+        P_ = Scalar(0.5) * (P_ + P_.transpose());
+    }
+
+    void reset() 
+    {
+        X_.setIdentity();
+        P_ = MatDoF::Identity() * Scalar(1e-3);
+    }
+
+    // Access filter covariance
+    MatDoF getCovariance() const { return P_; }
+
+    // Access process noise
+    NoiseMatrix getProcessNoise() const { return Q_; }
+
+    // Access state
+    Group getState() const { return X_; }
+
+    // Get max iters
+    int getMaxIters() { return max_iters_; }
+
+    // Get tolerance
+    Scalar getTolerance() { return tol_; }
+
+    // Set filter covariance
+    void setCovariance(const MatDoF& P) { P_ = P; }
+
+    // Set propagation noise
+    void setProcessNoise(const NoiseMatrix& Q) { Q_ = Q; }
+
+    // Set state
+    void setState(const Group& X) { X_ = X; }
+
+    // Set max iters
+    void setMaxIters(int it) { max_iters_ = it; }
+
+    // Set tolerance
+    void setTolerance(Scalar tol) { tol_ = tol; }
+
+protected:
+
+    // State: Lie group element (or Bundle)
+    Group X_;   
+
+    // Covariance on error state (DoF)
+    MatDoF P_;
+
+    // Propagation noise matrix
+    NoiseMatrix Q_;
+
+    // Maximum iterations
+    int max_iters_;
+
+    // Tolerance
+    Scalar tol_;
+
+    // User-defined dynamics (+ degeneracy handling)
+    TangentFunction f_;     // system dynamics (IMU input mapped to tangent space)
+    JacobianXFun f_dx_;     // Jacobian w.r.t. state
+    JacobianWFun f_dw_;     // Jacobian w.r.t. noise
+    DegeneracyCallback degeneracy_callback_;   // Degeneracy handling callback (optional)
+
+};
+
+} // namespace lie_odyssey
+
+
+#endif // __LIEODYSSEY_IESEKF_FILTER_HPP__

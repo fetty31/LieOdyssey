@@ -14,6 +14,7 @@
 //  - lie_odyssey::SE3<Scalar>
 //  - lie_odyssey::SE23Manif<Scalar>
 //  - lie_odyssey::Gal3Manif<Scalar>
+//  - lie_odyssey::BundleManif<Scalar, Groups>
 //
 // Common interface provided by all wrappers:
 //   using Native, Tangent, MatrixType, Jacobian;
@@ -110,14 +111,81 @@ public:
     // We'll forward to the documented member functions where possible.
     void plus(const Tangent& u) { g_ *= u.exp(); } // right plus X' = X ⊕ u
 
+    // Right Plus/Minus operators
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    void plus(const Tangent& u, Jacobian& J_dX) 
+    {
+      g_ = g_.plus(u, J_dX); // right plus X' = X ⊕ u
+    } 
+
+    // Right Plus/Minus operators
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    //    J_xi: jacobian w.r.t. perturbation
+    void plus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) 
+    {
+      g_ = g_.plus(u, J_dX, J_xi); // right plus X' = X ⊕ u
+    } 
+
     Tangent minus(const Derived& X) const {
         // Right minus: documented X - Y or X.rminus(Y) returns tangent.
         // Compute: Log( X^{-1} * this ) or as documented: this->minus(X) semantics.
         // We implement right-minusing: this ⊖ X = Log( X^{-1} ∘ this )
-        const Derived& self = static_cast<const Derived&>(*this);
-        Native invX = X.g_.inverse();
-        Native relative = invX * self.g_;
-        return relative.log(); 
+        // const Derived& self = static_cast<const Derived&>(*this);
+        // Native invX = X.g_.inverse();
+        // Native relative = invX * self.g_;
+        // return relative.log(); 
+        return g_.rminus(X.g_); 
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dthis) const {
+        // Right minus: documented X - Y or X.rminus(Y) returns tangent.
+        // returning also:
+        //     J_dthis: jacobian w.r.t. the right element (Y/this) 
+        return g_.rminus(X.g_, J_dthis); 
+    }
+
+    Tangent minus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const {
+        // Right minus: documented X - Y or X.rminus(Y) returns tangent.
+        // returning also:
+        //    J_dthis: jacobian w.r.t. the right element (Y/this) 
+        //    J_dX: jacobian w.r.t. the left element (X)
+        return g_.rminus(X.g_, J_dthis, J_dX); 
+    }
+
+    // Left plus operator: X = exp(u) * X 
+    void lplus(const Tangent& u) {
+        g_ = u.exp() * g_;
+    }
+
+    // Left plus operator
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    void lplus(const Tangent& u, Jacobian& J_dX) 
+    {
+      g_ = g_.lplus(u, J_dX); // right plus X' = X ⊕ u
+    } 
+
+    // Left plus operator
+    // returning also:
+    //    J_dX: jacobian w.r.t. state  
+    //    J_xi: jacobian w.r.t. perturbation
+    void lplus(const Tangent& u, Jacobian& J_dX, Jacobian& J_xi) 
+    {
+      g_ = g_.lplus(u, J_dX, J_xi); // right plus X' = X ⊕ u
+    } 
+
+    Tangent lminus(const Derived& X) const {
+        return g_.lminus(X.g_); 
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis) const {
+        return g_.lminus(X.g_, J_dthis); 
+    }
+
+    Tangent lminus(const Derived& X, Jacobian& J_dthis, Jacobian& J_dX) const {
+        return g_.lminus(X.g_, J_dthis, J_dX); 
     }
 
     // Group ops
@@ -223,14 +291,33 @@ class Gal3Manif : public BaseManif<Gal3Manif<Scalar>, manif::SGal3<Scalar>> {
 };
 
 // ------------------------------- Bundle / Composite ---------------------
-//
-// manif supports Bundle<> (composite manifold). Users wanting a wrapper for
-// Bundle should instantiate BaseManif<manif::Bundle<...>> directly. We don't
-// create a dedicated convenience wrapper here because the fields are user-
-// defined (the bundle template params).
-//
-// -----------------------------------------------------------------------
+
+template <typename Scalar, template<typename> class... Groups>
+class BundleManif : public BaseManif<BundleManif<Scalar, Groups...>, 
+                                     manif::Bundle<Scalar, Groups...>> 
+{
+    using Base = BaseManif<BundleManif<Scalar, Groups...>, 
+                           manif::Bundle<Scalar, Groups...>>;
+public:
+    using Native   = typename Base::Native;
+    using Tangent  = typename Base::Tangent;
+    using MatrixType = typename Base::MatrixType;
+    using Jacobian = typename Base::Jacobian;
+
+    static constexpr int DoF = Native::DoF;
+
+    BundleManif() : Base() { }
+    explicit BundleManif(const Base& b) : Base(b) { }
+    explicit BundleManif(const Native& gg) : Base(gg) { }
+
+    // Access a subgroup by index
+    template <std::size_t I>
+    auto subgroup() const { return this->g_.template element<I>(); }
+
+    template <std::size_t I>
+    auto subgroup() { return this->g_.template element<I>(); }
+};
 
 } // namespace lie_odyssey
 
-#endif
+#endif // __LIEODYSSEY_BACKENDS_MANIF_HPP__

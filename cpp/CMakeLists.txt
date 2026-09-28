@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.16...3.26)
-project(lie_odyssey_cpp VERSION 1.0 LANGUAGES CXX)
+project(lie_odyssey_cpp VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+message(STATUS "Project version: ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 
 # Setup build options
 option(USE_CCACHE "Build using Ccache if found on the path" ON)
@@ -15,6 +17,11 @@ option(USE_SYSTEM_LIEPLUSPLUS "Use system pre-installed Lie++" OFF)
 option(USE_EIGEN3 "Install Eigen (mandatory)" ON)
 option(USE_MANIF "Install Manif lib (optional)" ON)
 option(USE_LIEPLUSPLUS "Install Lie++ lib (optional)" ON)
+
+# Check backend
+if(NOT USE_MANIF AND NOT USE_LIEPLUSPLUS)
+    message(FATAL_ERROR "You must enable at least one Lie backend: USE_MANIF or USE_LIEPLUSPLUS")
+endif()
 
 # ccache setup
 if(USE_CCACHE)
@@ -54,6 +61,12 @@ if(USE_MANIF)
 endif()
 
 # LieOdyssey lib
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lie_odyssey/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/lie_odyssey/version.hpp"
+    @ONLY
+)
+
 add_library(${PROJECT_NAME} INTERFACE )
 target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -67,40 +80,32 @@ target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 if(USE_LIEPLUSPLUS)
   message(STATUS "Adding library LiePlusPlus")
   target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_LIEPLUSPLUS)
-  target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
+  # target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
+  target_include_directories(${PROJECT_NAME} INTERFACE
+    $<BUILD_INTERFACE:${LiePlusPlus_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include/LiePlusPlus>  # optional
+  )
+  # Export LiePlusPlus headers together with this project
+  install(DIRECTORY ${LiePlusPlus_SOURCE_DIR}/include/
+          DESTINATION include/LiePlusPlus)
   # target_include_directories(${PROJECT_NAME} INTERFACE ${LiePlusPlus_SOURCE_DIR}/include)
-  target_link_libraries(${PROJECT_NAME} INTERFACE LiePlusPlus)
+  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:LiePlusPlus::LiePlusPlus>)
 endif()
 
 # Add manif dependency
 if(USE_MANIF)
   message(STATUS "Adding library Manif")
   target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_MANIF)
-  target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
-  target_link_libraries(${PROJECT_NAME} INTERFACE manif)
+  # target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
+  target_include_directories(${PROJECT_NAME} INTERFACE
+    $<BUILD_INTERFACE:${manif_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include/manif>  # optional
+  )
+  # Export LiePlusPlus headers together with this project
+  install(DIRECTORY ${manif_SOURCE_DIR}/include/
+          DESTINATION include/manif)
+  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:manif::manif>)
 endif()
-
-
-# --------- Executable main ---------
-add_executable(${PROJECT_NAME}_exec
-              src/main.cpp 
-              )
-# target_include_directories(${PROJECT_NAME}_exec INTERFACE
-#     ${LIE_ODYSSEY_INCLUDE_DIRS}
-# )
-target_link_libraries(${PROJECT_NAME}_exec PRIVATE ${PROJECT_NAME})
-
-
-
-
-
-
-
-
-
-
-
-
 
 # (optional) Build tests
 if(ENABLE_TEST)
@@ -109,19 +114,23 @@ if(ENABLE_TEST)
 endif()
 
 # Install headers
-# install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY include/ DESTINATION include)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lie_odyssey/version.hpp"
+  DESTINATION include/lie_odyssey
+)
 
 # Export the INTERFACE target
-# install(TARGETS ${PROJECT_NAME}
-#     EXPORT ${PROJECT_NAME}Targets
-# )
+install(TARGETS ${PROJECT_NAME}
+    EXPORT ${PROJECT_NAME}Targets
+)
 
-# # Export info
-# install(EXPORT ${PROJECT_NAME}Targets
-#     FILE ${PROJECT_NAME}Targets.cmake
-#     NAMESPACE lie_odyssey::
-#     DESTINATION lib/cmake/lie_odyssey
-# )
+# Export info
+install(EXPORT ${PROJECT_NAME}Targets
+    FILE ${PROJECT_NAME}Targets.cmake
+    NAMESPACE lie_odyssey::
+    DESTINATION lib/cmake/lie_odyssey
+)
 
 # Package configuration
 include(CMakePackageConfigHelpers)
