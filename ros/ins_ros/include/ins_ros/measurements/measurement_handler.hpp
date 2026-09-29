@@ -17,7 +17,6 @@ namespace ins_ros::measurements {
 // -----------------------------------------------------------------------------
 
 using Measurement = std::variant<
-    iESEKF::IMUmeas,
     StampedGps,
     StampedOdom,
     StampedWheel,
@@ -84,20 +83,21 @@ public:
   template <typename T>
   void push(const T& measurement)
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+      std::lock_guard<std::mutex> lock(mutex_);
 
-    QueuedMeasurement queued{Measurement{measurement}};
+      if constexpr (std::is_same_v<T, iESEKF::IMUmeas>)
+      {
+          insertSorted(imu_history_, measurement);
+          pruneHistory(measurement.stamp);
+      }
+      else
+      {
+          QueuedMeasurement queued{Measurement{measurement}};
+          insertMeasurement(queued);
+      }
 
-    insertMeasurement(queued);
-
-    if constexpr (std::is_same_v<T, iESEKF::IMUmeas>)
-    {
-        insertSorted(imu_history_, measurement);
-        pruneHistory(measurement.stamp);
-    }
-
-    enforceCapacity();
-  }   
+      enforceCapacity();
+  }
 
   // ---------------------------------------------------------------------------
   // Global chronological measurement queue
@@ -228,6 +228,13 @@ public:
   * @brief Remove processed measurements older than t_min.
   */
   void pruneProcessedHistory(double t_min);
+
+    /**
+   * @brief Remove processed measurements after t.
+   *
+   * Measurements with stamp > t are removed (used for removing tail before OOSM handling).
+   */
+  void eraseProcessedAfter(double t);
 
   // ---------------------------------------------------------------------------
   // Odom utils
@@ -377,28 +384,20 @@ private:
   Options options_;
 
   /**
-   * @brief Single live processing queue containing ALL sensor measurements.
-   *
-   * Always maintained in chronological order.
-   *
-   * Example:
-   *
-   *   IMU   1.000
-   *   IMU   1.005
-   *   ODOM  1.007
-   *   IMU   1.010
-   *   GPS   1.015
-   *   YAW   1.020
-   */
+  * @brief Chronological queue of pending non-IMU measurements.
+  *
+  * IMU samples are handled separately through imu_history_ because they
+  * form the propagation timeline and are retained independently for
+  * repropagation.
+  */
   std::deque<QueuedMeasurement> measurement_queue_;
 
   /**
-   * @brief Historical IMU measurements retained for rewind/repropagation.
-   *
-   * This is intentionally separate from measurement_queue_. Once an IMU
-   * measurement has been processed and removed from the live queue, it must
-   * still be available to repropagate the filter after a delayed update.
-   */
+  * @brief Raw IMU timeline retained for propagation and repropagation.
+  *
+  * IMU samples are not consumed when the filter propagates. They remain
+  * available for OOSM replay within the history window.
+  */
   std::deque<iESEKF::IMUmeas> imu_history_;
 
   /**
@@ -407,8 +406,10 @@ private:
   std::deque<StateSnapshot> state_history_;
 
   /**
-   * @brief Processed sensor measurements by the filter (used for rewind)
-   */
+  * @brief Non-IMU measurements that have been incorporated into the filter.
+  *
+  * Used to reconstruct the sequence of aiding updates after an OOSM rewind.
+  */
   std::deque<QueuedMeasurement> processed_history_;
 
   /**

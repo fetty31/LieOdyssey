@@ -73,12 +73,12 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     measurements::MeasurementHandler::Options handler_opts;
     handler_opts.imu_capacity = imu_buffer_capacity_;
     handler_opts.measurement_capacity = measurement_capacity_;
+    handler_opts.processed_capacity = processed_capacity_;
     handler_opts.state_capacity = imu_buffer_capacity_;
     handler_opts.history_window_s = history_window_s_;
     meas_handler_.setOptions(handler_opts);
     meas_handler_.clear();
 
-    setup_subscriptions();
     setup_publishers();
 
     // Reset filter
@@ -104,6 +104,9 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
 INSEstimator::CallbackReturn INSEstimator::on_activate(const rclcpp_lifecycle::State&)
 {
     RCLCPP_DEBUG(get_logger(), "Activating...");
+
+    // Start listening
+    setup_subscriptions();
 
     state_pub_->on_activate();
     pose_pub_->on_activate();
@@ -228,6 +231,7 @@ void INSEstimator::declare_parameters()
     declare_parameter<double>("filter.history_window", 5.0);
     declare_parameter<int>("filter.buffer.imu_capacity", 2000);
     declare_parameter<int>("filter.buffer.measurement_capacity", 200);
+    declare_parameter<int>("filter.buffer.processed_capacity", 1000);
 
     // Synchronization / latency handling
     declare_parameter<double>("sync.gps.tolerance", 0.005);
@@ -345,6 +349,7 @@ void INSEstimator::load_parameters()
     history_window_s_ = get_parameter("filter.history_window").as_double();
     imu_buffer_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.imu_capacity").as_int());
     measurement_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.measurement_capacity").as_int());
+    processed_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.processed_capacity").as_int());
 
     sync_tolerance_gps_ = get_parameter("sync.gps.tolerance").as_double();
     sync_tolerance_odom_ = get_parameter("sync.odom.tolerance").as_double();
@@ -751,10 +756,6 @@ void INSEstimator::gps_callback(
     if ((msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {
-        // R_gps <<
-        //     msg.position_covariance[0], msg.position_covariance[1], msg.position_covariance[2],
-        //     msg.position_covariance[3], msg.position_covariance[4], msg.position_covariance[5],
-        //     msg.position_covariance[6], msg.position_covariance[7], msg.position_covariance[8];
         iESEKF::set_position_covariance(msg.position_covariance, 
                                         filter_.getState(),
                                         R_gps);
@@ -990,10 +991,9 @@ void INSEstimator::estimation_timer_callback()
     {
         RCLCPP_DEBUG(
             get_logger(),
-            "Queue: %zu total | IMU: %zu | GPS: %zu | ODOM: %zu | "
+            "Queue: %zu total | GPS: %zu | ODOM: %zu | "
             "WHEEL: %zu | MAG: %zu | BARO: %zu | YAW: %zu",
             meas_handler_.queuedCount(),
-            meas_handler_.queuedCountOfType<iESEKF::IMUmeas>(),
             meas_handler_.queuedCountOfType<measurements::StampedGps>(),
             meas_handler_.queuedCountOfType<measurements::StampedOdom>(),
             meas_handler_.queuedCountOfType<measurements::StampedWheel>(),
@@ -1065,23 +1065,6 @@ void INSEstimator::estimation_timer_callback()
         filter_time_ - history_window_s_);
 }
 
-void INSEstimator::processMeasurement(const iESEKF::IMUmeas& imu)
-{
-    RCLCPP_DEBUG(get_logger(), "Propagating IMU");
-
-    if (imu.stamp <= filter_time_)
-        return;
-
-    filter_.predict(imu);
-
-    refresh_state_from_filter();
-
-    meas_handler_.pushStateSnapshot(
-        filter_time_,
-        filter_.getState(),
-        filter_.getCovariance());
-}
-
 bool INSEstimator::propagateTo(double t)
 {
     RCLCPP_DEBUG(
@@ -1110,7 +1093,8 @@ bool INSEstimator::propagateTo(double t)
         if (imu.stamp >= t)
             break;
 
-        if (imu.dt <= 0.0 || imu.dt >= 0.1)
+        // if (imu.dt <= 0.0 || imu.dt >= 0.1)
+        if (imu.dt <= 0.0)
         {
             RCLCPP_WARN(
                 get_logger(),
@@ -1160,7 +1144,8 @@ bool INSEstimator::propagateTo(double t)
             return false;
         }
 
-        if (dt <= 0.0 || dt >= 0.1)
+        // if (dt <= 0.0 || dt >= 0.1)
+        if (dt <= 0.0)
         {
             RCLCPP_WARN(
                 get_logger(),
@@ -1186,7 +1171,7 @@ bool INSEstimator::propagateTo(double t)
         refresh_state_from_filter();
     }
 
-    return std::abs(filter_time_ - t) < 1e-9;
+    return true;
 }
 
 void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
@@ -1401,6 +1386,22 @@ bool INSEstimator::handleOOSM(
                    measurements::MeasurementHandler::getStamp(b);
         });
 
+    RCLCPP_WARN(
+        get_logger(),
+        "OOSM replay: snapshot=%.6f, oosm=%.6f, current=%.6f, replay_size=%zu",
+        t_rewind,
+        t_oosm,
+        t_current,
+        replay.size());
+
+    for (const auto& m : replay)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "  replay: %.6f",
+            measurements::MeasurementHandler::getStamp(m));
+    }
+
     // Restore filter state/covariance.
     iESEKF::group_to_state(snapshot->group, state_);
     state_.time = t_rewind;
@@ -1409,8 +1410,9 @@ bool INSEstimator::handleOOSM(
 
     filter_time_ = state_.time;
 
-    // Delete the invalid state-history tail.
+    // Delete the invalid history tail (state & processed).
     meas_handler_.eraseStateHistoryAfter(t_rewind);
+    meas_handler_.eraseProcessedAfter(t_rewind);
 
     // Replay everything chronologically.
     for (const auto& queued : replay)

@@ -152,6 +152,17 @@ void MeasurementHandler::pruneProcessedHistory(double t_min)
     }
 }
 
+void MeasurementHandler::eraseProcessedAfter(double t)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    while (!processed_history_.empty() && 
+            getStamp(processed_history_.back()) > t)
+    {
+        processed_history_.pop_back();
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Odom utils
 // -----------------------------------------------------------------------------
@@ -356,9 +367,6 @@ MeasurementHandler::snapshotAt(double t_query) const
     else
         break;
     }
-
-    if (!best)
-        best = state_history_.front();
 
     return best;
 }

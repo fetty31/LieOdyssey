@@ -108,7 +108,6 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         bool propagateTo(double t);
 
-        void processMeasurement(const iESEKF::IMUmeas& imu);
         void processMeasurement(const measurements::StampedGps& gps);
         void processMeasurement(const measurements::StampedOdom& odom);
         void processMeasurement(const measurements::StampedWheel& wheel);
@@ -270,6 +269,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         double sync_oosm_tolerance_{0.005};
         std::size_t imu_buffer_capacity_{2000};
         std::size_t measurement_capacity_{1000};
+        std::size_t processed_capacity_{1000};
 
         // Process noise parameters
         double gyro_noise_;

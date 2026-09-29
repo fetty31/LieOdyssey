@@ -32,6 +32,7 @@ ins_ros_node:
       buffer:
         imu_capacity: 2000
         measurement_capacity: 200
+        processed_capacity: 1000
 
       process_noise:
         gyro: 0.015
@@ -53,7 +54,7 @@ ins_ros_node:
         tolerance: 0.0
       yaw:
         tolerance: 0.0
-      OOSM_tolerance: 1.0
+      OOSM_tolerance: 0.0
 
     # ============================================================
     # Sensors
@@ -126,8 +127,8 @@ ins_ros_node:
       wheel_odom:
         enabled: true
 
-        topic: /ona2/local_odom_combined
-        # topic: /fast_limo/state
+        # topic: /ona2/local_odom_combined
+        topic: /fast_limo/state
 
         type: odometry  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 

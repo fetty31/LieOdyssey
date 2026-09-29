@@ -32,6 +32,7 @@ ins_ros_node:
       buffer:
         imu_capacity: 2000
         measurement_capacity: 200
+        processed_capacity: 1000
 
       process_noise:
         gyro: 0.015

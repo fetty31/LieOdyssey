@@ -8,7 +8,7 @@ ins_ros_node:
     # ============================================================
     frames:
       world: odom
-      body: base_link
+      body: imu_link
 
     tf:
       publish: true
@@ -31,7 +31,8 @@ ins_ros_node:
       history_window: 5.0
       buffer:
         imu_capacity: 2000
-        measurement_capacity: 2000
+        measurement_capacity: 200
+        processed_capacity: 1000
 
       process_noise:
         gyro: 6.01e-4
