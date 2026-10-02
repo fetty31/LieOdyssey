@@ -10,6 +10,7 @@
 #include "ins_ros/init/gps_orientation_initializer.hpp"
 
 #include "ins_ros/utils/frame_transform.hpp"
+#include "ins_ros/utils/trajectory_aligner.hpp"
 
 #include "ins_ros/measurements/measurement_handler.hpp"
 
@@ -31,6 +32,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -128,6 +130,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void refresh_state_from_filter();
 
         bool try_initialize_orientation();
+        bool try_align_odom_to_gps();
 
         void setState();
 
@@ -163,8 +166,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void print_state(const std::string& prefix, const ins_ros::State& state);
 
-        void publish_gps_debug(const Eigen::Vector3d& gps_position);
-        void publish_yaw_debug(double yaw, const Eigen::Vector3d& position_enu);
+        void publish_gps_fix_debug(const Eigen::Vector3d& position);
+        void publish_gps_odom_debug(const measurements::StampedGps& meas);
+        void publish_yaw_debug(double yaw, const Eigen::Vector3d& position);
+        void publish_aligned_trajectories_debug(const Eigen::Isometry3d& T = Eigen::Isometry3d::Identity());
 
     // VARIABLES
 
@@ -177,6 +182,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Centralized measurement buffers + state history for rewind.
         measurements::MeasurementHandler meas_handler_;
+
+        // Trajectory aligner for LIO/VIO -> ENU transform estimation.
+        utils::TrajectoryAligner trajectory_aligner_;
 
         // Filter time base: ROS sensor stamp (seconds) of last processed IMU.
         double filter_time_{-1.0};
@@ -296,8 +304,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Publishers (debug/visualization)
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_gps_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr debug_source_traj_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr debug_source_traj_aligned_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr debug_target_traj_pub_;
         std::vector<geometry_msgs::msg::Point> debug_gps_points_;
-        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr debug_odom_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr debug_gps_odom_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr debug_lio_odom_pub_;
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_yaw_pub_;
         
 };

@@ -8,11 +8,18 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
 
     rviz_config = LaunchConfiguration('rviz')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     rviz_config_arg = DeclareLaunchArgument(
         'rviz',
         default_value='False',
         description = 'Whether to run an rviz instance'
+    )
+
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='False',
+        description='Use simulation time'
     )
 
     lio_node = Node(
@@ -25,7 +32,10 @@ def generate_launch_description():
                 FindPackageShare('lio_ros'),
                 'config',
                 'kitti.yaml'
-            ])]
+            ]),
+            {
+                'use_sim_time': use_sim_time
+            }]
     )
 
     rviz_conditioned = ExecuteProcess(
@@ -49,6 +59,7 @@ def generate_launch_description():
     
     return LaunchDescription([
         rviz_config_arg,
+        use_sim_time_arg,
         lio_node,
         rviz_conditioned
     ])

@@ -54,7 +54,7 @@ ins_ros_node:
         tolerance: 0.0
       yaw:
         tolerance: 0.0
-      OOSM_tolerance: 0.0
+      OOSM_tolerance: 0.1
 
     # ============================================================
     # Sensors
@@ -102,7 +102,7 @@ ins_ros_node:
           max_speed: 1.5
 
       odometry:
-        enabled: false
+        enabled: true
 
         topic: /fast_limo/state
 

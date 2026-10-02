@@ -79,6 +79,9 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     meas_handler_.setOptions(handler_opts);
     meas_handler_.clear();
 
+    // Trajectory aligner
+    trajectory_aligner_.clear();
+
     setup_publishers();
 
     // Reset filter
@@ -96,6 +99,9 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     filter_.setTolerance(tolerance_);
 
     setState();
+
+    // Debug variables
+    debug_gps_points_.clear();
 
     RCLCPP_INFO(get_logger(), "Configured");
     return CallbackReturn::SUCCESS;
@@ -149,6 +155,7 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
 
     filter_.reset();
     meas_handler_.clear();
+    trajectory_aligner_.clear();
     filter_time_ = -1.0;
     filter_init_time_ = -1.0;
     filter_time_initialized_ = false;
@@ -195,6 +202,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     tf_broadcaster_.reset();
 
     meas_handler_.clear();
+    trajectory_aligner_.clear();
 
     return CallbackReturn::SUCCESS;
 }
@@ -574,8 +582,20 @@ void INSEstimator::setup_publishers()
 
     debug_gps_pub_ =
         create_publisher<visualization_msgs::msg::Marker>(
-            "~/debug/gps_position", 10);
-    debug_odom_pub_ =
+            "~/debug/gps_fix", 10);
+    debug_source_traj_pub_ =
+        create_publisher<nav_msgs::msg::Path>(
+            "~/debug/source_trajectory", 10);
+    debug_source_traj_aligned_pub_ =
+        create_publisher<nav_msgs::msg::Path>(
+            "~/debug/source_trajectory_aligned", 10);
+    debug_target_traj_pub_ =
+        create_publisher<nav_msgs::msg::Path>(
+            "~/debug/target_trajectory", 10);
+    debug_gps_odom_pub_ =
+        create_publisher<nav_msgs::msg::Odometry>(
+            "~/debug/gps_fix_odom", 10);
+    debug_lio_odom_pub_ =
         create_publisher<nav_msgs::msg::Odometry>(
             "~/debug/lio_odom", 10);
     debug_yaw_pub_ = create_publisher<visualization_msgs::msg::Marker>(
@@ -711,7 +731,7 @@ void INSEstimator::gps_callback(
             msg.longitude,
             msg.altitude);
 
-    publish_gps_debug(p_gps_enu);
+    publish_gps_fix_debug(p_gps_enu); // publish debug marker (gps path in ENU)
 
     const double stamp = stampToSec(msg.header.stamp);
 
@@ -730,6 +750,13 @@ void INSEstimator::gps_callback(
         }
     }
 
+        // Feed trajectory aligner
+    if(!trajectory_aligner_.isAligned())
+    {
+        auto p_body_enu = p_gps_enu - (state_.q.toRotationMatrix() * gps_lever_arm_).cast<double>(); // GPS antenna -> body frame
+        trajectory_aligner_.addTargetPose(p_body_enu, stamp);
+    }
+
     // Continuous heading refinement -> pushed as yaw measurement
     if (estimate_continuous_gps_yaw_){
         if (gps_orientation_continuous_->add_position(p_gps_enu, stamp))
@@ -741,8 +768,9 @@ void INSEstimator::gps_callback(
             yaw_meas.R *= 0.01;
             yaw_meas.R_inv = yaw_meas.R.inverse();
             meas_handler_.push(yaw_meas);
-            publish_yaw_debug(yaw_meas.yaw, p_gps_enu);
             gps_orientation_continuous_->reset();
+
+            publish_yaw_debug(yaw_meas.yaw, p_gps_enu); // publish debug marker (yaw arrow in ENU)
         }
     }
     
@@ -770,7 +798,11 @@ void INSEstimator::gps_callback(
     meas.R = R_gps;
     meas.R_inv = R_gps.inverse();
 
+    // Push GPS measurement to the handler
     meas_handler_.push(meas);
+
+    // Publish debug message
+    publish_gps_odom_debug(meas); // publish debug odometry message (GPS fix in ENU with received/computed covariance)
 }
 
 void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
@@ -795,9 +827,17 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
     if ((!gps_topic_.empty()))
     {
+        State lio_base = lio_to_base_.transform(odom_meas);
+        const Eigen::Vector3d p_lio_base = lio_base.p.cast<double>();
+
+        if(!trajectory_aligner_.isAligned())
+        {
+            trajectory_aligner_.addSourcePose(p_lio_base, odom_meas.time);
+        }
+
         if(!lio_to_enu_.initialized())
         {
-            if (!orientation_initialized_ || (!enu_converter_.initialized()))
+            if(!try_align_odom_to_gps())
             {
                 RCLCPP_WARN_THROTTLE(
                 get_logger(),
@@ -806,25 +846,38 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
                 "Skipping ODOMETRY (LIO/VIO) measurement, missing ENU frame initialization.");
                 return;
             }
-
-            auto T_enu_base = initial_enu_base_.isometry();
-            auto T_base_lio = lio_to_base_.isometry();
-
-            utils::FrameTransform::Isometry3
-                T_lio_world = Eigen::Isometry3d::Identity();
-            T_lio_world.linear() = odom_meas.q.toRotationMatrix();
-            T_lio_world.translation() = odom_meas.p;
-
-            auto T_enu_lio_world = T_enu_base * T_base_lio * T_lio_world.inverse();
-
-            lio_to_enu_.setTransform(
-                T_enu_lio_world.linear(),
-                T_enu_lio_world.translation());
-
-            RCLCPP_INFO(get_logger(), "Initialized LIO/VIO world -> ENU alignment.");
         }
 
-        odom_meas = lio_to_enu_.transform(odom_meas);
+        // if(!lio_to_enu_.initialized())
+        // {
+        //     if (!orientation_initialized_ || (!enu_converter_.initialized()))
+        //     {
+        //         RCLCPP_WARN_THROTTLE(
+        //         get_logger(),
+        //         *get_clock(),
+        //         1000,
+        //         "Skipping ODOMETRY (LIO/VIO) measurement, missing ENU frame initialization.");
+        //         return;
+        //     }
+
+        //     auto T_enu_base = initial_enu_base_.isometry();
+        //     auto T_base_lio = lio_to_base_.isometry();
+
+        //     utils::FrameTransform::Isometry3
+        //         T_lio_world = Eigen::Isometry3d::Identity();
+        //     T_lio_world.linear() = odom_meas.q.toRotationMatrix();
+        //     T_lio_world.translation() = odom_meas.p;
+
+        //     auto T_enu_lio_world = T_enu_base * T_base_lio * T_lio_world.inverse();
+
+        //     lio_to_enu_.setTransform(
+        //         T_enu_lio_world.linear(),
+        //         T_enu_lio_world.translation());
+
+        //     RCLCPP_INFO(get_logger(), "Initialized LIO/VIO world -> ENU alignment.");
+        // }
+
+        odom_meas = lio_to_enu_.transform(lio_base);
     }else{
         odom_meas = lio_to_base_.transform(odom_meas);
     }
@@ -871,7 +924,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
     nav_msgs::msg::Odometry debug_msg;
     from_ins_to_ros(odom_meas, debug_msg, msg.pose.covariance, msg.twist.covariance);
-    debug_odom_pub_->publish(debug_msg);
+    debug_lio_odom_pub_->publish(debug_msg);
 }
 
 void INSEstimator::wheel_twist_callback(const geometry_msgs::msg::TwistStamped& msg)
@@ -1013,7 +1066,6 @@ void INSEstimator::estimation_timer_callback()
 
         // OOSM: Out-Of-Sequence Measurement
         if (t < (filter_time_ - sync_oosm_tolerance_))
-        // if (false)
         {
             RCLCPP_DEBUG(
                 get_logger(),
@@ -1210,13 +1262,13 @@ void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
     print_state("Before odometry update", state_);
 
     // If GPS active --> process relative odom in order to avoid frame alignment
-    if (!gps_topic_.empty()){
-        process_relative_odom(odom);
-    } 
-    else
-    {
+    // if (!gps_topic_.empty()){
+    //     process_relative_odom(odom);
+    // } 
+    // else
+    // {
         process_odom(odom);
-    }
+    // }
 
     refresh_state_from_filter();
 
@@ -1563,6 +1615,55 @@ bool INSEstimator::try_initialize_orientation()
 
     initialize_orientation();
     return orientation_initialized_;
+}
+
+bool INSEstimator::try_align_odom_to_gps()
+{
+    if (!orientation_initialized_ || (!enu_converter_.initialized()))
+        return false;
+
+    constexpr double travelled_dist = 30.0; // meters
+
+    Eigen::Isometry3d T_enu_lio;
+
+    if (!trajectory_aligner_.align(travelled_dist, T_enu_lio))
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Failed to align ODOMETRY (LIO/VIO) trajectory to ENU frame. ");
+        return false;
+    }
+
+    lio_to_enu_.setTransform(
+                T_enu_lio.linear(),
+                T_enu_lio.translation());
+
+    RCLCPP_INFO(
+        get_logger(),
+        "LIO -> ENU trajectory alignment initialized.");
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Translation: [%.3f, %.3f, %.3f]",
+        T_enu_lio.translation().x(),
+        T_enu_lio.translation().y(),
+        T_enu_lio.translation().z());
+
+    const Eigen::Vector3d rpy =
+        T_enu_lio.rotation().eulerAngles(0, 1, 2);
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Rotation RPY: [%.3f, %.3f, %.3f] deg",
+        rpy.x() * 180.0 / M_PI,
+        rpy.y() * 180.0 / M_PI,
+        rpy.z() * 180.0 / M_PI);
+
+    publish_aligned_trajectories_debug(T_enu_lio);
+
+    return true;
 }
 
 void INSEstimator::initialize_orientation()
@@ -2015,19 +2116,12 @@ void INSEstimator::print_state(const std::string& prefix, const State& state)
         state.bias.a.x(), state.bias.a.y(), state.bias.a.z());
 }
 
-void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
+void INSEstimator::publish_gps_fix_debug(const Eigen::Vector3d& position)
 {
-    // Recover body origin position from GPS antenna position.
-    // gps_position: GPS antenna position in ENU
-    // gps_lever_arm_: GPS antenna position w.r.t. body, expressed in body frame.
-    auto R = state_.q.toRotationMatrix().cast<double>();
-    auto gps_body = gps_position - R * gps_lever_arm_.cast<double>();
-
     geometry_msgs::msg::Point p;
-    p.x = gps_body.x();
-    p.y = gps_body.y();
-    p.z = gps_body.z();
-
+    p.x = position.x();
+    p.y = position.y();
+    p.z = position.z();
     debug_gps_points_.push_back(p);
 
     visualization_msgs::msg::Marker marker;
@@ -2035,7 +2129,7 @@ void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
     marker.header.stamp = this->now();
     marker.header.frame_id = world_frame_;
 
-    marker.ns = "gps_debug";
+    marker.ns = "ins_ros_gps_debug";
     marker.id = 0;
     marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
     marker.action = visualization_msgs::msg::Marker::ADD;
@@ -2052,18 +2146,66 @@ void INSEstimator::publish_gps_debug(const Eigen::Vector3d& gps_position)
     debug_gps_pub_->publish(marker);
 }
 
-void INSEstimator::publish_yaw_debug(double yaw, const Eigen::Vector3d& position_enu)
+void INSEstimator::publish_gps_odom_debug(const measurements::StampedGps& stamped_gps)
+{
+    nav_msgs::msg::Odometry odom_msg;
+    odom_msg.header.stamp = this->now();
+    odom_msg.header.frame_id = world_frame_;
+    odom_msg.child_frame_id = body_frame_;
+
+    // Recover body origin position from GPS antenna position.
+    // position_enu: GPS antenna position in ENU
+    // lever_arm: GPS antenna position w.r.t. body, expressed in body frame.
+    auto R = state_.q.toRotationMatrix();
+    auto gps_body = stamped_gps.meas.position_enu - R * stamped_gps.meas.lever_arm;
+
+    odom_msg.pose.pose.position.x = gps_body.x();
+    odom_msg.pose.pose.position.y = gps_body.y();
+    odom_msg.pose.pose.position.z = gps_body.z();
+
+    // GPS position covariance.
+    // ROS Odometry pose covariance layout:
+    // [x, y, z, roll, pitch, yaw]
+    //
+    // R_gps is assumed to be the 3x3 ENU position covariance.
+    odom_msg.pose.covariance.fill(0.0);
+
+    odom_msg.pose.covariance[0]  = stamped_gps.R(0, 0);  // x-x
+    odom_msg.pose.covariance[1]  = stamped_gps.R(0, 1);  // x-y
+    odom_msg.pose.covariance[2]  = stamped_gps.R(0, 2);  // x-z
+
+    odom_msg.pose.covariance[6]  = stamped_gps.R(1, 0);  // y-x
+    odom_msg.pose.covariance[7]  = stamped_gps.R(1, 1);  // y-y
+    odom_msg.pose.covariance[8]  = stamped_gps.R(1, 2);  // y-z
+
+    odom_msg.pose.covariance[12] = stamped_gps.R(2, 0);  // z-x
+    odom_msg.pose.covariance[13] = stamped_gps.R(2, 1);  // z-y
+    odom_msg.pose.covariance[14] = stamped_gps.R(2, 2);  // z-z
+
+    // No orientation information is provided by GPS.
+    // We leave roll/pitch/yaw covariance at zero because 
+    // this message is strictly for debugging. 
+
+    // No velocity measurement from this GPS message.
+    odom_msg.twist.covariance.fill(0.0);
+
+    // Publish
+    debug_gps_odom_pub_->publish(odom_msg);
+}
+
+void INSEstimator::publish_yaw_debug(double yaw, const Eigen::Vector3d& position)
 {
     visualization_msgs::msg::Marker marker;
 
     marker.header.frame_id = world_frame_;
     marker.header.stamp = this->now();
-    marker.ns = "yaw_marker";
+    marker.ns = "ins_ros_yaw_debug";
     marker.id = 0;
     marker.type = visualization_msgs::msg::Marker::ARROW;
     marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.pose.position.x = position_enu.x();
-    marker.pose.position.y = position_enu.y();
+    marker.pose.position.x = position.x();
+    marker.pose.position.y = position.y();
+    marker.pose.position.z = position.z();
     tf2::Quaternion q;
     q.setRPY(0.0, 0.0, yaw);
     marker.pose.orientation = tf2::toMsg(q);
@@ -2078,6 +2220,63 @@ void INSEstimator::publish_yaw_debug(double yaw, const Eigen::Vector3d& position
     debug_yaw_pub_->publish(marker);
 }
 
+void INSEstimator::publish_aligned_trajectories_debug(const Eigen::Isometry3d& Tt)
+{   
+    // debug: remove translation from Tt to visualize only rotation alignment
+    auto T = Eigen::Isometry3d::Identity();
+    T.linear() = Tt.linear();
+    Eigen::Vector3d t0 = Eigen::Vector3d::Zero();
+    T.translation() = t0;
+
+    auto sync_trajs = trajectory_aligner_.synchronize();
+
+    nav_msgs::msg::Path path_source;
+    path_source.header.frame_id = world_frame_;
+    path_source.header.stamp = this->now();
+
+    nav_msgs::msg::Path path_aligned;
+    path_aligned.header.frame_id = world_frame_;
+    path_aligned.header.stamp = this->now();
+
+    for(auto& pose : sync_trajs.source)
+    {
+        geometry_msgs::msg::PoseStamped ps;
+        ps.header.frame_id = world_frame_;
+        ps.header.stamp = this->now();
+        ps.pose.position.x = pose.position.x();
+        ps.pose.position.y = pose.position.y();
+        ps.pose.position.z = pose.position.z();
+        ps.pose.orientation.w = 1.0;
+        path_source.poses.push_back(ps);
+
+        auto pose_aligned = T * pose.position;
+        ps.pose.position.x = pose_aligned.x();
+        ps.pose.position.y = pose_aligned.y();
+        ps.pose.position.z = pose_aligned.z();
+        path_aligned.poses.push_back(ps);
+    }
+
+    nav_msgs::msg::Path path_target;
+    path_target.header.frame_id = world_frame_;
+    path_target.header.stamp = this->now();
+
+    for(auto& pose : sync_trajs.target)
+    {
+        geometry_msgs::msg::PoseStamped ps;
+        ps.header.frame_id = world_frame_;
+        ps.header.stamp = this->now();
+        ps.pose.position.x = pose.position.x();
+        ps.pose.position.y = pose.position.y();
+        ps.pose.position.z = pose.position.z();
+        ps.pose.orientation.w = 1.0;
+
+        path_target.poses.push_back(ps);
+    }
+
+    debug_source_traj_pub_->publish(path_source);
+    debug_target_traj_pub_->publish(path_target);
+    debug_source_traj_aligned_pub_->publish(path_aligned);
+}
 
 } // namespace ins_ros
 

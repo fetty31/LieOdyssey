@@ -9,6 +9,7 @@ def generate_launch_description():
 
     rviz_config = LaunchConfiguration('rviz')
     param_config = LaunchConfiguration('config')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     rviz_config_arg = DeclareLaunchArgument(
         'rviz',
@@ -26,13 +27,22 @@ def generate_launch_description():
         description = 'Path to yaml config'
     )
 
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='False',
+        description='Use simulation time'
+    )
+
     lio_node = Node(
         package='lio_ros',
         namespace='',
         executable='lio_ros_node',
         name='lio_ros_node',
         output='screen',
-        parameters=[param_config]
+        parameters=[param_config,
+                    {
+                        'use_sim_time': use_sim_time
+                    }]
     )
 
     rviz_conditioned = ExecuteProcess(
@@ -57,6 +67,7 @@ def generate_launch_description():
     return LaunchDescription([
         rviz_config_arg,
         param_config_arg,
+        use_sim_time_arg,
         lio_node,
         rviz_conditioned
     ])
