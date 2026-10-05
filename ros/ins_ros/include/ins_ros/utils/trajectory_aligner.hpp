@@ -307,11 +307,11 @@ private:
             });
 
         // Exact match.
-        if (it != trajectory.end() && it->time == time)
-        {
+        // if (it != trajectory.end() && it->time == time)
+        // {
             pose = *it;
             return true;
-        }
+        // }
 
         // Need one point before and one after.
         if (it == trajectory.begin() || it == trajectory.end())

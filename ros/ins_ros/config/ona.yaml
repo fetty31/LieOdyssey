@@ -56,6 +56,11 @@ ins_ros_node:
         tolerance: 0.0
       OOSM_tolerance: 0.1
 
+    # Use trajectory alignment (umemaya) to align Odometry and GPS trajectories 
+    trajectory_aligner:
+      enabled: true
+      min_distance: 35.0
+
     # ============================================================
     # Sensors
     # ============================================================
@@ -93,7 +98,7 @@ ins_ros_node:
 
         init:
           orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
-            distance_threshold: 1.0
+            distance_threshold: 2.0
             max_speed: 1.5
 
         continuous_orientation: # optional continuous yaw measurement (computed from gps path)
@@ -102,7 +107,7 @@ ins_ros_node:
           max_speed: 1.5
 
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /fast_limo/state
 

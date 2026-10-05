@@ -56,6 +56,11 @@ ins_ros_node:
         tolerance: 0.0
       OOSM_tolerance: 0.0
 
+    # Use trajectory alignment (umemaya) to align Odometry and GPS trajectories 
+    trajectory_aligner:
+      enabled: true
+      min_distance: 35.0
+
     # ============================================================
     # Sensors
     # ============================================================
@@ -110,13 +115,13 @@ ins_ros_node:
           distance_threshold: 1.0
 
       odometry:
-        enabled: false
+        enabled: true
 
         topic: /lio_ros/state
 
         trust_covariance: # whether to trust the covariance from the Odometry message or not 
           pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
-          velocity: false  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
+          velocity: true  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
 
         covariance:
           position:

@@ -56,6 +56,11 @@ ins_ros_node:
         tolerance: 0.005
       OOSM_tolerance: 0.005
 
+    # Use trajectory alignment (umemaya) to align Odometry and GPS trajectories 
+    trajectory_aligner:
+      enabled: true
+      min_distance: 35.0
+
     # ============================================================
     # Sensors
     # ============================================================

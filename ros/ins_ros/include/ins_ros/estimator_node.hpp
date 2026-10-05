@@ -11,6 +11,7 @@
 
 #include "ins_ros/utils/frame_transform.hpp"
 #include "ins_ros/utils/trajectory_aligner.hpp"
+#include "ins_ros/utils/debug.hpp"
 
 #include "ins_ros/measurements/measurement_handler.hpp"
 
@@ -39,11 +40,6 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/magnetic_field.hpp>
 #include <sensor_msgs/msg/fluid_pressure.hpp>
-
-    // debug/visualization
-#include <visualization_msgs/msg/marker.hpp>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 // TF
 #include <tf2_ros/transform_broadcaster.h>
@@ -130,7 +126,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void refresh_state_from_filter();
 
         bool try_initialize_orientation();
-        bool try_align_odom_to_gps();
+        bool try_align_odom_to_gps(const State& odom_meas);
 
         void setState();
 
@@ -166,11 +162,6 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void print_state(const std::string& prefix, const ins_ros::State& state);
 
-        void publish_gps_fix_debug(const Eigen::Vector3d& position);
-        void publish_gps_odom_debug(const measurements::StampedGps& meas);
-        void publish_yaw_debug(double yaw, const Eigen::Vector3d& position);
-        void publish_aligned_trajectories_debug(const Eigen::Isometry3d& T = Eigen::Isometry3d::Identity());
-
     // VARIABLES
 
     private:
@@ -185,6 +176,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Trajectory aligner for LIO/VIO -> ENU transform estimation.
         utils::TrajectoryAligner trajectory_aligner_;
+        bool trajectory_aligner_enabled_{false};
+        double trajectory_aligner_min_distance_{15.0};
 
         // Filter time base: ROS sensor stamp (seconds) of last processed IMU.
         double filter_time_{-1.0};
