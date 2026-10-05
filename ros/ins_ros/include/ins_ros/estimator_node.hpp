@@ -224,7 +224,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         ENUConverter enu_converter_;
         bool trust_gps_covariance_{false};
         State::V3 gps_lever_arm_{State::V3::Zero()};
-        State::V3 gps_noise_{State::V3::Zero()};
+        State::V3 gps_noise_variance_{State::V3::Zero()};
 
         // 3D Odometry
         std::string odom_topic_{""};
@@ -273,11 +273,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::size_t processed_capacity_{1000};
 
         // Process noise parameters
-        double gyro_noise_;
-        double accel_noise_;
-        double gyro_bias_noise_;
-        double accel_bias_noise_;
-        
+        double gyro_noise_variance_;
+        double accel_noise_variance_;
+        double gyro_bias_noise_variance_;
+        double accel_bias_noise_variance_;
+
         // Subscribers
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr       imu_sub_;
         rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_sub_;

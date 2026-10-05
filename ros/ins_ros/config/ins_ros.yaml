@@ -35,10 +35,20 @@ ins_ros_node:
         processed_capacity: 1000
 
       process_noise:
-        gyro: 0.015
-        accel: 0.15
-        gyro_bias: 1.54e-5
-        accel_bias: 3.38e-4
+      # Covariance of the discrete process-noise variables w_k.
+      # These are diagonal entries of Q, 
+      # so [SI^2] units:
+      #   gyro_noise_variance:      (rad/s)^2
+      #   accel_noise_variance:     (m/s^2)^2
+      #   gyro_bias_noise_variance: (rad/s)^2
+      #   accel_bias_noise_variance:(m/s^2)^2
+        imu:
+          gyro_variance: 0.015
+          accel_variance: 0.15
+
+        bias_random_walk:
+          gyro_rate_variance: 1.54e-5
+          accel_rate_variance: 3.38e-4
 
     # Measurement synchronization / latency handling
     sync:
@@ -97,10 +107,10 @@ ins_ros_node:
 
         topic: /input/gps/fix
 
-        trust_covariance: true # whether to trust the covariance from the GPS message or not
+        use_message_covariance: true # whether to trust the covariance from the GPS message or not
 
-        covariance: # fixed covariance if trust_covariance is false
-          position:
+        covariance: # fixed covariance if use_message_covariance is false
+          position_std: # standard deviation of the GPS position measurement (m)
             x: 0.01
             y: 0.01
             z: 10.0
@@ -129,20 +139,20 @@ ins_ros_node:
 
         topic: /vio/odom
 
-        trust_covariance: # whether to trust the covariance from the Odometry message or not 
+        use_message_covariance: # whether to trust the covariance from the Odometry message or not 
           pose: true      # (if true, the LIO/VIO state estimation should provide a reliable covariance for position and orientation)
           velocity: true  # (if true, the LIO/VIO state estimation should provide a reliable covariance for linear velocity)
 
         covariance:
-          position:
+          position_std: # standard deviation of the position measurement (m)
             x: 0.01
             y: 0.01
             z: 0.01
-          orientation:
+          orientation_std: # standard deviation of the orientation measurement (rad)
             x: 0.01
             y: 0.01
             z: 0.01
-          velocity:
+          velocity_std: # standard deviation of the linear velocity measurement (m/s)
             x: 0.1
             y: 0.1
             z: 0.1
@@ -154,8 +164,10 @@ ins_ros_node:
         
         type: twist_stamped  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 
+        use_message_covariance: true # whether to trust the covariance from the Odometry message (if applicable)
+
         covariance:
-          velocity:
+          velocity_std: # standard deviation of the linear velocity measurement (m/s)
             x: 0.1
             y: 0.1
             z: 0.01
@@ -166,7 +178,7 @@ ins_ros_node:
         topic: /input/baro
 
         covariance:
-          altitude: 2.0
+          altitude_std: 2.0 # standard deviation of the barometer altitude measurement (m)
 
       mag:
         enabled: false
@@ -174,4 +186,4 @@ ins_ros_node:
         topic: /input/mag
 
         covariance:
-          heading: 0.1
+          heading_std: 0.1 # standard deviation of the magnetometer heading measurement (rad)

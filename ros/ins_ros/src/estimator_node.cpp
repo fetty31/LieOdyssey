@@ -89,10 +89,10 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     filter_.setCovariance(iESEKF::MatDoF::Identity() * 1e-3);
 
     iESEKF::Filter::NoiseMatrix Q = iESEKF::Filter::NoiseMatrix::Identity();
-    Q.block<3, 3>(0, 0) = static_cast<iESEKF::Scalar>(gyro_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
-    Q.block<3, 3>(3, 3) = static_cast<iESEKF::Scalar>(accel_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
-    Q.block<3, 3>(6, 6) = static_cast<iESEKF::Scalar>(gyro_bias_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
-    Q.block<3, 3>(9, 9) = static_cast<iESEKF::Scalar>(accel_bias_noise_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(0, 0) = static_cast<iESEKF::Scalar>(gyro_noise_variance_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(3, 3) = static_cast<iESEKF::Scalar>(accel_noise_variance_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(6, 6) = static_cast<iESEKF::Scalar>(gyro_bias_noise_variance_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
+    Q.block<3, 3>(9, 9) = static_cast<iESEKF::Scalar>(accel_bias_noise_variance_) * Eigen::Matrix<iESEKF::Scalar, 3, 3>::Identity();
     filter_.setProcessNoise(Q);
 
     filter_.setMaxIters(max_iters_);
@@ -228,11 +228,10 @@ void INSEstimator::declare_parameters()
     declare_parameter<int>("filter.iterations.max", 5);
     declare_parameter<double>("filter.iterations.tolerance", 1e-6);
 
-    declare_parameter<double>("filter.process_noise.gyro", 6.01e-4);
-    declare_parameter<double>("filter.process_noise.accel", 1.53e-2);
-
-    declare_parameter<double>("filter.process_noise.gyro_bias", 1.54e-5);
-    declare_parameter<double>("filter.process_noise.accel_bias", 3.38e-4);
+    declare_parameter<double>("filter.process_noise.imu.gyro_variance", 6.01e-4);
+    declare_parameter<double>("filter.process_noise.imu.accel_variance", 1.53e-2);
+    declare_parameter<double>("filter.process_noise.bias_random_walk.gyro_rate_variance", 1.54e-5);
+    declare_parameter<double>("filter.process_noise.bias_random_walk.accel_rate_variance", 3.38e-4);
 
     // Fixed-frequency estimation loop
     declare_parameter<double>("filter.rate", 100.0);
@@ -275,12 +274,12 @@ void INSEstimator::declare_parameters()
     // GPS
     declare_parameter<bool>("sensors.gps.enabled", false);
     declare_parameter<std::string>("sensors.gps.topic", "/gps/fix");
-    declare_parameter<bool>("sensors.gps.trust_covariance", true);
+    declare_parameter<bool>("sensors.gps.use_message_covariance", true);
 
         // GPS position noise
-    declare_parameter<double>("sensors.gps.covariance.position.x", 1.0);
-    declare_parameter<double>("sensors.gps.covariance.position.y", 1.0);
-    declare_parameter<double>("sensors.gps.covariance.position.z", 2.0);
+    declare_parameter<double>("sensors.gps.covariance.position_std.x", 0.5);
+    declare_parameter<double>("sensors.gps.covariance.position_std.y", 0.5);
+    declare_parameter<double>("sensors.gps.covariance.position_std.z", 2.0);
 
         // GPS lever arm: IMU/body -> GPS antenna, expressed in body frame
     declare_parameter<double>("sensors.gps.lever_arm.x", 0.0);
@@ -302,20 +301,19 @@ void INSEstimator::declare_parameters()
     // 3D Odometry
     declare_parameter<bool>("sensors.odometry.enabled", false);
     declare_parameter<std::string>("sensors.odometry.topic", "/odometry");
-    declare_parameter<bool>("sensors.odometry.trust_covariance.pose", true);
-    declare_parameter<bool>("sensors.odometry.trust_covariance.velocity", true);
+    declare_parameter<bool>("sensors.odometry.use_message_covariance.pose", true);
+    declare_parameter<bool>("sensors.odometry.use_message_covariance.velocity", true);
 
-    declare_parameter<double>("sensors.odometry.covariance.position.x", 0.1);
-    declare_parameter<double>("sensors.odometry.covariance.position.y", 0.1);
-    declare_parameter<double>("sensors.odometry.covariance.position.z", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.position_std.x", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.position_std.y", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.position_std.z", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.orientation_std.x", 0.01);
+    declare_parameter<double>("sensors.odometry.covariance.orientation_std.y", 0.01);
+    declare_parameter<double>("sensors.odometry.covariance.orientation_std.z", 0.01);
 
-    declare_parameter<double>("sensors.odometry.covariance.orientation.x", 0.01);
-    declare_parameter<double>("sensors.odometry.covariance.orientation.y", 0.01);
-    declare_parameter<double>("sensors.odometry.covariance.orientation.z", 0.01);
-
-    declare_parameter<double>("sensors.odometry.covariance.velocity.x", 0.1);
-    declare_parameter<double>("sensors.odometry.covariance.velocity.y", 0.1);
-    declare_parameter<double>("sensors.odometry.covariance.velocity.z", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.velocity_std.x", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.velocity_std.y", 0.1);
+    declare_parameter<double>("sensors.odometry.covariance.velocity_std.z", 0.1);
 
     // Wheel odometry
     declare_parameter<bool>("sensors.wheel_odom.enabled", false);
@@ -323,19 +321,19 @@ void INSEstimator::declare_parameters()
     declare_parameter<std::string>("sensors.wheel_odom.type", "twist_stamped");
 
         // velocity noise
-    declare_parameter<double>("sensors.wheel_odom.covariance.velocity.x", 0.1);
-    declare_parameter<double>("sensors.wheel_odom.covariance.velocity.y", 0.1);
-    declare_parameter<double>("sensors.wheel_odom.covariance.velocity.z", 0.1);
+    declare_parameter<double>("sensors.wheel_odom.covariance.velocity_std.x", 0.1);
+    declare_parameter<double>("sensors.wheel_odom.covariance.velocity_std.y", 0.1);
+    declare_parameter<double>("sensors.wheel_odom.covariance.velocity_std.z", 0.1);
 
     // Barometer
     declare_parameter<bool>("sensors.baro.enabled", false);
     declare_parameter<std::string>("sensors.baro.topic", "/baro");
-    declare_parameter<double>("sensors.baro.covariance.altitude", 1.0);
+    declare_parameter<double>("sensors.baro.covariance.altitude_std", 1.0);
 
     // Magnetometer
     declare_parameter<bool>("sensors.mag.enabled", false);
     declare_parameter<std::string>("sensors.mag.topic", "/mag");
-    declare_parameter<double>("sensors.mag.covariance.heading", 0.1);
+    declare_parameter<double>("sensors.mag.covariance.heading_std", 0.1);
 
 }
 
@@ -411,11 +409,11 @@ void INSEstimator::load_parameters()
         RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
     }else{
         gps_topic_ = get_parameter("sensors.gps.topic").as_string();
-        trust_gps_covariance_ = get_parameter("sensors.gps.trust_covariance").as_bool();
-        double gps_noise_x = get_parameter("sensors.gps.covariance.position.x").as_double();
-        double gps_noise_y = get_parameter("sensors.gps.covariance.position.y").as_double();
-        double gps_noise_z = get_parameter("sensors.gps.covariance.position.z").as_double();
-        gps_noise_ = State::V3(gps_noise_x, gps_noise_y, gps_noise_z);
+        trust_gps_covariance_ = get_parameter("sensors.gps.use_message_covariance").as_bool();
+        double gps_noise_x = get_parameter("sensors.gps.covariance.position_std.x").as_double();
+        double gps_noise_y = get_parameter("sensors.gps.covariance.position_std.y").as_double();
+        double gps_noise_z = get_parameter("sensors.gps.covariance.position_std.z").as_double();
+        gps_noise_variance_ = State::V3(gps_noise_x*gps_noise_x, gps_noise_y*gps_noise_y, gps_noise_z*gps_noise_z);
         double lever_arm_x = get_parameter("sensors.gps.lever_arm.x").as_double();
         double lever_arm_y = get_parameter("sensors.gps.lever_arm.y").as_double();
         double lever_arm_z = get_parameter("sensors.gps.lever_arm.z").as_double();
@@ -447,20 +445,26 @@ void INSEstimator::load_parameters()
     if (odom_enabled)
     {
         odom_topic_ = get_parameter("sensors.odometry.topic").as_string();
-        trust_odom_pose_covariance_ = get_parameter("sensors.odometry.trust_covariance.pose").as_bool();
-        trust_odom_velocity_covariance_ = get_parameter("sensors.odometry.trust_covariance.velocity").as_bool();
-        double odom_position_noise_x = get_parameter("sensors.odometry.covariance.position.x").as_double();
-        double odom_position_noise_y = get_parameter("sensors.odometry.covariance.position.y").as_double();
-        double odom_position_noise_z = get_parameter("sensors.odometry.covariance.position.z").as_double();
-        odom_position_noise_ = State::V3(odom_position_noise_x, odom_position_noise_y, odom_position_noise_z);
-        double odom_orientation_noise_x = get_parameter("sensors.odometry.covariance.orientation.x").as_double();
-        double odom_orientation_noise_y = get_parameter("sensors.odometry.covariance.orientation.y").as_double();
-        double odom_orientation_noise_z = get_parameter("sensors.odometry.covariance.orientation.z").as_double();
-        odom_orientation_noise_ = State::V3(odom_orientation_noise_x, odom_orientation_noise_y, odom_orientation_noise_z);
-        double odom_velocity_noise_x = get_parameter("sensors.odometry.covariance.velocity.x").as_double();
-        double odom_velocity_noise_y = get_parameter("sensors.odometry.covariance.velocity.y").as_double();
-        double odom_velocity_noise_z = get_parameter("sensors.odometry.covariance.velocity.z").as_double();
-        odom_velocity_noise_ = State::V3(odom_velocity_noise_x, odom_velocity_noise_y, odom_velocity_noise_z);
+        trust_odom_pose_covariance_ = get_parameter("sensors.odometry.use_message_covariance.pose").as_bool();
+        trust_odom_velocity_covariance_ = get_parameter("sensors.odometry.use_message_covariance.velocity").as_bool();
+        double odom_position_noise_x = get_parameter("sensors.odometry.covariance.position_std.x").as_double();
+        double odom_position_noise_y = get_parameter("sensors.odometry.covariance.position_std.y").as_double();
+        double odom_position_noise_z = get_parameter("sensors.odometry.covariance.position_std.z").as_double();
+        odom_position_noise_ = State::V3(odom_position_noise_x*odom_position_noise_x, 
+                                        odom_position_noise_y*odom_position_noise_y, 
+                                        odom_position_noise_z*odom_position_noise_z);
+        double odom_orientation_noise_x = get_parameter("sensors.odometry.covariance.orientation_std.x").as_double();
+        double odom_orientation_noise_y = get_parameter("sensors.odometry.covariance.orientation_std.y").as_double();
+        double odom_orientation_noise_z = get_parameter("sensors.odometry.covariance.orientation_std.z").as_double();
+        odom_orientation_noise_ = State::V3(odom_orientation_noise_x*odom_orientation_noise_x, 
+                                            odom_orientation_noise_y*odom_orientation_noise_y, 
+                                            odom_orientation_noise_z*odom_orientation_noise_z);
+        double odom_velocity_noise_x = get_parameter("sensors.odometry.covariance.velocity_std.x").as_double();
+        double odom_velocity_noise_y = get_parameter("sensors.odometry.covariance.velocity_std.y").as_double();
+        double odom_velocity_noise_z = get_parameter("sensors.odometry.covariance.velocity_std.z").as_double();
+        odom_velocity_noise_ = State::V3(odom_velocity_noise_x*odom_velocity_noise_x, 
+                                        odom_velocity_noise_y*odom_velocity_noise_y, 
+                                        odom_velocity_noise_z*odom_velocity_noise_z);
     }
 
         // Wheel odometry
@@ -470,10 +474,12 @@ void INSEstimator::load_parameters()
     {
         wheel_odom_topic_ = get_parameter("sensors.wheel_odom.topic").as_string();
         wheel_odom_msg_type_ = get_parameter("sensors.wheel_odom.type").as_string();
-        double wheel_odom_noise_x = get_parameter("sensors.wheel_odom.covariance.velocity.x").as_double();
-        double wheel_odom_noise_y = get_parameter("sensors.wheel_odom.covariance.velocity.y").as_double();
-        double wheel_odom_noise_z = get_parameter("sensors.wheel_odom.covariance.velocity.z").as_double();
-        wheel_odom_noise_ = State::V3(wheel_odom_noise_x, wheel_odom_noise_y, wheel_odom_noise_z);
+        double wheel_odom_noise_x = get_parameter("sensors.wheel_odom.covariance.velocity_std.x").as_double();
+        double wheel_odom_noise_y = get_parameter("sensors.wheel_odom.covariance.velocity_std.y").as_double();
+        double wheel_odom_noise_z = get_parameter("sensors.wheel_odom.covariance.velocity_std.z").as_double();
+        wheel_odom_noise_ = State::V3(wheel_odom_noise_x*wheel_odom_noise_x, 
+                                    wheel_odom_noise_y*wheel_odom_noise_y, 
+                                    wheel_odom_noise_z*wheel_odom_noise_z);
     }
     
         // Magnetometer
@@ -493,10 +499,10 @@ void INSEstimator::load_parameters()
     }
 
     // Process noise (IMU)
-    gyro_noise_      = get_parameter("filter.process_noise.gyro").as_double();
-    accel_noise_     = get_parameter("filter.process_noise.accel").as_double();
-    gyro_bias_noise_ = get_parameter("filter.process_noise.gyro_bias").as_double();
-    accel_bias_noise_= get_parameter("filter.process_noise.accel_bias").as_double();
+    gyro_noise_variance_      = get_parameter("filter.process_noise.imu.gyro_variance").as_double();
+    accel_noise_variance_     = get_parameter("filter.process_noise.imu.accel_variance").as_double();
+    gyro_bias_noise_variance_ = get_parameter("filter.process_noise.bias_random_walk.gyro_rate_variance").as_double();
+    accel_bias_noise_variance_= get_parameter("filter.process_noise.bias_random_walk.accel_rate_variance").as_double();
 
     // Trajectory aligner
     trajectory_aligner_enabled_ = get_parameter("trajectory_aligner.enabled").as_bool();
@@ -820,9 +826,9 @@ void INSEstimator::gps_callback(
     else
     {
         R_gps = Mat3::Zero();
-        R_gps(0, 0) = gps_noise_.x();
-        R_gps(1, 1) = gps_noise_.y();
-        R_gps(2, 2) = gps_noise_.z();
+        R_gps(0, 0) = gps_noise_variance_.x();
+        R_gps(1, 1) = gps_noise_variance_.y();
+        R_gps(2, 2) = gps_noise_variance_.z();
     }
     meas.R = R_gps;
     meas.R_inv = R_gps.inverse();
@@ -1969,9 +1975,9 @@ void INSEstimator::from_ins_to_ros(const ins_ros::State& in, nav_msgs::msg::Odom
     }
 
     // add gyro covariance
-    out.twist.covariance[21] = gyro_noise_;
-    out.twist.covariance[28] = gyro_noise_;
-    out.twist.covariance[25] = gyro_noise_;
+    out.twist.covariance[21] = gyro_noise_variance_;
+    out.twist.covariance[28] = gyro_noise_variance_;
+    out.twist.covariance[25] = gyro_noise_variance_;
 }
 
 void INSEstimator::from_ins_to_ros(const ins_ros::State& in, geometry_msgs::msg::PoseWithCovarianceStamped& out,
