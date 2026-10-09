@@ -120,6 +120,10 @@ ins_ros_node:
           y: 0.0
           z: 0.5
         
+        gating: # Mahalanobis/NIS outlier rejection of GNSS position updates
+          enabled: true      # reject fixes whose NIS exceeds the chi-square threshold
+          confidence: 0.95   # chi-square confidence level (threshold derived from the dof)
+
         init:
           orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
             distance_threshold: 2.0

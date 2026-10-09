@@ -10,6 +10,7 @@
 #include "ins_ros/init/gps_orientation_initializer.hpp"
 
 #include "ins_ros/utils/frame_transform.hpp"
+#include "ins_ros/utils/gating.hpp"
 #include "ins_ros/utils/trajectory_aligner.hpp"
 #include "ins_ros/utils/debug.hpp"
 
@@ -125,6 +126,8 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void refresh_state_from_filter();
 
+        void log_gnss_gating_stats();
+
         bool try_initialize_orientation();
         bool try_align_odom_to_gps(const State& odom_meas);
 
@@ -225,6 +228,27 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         bool trust_gps_covariance_{false};
         State::V3 gps_lever_arm_{State::V3::Zero()};
         State::V3 gps_noise_variance_{State::V3::Zero()};
+
+        // GNSS Mahalanobis/NIS gating
+        bool gnss_gating_enabled_{true};
+        double gnss_gating_confidence_{0.95};
+
+        struct GnssGatingStats
+        {
+            std::size_t received{0};  // fixes evaluated in real time
+            std::size_t accepted{0};  // updates applied
+            std::size_t rejected{0};  // updates skipped (gated or invalid)
+            std::size_t nis_samples{0};
+            double nis_sum{0.0};
+            double nis_max{0.0};
+
+            void reset() { *this = GnssGatingStats{}; }
+        };
+        GnssGatingStats gnss_gating_stats_;
+
+        // True while an OOSM rewind/replay is running: replays re-evaluate
+        // fixes that were already counted and must not inflate statistics.
+        bool oosm_replay_active_{false};
 
         // 3D Odometry
         std::string odom_topic_{""};

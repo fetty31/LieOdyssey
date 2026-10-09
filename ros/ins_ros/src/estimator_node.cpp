@@ -2,6 +2,11 @@
 
 namespace ins_ros {
 
+namespace {
+// GNSS gating statistics are summarized every N evaluated fixes.
+constexpr std::size_t kGnssGatingStatsLogInterval = 100;
+} // namespace
+
 INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
     , filter_(iESEKF::MatDoF::Identity() * 1e-3,
@@ -56,6 +61,32 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     // Load parameters, setup subscriptions and publishers
     declare_parameters();
     load_parameters();
+
+    // GNSS gating statistics
+    gnss_gating_stats_.reset();
+    oosm_replay_active_ = false;
+
+    if (!gps_topic_.empty())
+    {
+        if (gnss_gating_enabled_)
+        {
+            const double threshold = utils::chi_square::quantile(
+                iESEKF::gps::GPSMeasurement::Dimension,
+                gnss_gating_confidence_);
+
+            RCLCPP_INFO(get_logger(),
+                "GNSS gating: enabled, confidence = %.3f, "
+                "chi2 threshold (dof = %d) = %.3f",
+                gnss_gating_confidence_,
+                iESEKF::gps::GPSMeasurement::Dimension,
+                threshold);
+        }
+        else
+        {
+            RCLCPP_WARN(get_logger(),
+                "GNSS gating: disabled, every GNSS fix is used for the update.");
+        }
+    }
 
     // Orientation initializers
     imu_orientation_initializer_ = std::make_unique<init::IMUOrientationInitializer>(imu_orientation_params_);
@@ -152,6 +183,10 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+
+    log_gnss_gating_stats();
+    gnss_gating_stats_.reset();
+    oosm_replay_active_ = false;
 
     filter_.reset();
     meas_handler_.clear();
@@ -286,6 +321,10 @@ void INSEstimator::declare_parameters()
     declare_parameter<double>("sensors.gps.lever_arm.y", 0.0);
     declare_parameter<double>("sensors.gps.lever_arm.z", 0.0);
 
+        // GNSS gating: Mahalanobis/NIS outlier rejection of GPS fixes
+    declare_parameter<bool>("sensors.gps.gating.enabled", true);
+    declare_parameter<double>("sensors.gps.gating.confidence", 0.95);
+
         // GPS yaw calculation
     declare_parameter<double>("sensors.gps.init.orientation.distance_threshold", 2.0);
     declare_parameter<double>("sensors.gps.init.orientation.delta_distance_threshold", 0.1);
@@ -408,6 +447,7 @@ void INSEstimator::load_parameters()
     if (!gps_enabled)
     {
         RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
+        gnss_gating_enabled_ = false;
     }else{
         gps_topic_ = get_parameter("sensors.gps.topic").as_string();
         trust_gps_covariance_ = get_parameter("sensors.gps.use_message_covariance").as_bool();
@@ -419,6 +459,18 @@ void INSEstimator::load_parameters()
         double lever_arm_y = get_parameter("sensors.gps.lever_arm.y").as_double();
         double lever_arm_z = get_parameter("sensors.gps.lever_arm.z").as_double();
         gps_lever_arm_ = State::V3(lever_arm_x, lever_arm_y, lever_arm_z);
+
+        gnss_gating_enabled_ = get_parameter("sensors.gps.gating.enabled").as_bool();
+        gnss_gating_confidence_ = get_parameter("sensors.gps.gating.confidence").as_double();
+
+        if (gnss_gating_confidence_ <= 0.0 || gnss_gating_confidence_ >= 1.0)
+        {
+            RCLCPP_ERROR(get_logger(),
+                "Invalid sensors.gps.gating.confidence = %.4f. "
+                "The confidence level must be in (0, 1).",
+                gnss_gating_confidence_);
+            throw std::runtime_error("Invalid GNSS gating confidence");
+        }
 
         gps_orientation_params_.distance_threshold 
             = get_parameter("sensors.gps.init.orientation.distance_threshold").as_double();
@@ -1479,6 +1531,8 @@ bool INSEstimator::handleOOSM(
     meas_handler_.eraseProcessedAfter(t_rewind);
 
     // Replay everything chronologically.
+    oosm_replay_active_ = true;
+
     for (const auto& queued : replay)
     {
         std::visit(
@@ -1488,6 +1542,8 @@ bool INSEstimator::handleOOSM(
             },
             queued.measurement);
     }
+
+    oosm_replay_active_ = false;
 
     // Make sure we ended at the same time as before the rewind.
     if (filter_time_ < t_current)
@@ -1527,10 +1583,149 @@ bool INSEstimator::handleOOSM(
 
 void INSEstimator::process_gps(const measurements::StampedGps& gps)
 {
+    RCLCPP_DEBUG(get_logger(), "Updating with GPS: [%.3f, %.3f, %.3f]",
+                                gps.meas.position_enu.x(),
+                                gps.meas.position_enu.y(),
+                                gps.meas.position_enu.z());
+
+    // Linearize the GNSS measurement model at the current estimate:
+    //   r = z_gps - (p + R l),   H = dr/dx
+    iESEKF::Measurement residual;
+    iESEKF::HMat H;
+    iESEKF::gps::H_fun(filter_, filter_.getState(), gps.meas, residual, H);
+
+    // Innovation covariance and normalized innovation squared:
+    //   S   = H P H^T + R
+    //   NIS = r^T S^{-1} r   (through an LDLT solve of S x = r)
+    const iESEKF::MatDoF P = filter_.getCovariance();
+    const utils::gating::NisResult nis =
+        utils::gating::compute_nis(residual, H, P, gps.R);
+
+    // Statistics only cover fixes evaluated in real time: an OOSM replay
+    // re-evaluates fixes that have already been counted.
+    auto record = [this](bool accepted, bool has_nis, double nis_value)
+    {
+        if (oosm_replay_active_)
+            return;
+
+        auto& stats = gnss_gating_stats_;
+
+        ++stats.received;
+
+        if (accepted)
+            ++stats.accepted;
+        else
+            ++stats.rejected;
+
+        if (has_nis)
+        {
+            stats.nis_sum += nis_value;
+            ++stats.nis_samples;
+            stats.nis_max = std::max(stats.nis_max, nis_value);
+        }
+
+        if (stats.received % kGnssGatingStatsLogInterval == 0)
+            log_gnss_gating_stats();
+    };
+
+    // A numerically invalid innovation covariance must never reach the update.
+    if (!nis.valid())
+    {
+        record(false, false, 0.0);
+
+        RCLCPP_ERROR(get_logger(),
+            "GNSS update rejected: %s "
+            "(innovation norm = %.3f m, t = %.3f)",
+            utils::gating::to_string(nis.status),
+            nis.innovation_norm,
+            gps.stamp);
+
+        return;
+    }
+
+    RCLCPP_DEBUG(get_logger(),
+        "GNSS innovation: NIS = %.4f (dof = %d), |r| = %.4f m, "
+        "innovation covariance S = %s",
+        nis.nis,
+        nis.dimension,
+        nis.innovation_norm,
+        utils::gating::to_string(nis.innovation_covariance).c_str());
+
+    if (gnss_gating_enabled_)
+    {
+        // Mahalanobis/NIS gate: reject the fix when NIS > chi2(d, confidence).
+        const utils::gating::GateDecision decision =
+            utils::gating::evaluate(nis, gnss_gating_confidence_);
+
+        record(decision.accepted, true, nis.nis);
+
+        if (!decision.accepted)
+        {
+            RCLCPP_WARN(get_logger(),
+                "GNSS update rejected: NIS = %.3f > %.3f "
+                "(chi2 dof = %d, confidence = %.3f), "
+                "innovation norm = %.3f m",
+                decision.nis,
+                decision.threshold,
+                decision.dimension,
+                gnss_gating_confidence_,
+                nis.innovation_norm);
+
+            return;
+        }
+
+        RCLCPP_INFO(get_logger(),
+            "GNSS update accepted: NIS = %.3f <= %.3f "
+            "(chi2 dof = %d, confidence = %.3f), "
+            "innovation norm = %.3f m",
+            decision.nis,
+            decision.threshold,
+            decision.dimension,
+            gnss_gating_confidence_,
+            nis.innovation_norm);
+    }
+    else
+    {
+        record(true, true, nis.nis);
+
+        RCLCPP_DEBUG(get_logger(),
+            "GNSS update (gating disabled): NIS = %.4f (dof = %d), "
+            "innovation norm = %.4f m",
+            nis.nis,
+            nis.dimension,
+            nis.innovation_norm);
+    }
+
     filter_.update<
         iESEKF::gps::GPSMeasurement,
         iESEKF::Measurement,
         iESEKF::HMat>(gps.meas, gps.R, gps.R_inv, ins_ros::iESEKF::gps::H_fun);
+}
+
+void INSEstimator::log_gnss_gating_stats()
+{
+    const auto& stats = gnss_gating_stats_;
+
+    if (stats.received == 0)
+        return;
+
+    const double rejection_rate =
+        100.0 * static_cast<double>(stats.rejected) /
+        static_cast<double>(stats.received);
+
+    const double mean_nis = (stats.nis_samples > 0)
+        ? stats.nis_sum / static_cast<double>(stats.nis_samples)
+        : 0.0;
+
+    RCLCPP_INFO(get_logger(),
+        "GNSS gating statistics: received = %zu, accepted = %zu, "
+        "rejected = %zu (%.1f %%), mean NIS = %.3f, max NIS = %.3f",
+        stats.received,
+        stats.accepted,
+        stats.rejected,
+        rejection_rate,
+        mean_nis,
+        stats.nis_max);
 }
 
 void INSEstimator::process_odom(const measurements::StampedOdom& odom)
