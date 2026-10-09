@@ -319,6 +319,7 @@ void INSEstimator::declare_parameters()
     declare_parameter<bool>("sensors.wheel_odom.enabled", false);
     declare_parameter<std::string>("sensors.wheel_odom.topic", "/wheel/odometry");
     declare_parameter<std::string>("sensors.wheel_odom.type", "twist_stamped");
+    declare_parameter<bool>("sensors.wheel_odom.trust_covariance", false);
 
         // velocity noise
     declare_parameter<double>("sensors.wheel_odom.covariance.velocity_std.x", 0.1);
@@ -474,6 +475,7 @@ void INSEstimator::load_parameters()
     {
         wheel_odom_topic_ = get_parameter("sensors.wheel_odom.topic").as_string();
         wheel_odom_msg_type_ = get_parameter("sensors.wheel_odom.type").as_string();
+        trust_wheel_odom_covariance_ = get_parameter("sensors.wheel_odom.trust_covariance").as_bool();
         double wheel_odom_noise_x = get_parameter("sensors.wheel_odom.covariance.velocity_std.x").as_double();
         double wheel_odom_noise_y = get_parameter("sensors.wheel_odom.covariance.velocity_std.y").as_double();
         double wheel_odom_noise_z = get_parameter("sensors.wheel_odom.covariance.velocity_std.z").as_double();
@@ -570,7 +572,7 @@ void INSEstimator::setup_subscriptions()
                 sensor_qos,
                 std::bind(&INSEstimator::wheel_odom_callback, this, std::placeholders::_1));
         }
-        RCLCPP_INFO(get_logger(), "  Wheel odom: %s", wheel_odom_topic_.c_str());
+        RCLCPP_INFO(get_logger(), "  Wheel odom: %s (type: %s)", wheel_odom_topic_.c_str(), wheel_odom_msg_type_.c_str());
     }
 
     if(!odom_topic_.empty())
@@ -977,9 +979,21 @@ void INSEstimator::wheel_odom_to_buffer(
 
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
     Mat3 R_w = Mat3::Zero();
-    R_w(0, 0) = wheel_odom_noise_.x();
-    R_w(1, 1) = wheel_odom_noise_.y();
-    R_w(2, 2) = wheel_odom_noise_.z();
+
+    // To-Do: Use covariance from message if available and trusted.
+    if (trust_wheel_odom_covariance_)
+    {
+        // To-Do: Implementation for using message covariance
+        R_w(0, 0) = wheel_odom_noise_.x();
+        R_w(1, 1) = wheel_odom_noise_.y();
+        R_w(2, 2) = wheel_odom_noise_.z();
+    }
+    else
+    {
+        R_w(0, 0) = wheel_odom_noise_.x();
+        R_w(1, 1) = wheel_odom_noise_.y();
+        R_w(2, 2) = wheel_odom_noise_.z();
+    }
 
     measurements::StampedWheel stamped;
     stamped.stamp = stampToSec(stamp);
@@ -1156,7 +1170,6 @@ bool INSEstimator::propagateTo(double t)
         if (imu.stamp >= t)
             break;
 
-        // if (imu.dt <= 0.0 || imu.dt >= 0.1)
         if (imu.dt <= 0.0)
         {
             RCLCPP_WARN(
@@ -1207,7 +1220,6 @@ bool INSEstimator::propagateTo(double t)
             return false;
         }
 
-        // if (dt <= 0.0 || dt >= 0.1)
         if (dt <= 0.0)
         {
             RCLCPP_WARN(

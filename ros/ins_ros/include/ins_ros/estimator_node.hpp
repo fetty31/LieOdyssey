@@ -240,6 +240,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::string wheel_odom_topic_{""};
         std::string wheel_odom_msg_type_{""};
         State::V3 wheel_odom_noise_{State::V3::Zero()};
+        bool trust_wheel_odom_covariance_{false};
 
         // Magnetometer
         std::string mag_topic_{""};
