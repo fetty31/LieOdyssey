@@ -1,5 +1,8 @@
 #include "ins_ros/estimator_node.hpp"
 
+#include <fstream>
+#include <iomanip>
+
 namespace ins_ros {
 
 namespace {
@@ -70,16 +73,13 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     {
         if (gnss_gating_enabled_)
         {
-            const double threshold = utils::chi_square::quantile(
-                iESEKF::gps::GPSMeasurement::Dimension,
-                gnss_gating_confidence_);
 
             RCLCPP_INFO(get_logger(),
                 "GNSS gating: enabled, confidence = %.3f, "
                 "chi2 threshold (dof = %d) = %.3f",
-                gnss_gating_confidence_,
+                gnss_gate_.confidence,
                 iESEKF::gps::GPSMeasurement::Dimension,
-                threshold);
+                gnss_gate_.threshold);
         }
         else
         {
@@ -105,7 +105,7 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     handler_opts.imu_capacity = imu_buffer_capacity_;
     handler_opts.measurement_capacity = measurement_capacity_;
     handler_opts.processed_capacity = processed_capacity_;
-    handler_opts.state_capacity = imu_buffer_capacity_;
+    handler_opts.state_capacity = state_capacity_;
     handler_opts.history_window_s = history_window_s_;
     meas_handler_.setOptions(handler_opts);
     meas_handler_.clear();
@@ -114,6 +114,8 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     trajectory_aligner_.clear();
 
     setup_publishers();
+
+    setup_services();
 
     // Reset filter
     filter_.reset();
@@ -183,6 +185,7 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
 
     log_gnss_gating_stats();
     gnss_gating_stats_.reset();
@@ -215,6 +218,7 @@ INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::S
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
 
     return CallbackReturn::SUCCESS;
 }
@@ -235,6 +239,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
 
     meas_handler_.clear();
     trajectory_aligner_.clear();
@@ -274,6 +279,11 @@ void INSEstimator::declare_parameters()
     declare_parameter<int>("filter.buffer.imu_capacity", 2000);
     declare_parameter<int>("filter.buffer.measurement_capacity", 200);
     declare_parameter<int>("filter.buffer.processed_capacity", 1000);
+    declare_parameter<int>("filter.buffer.state_capacity", 2000);
+
+    // Optional state-history dump service
+    declare_parameter<bool>("state_history.dump.enabled", false);
+    declare_parameter<std::string>("state_history.dump.output_path", "state_history.csv");
 
     // Synchronization / latency handling
     declare_parameter<double>("sync.gps.tolerance", 0.005);
@@ -401,6 +411,25 @@ void INSEstimator::load_parameters()
     measurement_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.measurement_capacity").as_int());
     processed_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.processed_capacity").as_int());
 
+    const int state_capacity_param =
+        static_cast<int>(get_parameter("filter.buffer.state_capacity").as_int());
+    state_capacity_ = (state_capacity_param > 0)
+        ? static_cast<std::size_t>(state_capacity_param)
+        : imu_buffer_capacity_;
+    if (state_capacity_param <= 0)
+    {
+        RCLCPP_WARN(get_logger(),
+            "filter.buffer.state_capacity = %d is invalid, "
+            "falling back to imu_capacity = %zu.",
+            state_capacity_param,
+            imu_buffer_capacity_);
+    }
+
+    state_history_dump_enabled_ =
+        get_parameter("state_history.dump.enabled").as_bool();
+    state_history_dump_path_ =
+        get_parameter("state_history.dump.output_path").as_string();
+
     sync_tolerance_gps_ = get_parameter("sync.gps.tolerance").as_double();
     sync_tolerance_odom_ = get_parameter("sync.odom.tolerance").as_double();
     sync_tolerance_wheel_ = get_parameter("sync.wheel_odom.tolerance").as_double();
@@ -461,16 +490,17 @@ void INSEstimator::load_parameters()
         gps_lever_arm_ = State::V3(lever_arm_x, lever_arm_y, lever_arm_z);
 
         gnss_gating_enabled_ = get_parameter("sensors.gps.gating.enabled").as_bool();
-        gnss_gating_confidence_ = get_parameter("sensors.gps.gating.confidence").as_double();
+        double gnss_gating_confidence = get_parameter("sensors.gps.gating.confidence").as_double();
 
-        if (gnss_gating_confidence_ <= 0.0 || gnss_gating_confidence_ >= 1.0)
+        if (gnss_gating_confidence <= 0.0 || gnss_gating_confidence >= 1.0)
         {
             RCLCPP_ERROR(get_logger(),
                 "Invalid sensors.gps.gating.confidence = %.4f. "
                 "The confidence level must be in (0, 1).",
-                gnss_gating_confidence_);
+                gnss_gating_confidence);
             throw std::runtime_error("Invalid GNSS gating confidence");
         }
+        gnss_gate_.configure(iESEKF::gps::GPSMeasurement::Dimension, gnss_gating_confidence);
 
         gps_orientation_params_.distance_threshold 
             = get_parameter("sensors.gps.init.orientation.distance_threshold").as_double();
@@ -691,6 +721,138 @@ void INSEstimator::setup_timer()
         std::bind(&INSEstimator::estimation_timer_callback, this));
 
     RCLCPP_DEBUG(get_logger(), "Estimation timer created at %.2f Hz", rate);
+}
+
+void INSEstimator::setup_services()
+{
+    if (!state_history_dump_enabled_)
+    {
+        RCLCPP_INFO(get_logger(),
+            "State-history dump service is disabled "
+            "(set state_history.dump.enabled=true to enable it).");
+        return;
+    }
+
+    dump_state_history_srv_ =
+        create_service<ins_ros::srv::DumpStateHistory>(
+            "/dump_state_history",
+            std::bind(
+                &INSEstimator::dump_state_history_callback,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2));
+
+    RCLCPP_INFO(get_logger(),
+        "State-history dump service '/dump_state_history' enabled "
+        "(default output path: '%s').",
+        state_history_dump_path_.c_str());
+}
+
+void INSEstimator::dump_state_history_callback(
+    const std::shared_ptr<ins_ros::srv::DumpStateHistory::Request> request,
+    std::shared_ptr<ins_ros::srv::DumpStateHistory::Response> response)
+{
+    // Copy the history under the handler mutex, then release it before any
+    // disk I/O so the estimation loop is never blocked by file writes.
+    const std::vector<measurements::StateSnapshot> history =
+        meas_handler_.stateHistory();
+
+    const std::string path =
+        request->output_path.empty() ? state_history_dump_path_
+                                     : request->output_path;
+
+    response->success = false;
+    response->num_states = 0;
+    response->file_path = path;
+
+    if (history.empty())
+    {
+        response->message =
+            "State history is empty. Nothing written to '" + path + "'.";
+        RCLCPP_WARN(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    std::ofstream file(path, std::ios::out | std::ios::trunc);
+    if (!file.is_open())
+    {
+        response->message = "Failed to open '" + path + "' for writing.";
+        RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    file << std::setprecision(17);
+
+    // One row per state. The 19x19 covariance (P) is expressed in the
+    // inertial/world frame (same convention used when publishing) and is
+    // written as a single field of 361 semicolon-separated row-major values.
+    // Tangent ordering:
+    //   0-2 position, 3-5 velocity, 6-8 orientation, 9 time,
+    //   10-12 gyro bias, 13-15 accel bias, 16-18 gravity.
+    file << "timestamp,"
+            "px,py,pz,"
+            "vx,vy,vz,"
+            "qx,qy,qz,qw,"
+            "bax,bay,baz,"
+            "bgx,bgy,bgz,"
+            "gx,gy,gz,"
+            "cov\n";
+
+    std::size_t written = 0;
+    for (const auto& snapshot : history)
+    {
+        ins_ros::State state;
+        iESEKF::group_to_state(snapshot.group, state);
+
+        const iESEKF::MatDoF T =
+            iESEKF::get_tangent_to_inertial_jacob(snapshot.group);
+        const iESEKF::MatDoF P_inertial =
+            T * snapshot.covariance * T.transpose();
+
+        file << snapshot.stamp << ','
+             << state.p.x() << ',' << state.p.y() << ',' << state.p.z() << ','
+             << state.v.x() << ',' << state.v.y() << ',' << state.v.z() << ','
+             << state.q.x() << ',' << state.q.y() << ',' << state.q.z() << ','
+             << state.q.w() << ','
+             << state.bias.a.x() << ',' << state.bias.a.y() << ','
+             << state.bias.a.z() << ','
+             << state.bias.w.x() << ',' << state.bias.w.y() << ','
+             << state.bias.w.z() << ','
+             << state.g.x() << ',' << state.g.y() << ',' << state.g.z();
+
+        const auto rows = P_inertial.rows();
+        const auto cols = P_inertial.cols();
+        for (Eigen::Index i = 0; i < rows; ++i)
+        {
+            for (Eigen::Index j = 0; j < cols; ++j)
+            {
+                if (i != 0 || j != 0)
+                    file << ';';
+                file << P_inertial(i, j);
+            }
+        }
+
+        file << '\n';
+        ++written;
+    }
+
+    file.flush();
+    const bool ok = file.good();
+    file.close();
+
+    if (!ok)
+    {
+        response->message = "Failed to write '" + path + "'.";
+        RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    response->success = true;
+    response->num_states = static_cast<uint32_t>(written);
+    response->message = "Wrote " + std::to_string(written) +
+                        " states to '" + path + "'.";
+
+    RCLCPP_INFO(get_logger(), "%s", response->message.c_str());
 }
 
 void INSEstimator::setState() 
@@ -1476,6 +1638,22 @@ bool INSEstimator::handleOOSM(
 
     const double t_rewind = snapshot->stamp;
 
+    // The state snapshot is retained by capacity (for dumping), so it may
+    // be older than the IMU history kept for repropagation. Guard against
+    // replaying a snapshot whose IMU samples have already been pruned.
+    if (t_current - t_rewind > history_window_s_)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "State snapshot at %.6f is %.3f s old, exceeding history "
+            "window %.3f s. Dropping measurement.",
+            t_rewind,
+            t_current - t_rewind,
+            history_window_s_);
+
+        return false;
+    }
+
     RCLCPP_DEBUG(
         get_logger(),
         "Rewinding from %.6f to %.6f",
@@ -1655,7 +1833,7 @@ void INSEstimator::process_gps(const measurements::StampedGps& gps)
     {
         // Mahalanobis/NIS gate: reject the fix when NIS > chi2(d, confidence).
         const utils::gating::GateDecision decision =
-            utils::gating::evaluate(nis, gnss_gating_confidence_);
+            utils::gating::evaluate(nis, gnss_gate_);
 
         record(decision.accepted, true, nis.nis);
 
@@ -1668,7 +1846,7 @@ void INSEstimator::process_gps(const measurements::StampedGps& gps)
                 decision.nis,
                 decision.threshold,
                 decision.dimension,
-                gnss_gating_confidence_,
+                gnss_gate_.confidence,
                 nis.innovation_norm);
 
             return;
@@ -1681,7 +1859,7 @@ void INSEstimator::process_gps(const measurements::StampedGps& gps)
             decision.nis,
             decision.threshold,
             decision.dimension,
-            gnss_gating_confidence_,
+            gnss_gate_.confidence,
             nis.innovation_norm);
     }
     else

@@ -24,6 +24,8 @@
 #include "ins_ros/sensors/wheel_handler.hpp"
 #include "ins_ros/sensors/yaw_handler.hpp"
 
+#include "ins_ros/srv/dump_state_history.hpp"
+
 // ROS
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
@@ -128,6 +130,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void log_gnss_gating_stats();
 
+        void dump_state_history_callback(
+            const std::shared_ptr<ins_ros::srv::DumpStateHistory::Request> request,
+            std::shared_ptr<ins_ros::srv::DumpStateHistory::Response> response);
+
         bool try_initialize_orientation();
         bool try_align_odom_to_gps(const State& odom_meas);
 
@@ -139,6 +145,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void setup_subscriptions();
         void setup_publishers();
         void setup_timer();
+        void setup_services();
 
         // --- ROS <-> Library conversion helpers ---
         double stampToSec(const rclcpp::Time& header_stamp);
@@ -231,7 +238,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // GNSS Mahalanobis/NIS gating
         bool gnss_gating_enabled_{true};
-        double gnss_gating_confidence_{0.95};
+        utils::gate::ChiSquareGate gnss_gate_;
 
         struct GnssGatingStats
         {
@@ -296,6 +303,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::size_t imu_buffer_capacity_{2000};
         std::size_t measurement_capacity_{1000};
         std::size_t processed_capacity_{1000};
+        std::size_t state_capacity_{2000};
+
+        // Optional state-history dump service (disabled by default).
+        bool state_history_dump_enabled_{false};
+        std::string state_history_dump_path_{"state_history.csv"};
 
         // Process noise parameters
         double gyro_noise_variance_;
@@ -314,6 +326,10 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Fixed-frequency estimation timer
         rclcpp::TimerBase::SharedPtr estimation_timer_;
+
+        // Services
+        rclcpp::Service<ins_ros::srv::DumpStateHistory>::SharedPtr
+            dump_state_history_srv_;
 
         // Publishers (lifecycle-aware)
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>> state_pub_;

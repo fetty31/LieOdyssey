@@ -19,6 +19,12 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED) # tf2::toMsg()
 find_package(Eigen3 REQUIRED)
 
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/DumpStateHistory.srv"
+)
+
 find_package(GeographicLib REQUIRED)
 include_directories(${GeographicLib_INCLUDE_DIRS})
 message(STATUS "GeographicLib VERSION: ${GeographicLib_VERSION}")
@@ -53,6 +59,7 @@ add_executable(${PROJECT_NAME}_node
 
 target_link_libraries(${PROJECT_NAME}_node
     ${PROJECT_NAME}_core
+    ${PROJECT_NAME}__rosidl_typesupport_cpp
 )
 
 ament_target_dependencies(${PROJECT_NAME}_node
@@ -86,5 +93,7 @@ install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}/
 )
+
+ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()

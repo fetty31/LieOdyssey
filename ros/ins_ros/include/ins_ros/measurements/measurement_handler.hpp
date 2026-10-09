@@ -310,6 +310,15 @@ public:
    */
   void eraseStateHistoryAfter(double t);
 
+  /**
+   * @brief Return a copy of the full state/covariance history.
+   *
+   * The copy is taken while holding the handler mutex so the caller
+   * can release it before doing any (slow) I/O with the returned data.
+   * The returned snapshots are ordered chronologically (oldest first).
+   */
+  std::vector<StateSnapshot> stateHistory() const;
+
   // ---------------------------------------------------------------------------
   // History management
   // ---------------------------------------------------------------------------

@@ -33,6 +33,10 @@ ins_ros_node:
         imu_capacity: 2000
         measurement_capacity: 200
         processed_capacity: 1000
+        # Maximum number of state/covariance snapshots retained for
+        # OOSM rewind and for the /dump_state_history service. Raise
+        # this to export a longer/full run (memory grows accordingly).
+        state_capacity: 2000
 
       process_noise:
         # Covariance of the discrete process-noise variables w_k.
@@ -156,3 +160,15 @@ ins_ros_node:
             x: 0.1
             y: 0.1
             z: 0.01
+
+    # ============================================================
+    # State history (optional)
+    # ============================================================
+    state_history:
+      dump:
+        # Expose the /dump_state_history service, which writes the
+        # fixed-lag state history to disk on request. Disabled by default.
+        enabled: false
+
+        # Default output path. A service request may override it per call.
+        output_path: state_history.csv

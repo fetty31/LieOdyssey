@@ -59,6 +59,23 @@ struct NisResult
 };
 
 /**
+ * @brief chi-square (Mahalanobis) gate.
+ */
+struct ChiSquareGate
+{
+    double confidence{0.95};
+    int dimension{0};
+    double threshold{0.0};
+
+    void configure(int dim, double conf)
+    {
+        dimension = dim;
+        confidence = conf;
+        threshold = chi_square::quantile(dimension, confidence);
+    }
+};
+
+/**
  * @brief Accept/reject decision of a chi-square (Mahalanobis) gate.
  */
 struct GateDecision
@@ -163,17 +180,16 @@ inline NisResult compute_nis(const ResidualType& residual,
  * A numerically invalid NIS is rejected: an unusable innovation covariance must
  * never reach the update.
  */
-inline GateDecision evaluate(const NisResult& nis, double confidence)
+inline GateDecision evaluate(const NisResult& nis,
+                             const ChiSquareGate& gate)
 {
     GateDecision decision;
     decision.dimension = nis.dimension;
     decision.nis = nis.nis;
-    decision.threshold =
-        chi_square::quantile(nis.dimension, confidence);
+    decision.threshold = gate.threshold;
     decision.accepted =
         nis.valid() &&
-        std::isfinite(decision.threshold) &&
-        (nis.nis <= decision.threshold);
+        (nis.nis <= gate.threshold);
 
     return decision;
 }

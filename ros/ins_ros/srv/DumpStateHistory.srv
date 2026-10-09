@@ -1,0 +1,17 @@
+# Dump the INS fixed-lag state history (the same buffer used for OOSM rewind).
+#
+# On success the history is written to `output_path`. If `output_path` is
+# empty, the path configured through the `state_history.dump.output_path`
+# parameter is used.
+
+# Optional output file path override. Empty -> use the configured default.
+string output_path
+---
+# True if the file was written successfully.
+bool success
+# Number of states written.
+uint32 num_states
+# Path of the written file.
+string file_path
+# Human readable result/error message.
+string message
