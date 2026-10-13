@@ -338,6 +338,14 @@ public:
   static double getStamp(
       const QueuedMeasurement& measurement);
 
+  /**
+  * @brief Check if the measurement has valid covariance (R)
+  *
+  * Implemented using std::visit over the Measurement variant.
+  */
+  static bool isCovarianceValid(
+      const QueuedMeasurement& measurement);
+
 private:
 
   // ---------------------------------------------------------------------------

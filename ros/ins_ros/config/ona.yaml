@@ -106,7 +106,7 @@ ins_ros_node:
           z: 0.5
 
         gating: # Mahalanobis/NIS outlier rejection of GNSS position updates
-          enabled: true      # reject fixes whose NIS exceeds the chi-square threshold
+          enabled: false      # reject fixes whose NIS exceeds the chi-square threshold
           confidence: 0.95   # chi-square confidence level (threshold derived from the dof)
 
         init:
@@ -145,8 +145,8 @@ ins_ros_node:
       wheel_odom:
         enabled: true
 
-        # topic: /ona2/local_odom_combined
-        topic: /fast_limo/state
+        topic: /ona2/local_odom_combined
+        # topic: /fast_limo/state
 
         type: odometry  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 
@@ -163,7 +163,7 @@ ins_ros_node:
       dump:
         # Expose the /dump_state_history service, which writes the
         # fixed-lag state history to disk on request. Disabled by default.
-        enabled: false
+        enabled: true
 
         # Default output path. A service request may override it per call.
-        output_path: state_history.csv
+        output_path: /tmp/ins_ros/state_history.csv

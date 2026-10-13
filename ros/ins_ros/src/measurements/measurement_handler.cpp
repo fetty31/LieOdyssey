@@ -346,7 +346,6 @@ void MeasurementHandler::pushStateSnapshot(
     state_history_.push_back(
         StateSnapshot{stamp, state, cov});
 
-    pruneHistory(stamp);
     enforceCapacity();
 }
 
@@ -477,6 +476,15 @@ double MeasurementHandler::getStamp(const QueuedMeasurement& measurement)
         return m.stamp;
       },
       measurement.measurement);
+}
+
+bool MeasurementHandler::isCovarianceValid(const QueuedMeasurement& measurement)
+{
+    return std::visit(
+        [](const auto& m) -> bool {
+            return m.valid_covariance;
+        },
+        measurement.measurement);
 }
 
 }  // namespace ins_ros::measurements

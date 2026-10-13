@@ -197,7 +197,7 @@ inline GateDecision evaluate(const NisResult& nis,
 /**
  * @brief Compact single-line representation of a matrix for logging.
  */
-inline std::string to_string(const Eigen::MatrixXd& matrix, int precision = 4)
+inline std::string to_string(const Eigen::MatrixXd& matrix, int precision = 7)
 {
     if (matrix.rows() == 0 || matrix.cols() == 0)
         return "[]";

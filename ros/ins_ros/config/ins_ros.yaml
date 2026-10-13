@@ -206,4 +206,4 @@ ins_ros_node:
         enabled: false
 
         # Default output path. A service request may override it per call.
-        output_path: state_history.csv
+        output_path: /tmp/ins_ros/state_history.csv

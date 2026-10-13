@@ -28,11 +28,11 @@ ins_ros_node:
 
       # Fixed-frequency estimation loop (callbacks only buffer, timer filters)
       rate: 100.0
-      history_window: 5.0
+      history_window: 500.0
       buffer:
         imu_capacity: 2000
         measurement_capacity: 200
-        processed_capacity: 1000
+        processed_capacity: 2000
         # Maximum number of state/covariance snapshots retained for
         # OOSM rewind and for the /dump_state_history service. Raise
         # this to export a longer/full run (memory grows accordingly).
@@ -106,9 +106,9 @@ ins_ros_node:
 
         covariance: # fixed covariance if use_message_covariance is false
           position_std: # standard deviation of the position measurement (m)
-            x: 0.01
-            y: 0.01
-            z: 0.01
+            x: 0.1
+            y: 0.1
+            z: 0.1
 
         lever_arm: # GPS antena's position relative to body, expressed in body frame
           x: -1.405
@@ -116,7 +116,7 @@ ins_ros_node:
           z: 0.93
 
         gating: # Mahalanobis/NIS outlier rejection of GNSS position updates
-          enabled: true      # reject fixes whose NIS exceeds the chi-square threshold
+          enabled: false      # reject fixes whose NIS exceeds the chi-square threshold
           confidence: 0.95   # chi-square confidence level (threshold derived from the dof)
 
         init:
@@ -124,11 +124,11 @@ ins_ros_node:
             distance_threshold: 1.0
 
         continuous_orientation: # optional continuous yaw measurement (computed from gps path)
-          active: true
+          active: false
           distance_threshold: 1.0
 
       odometry:
-        enabled: true
+        enabled: false
 
         topic: /lio_ros/state
 
@@ -168,7 +168,7 @@ ins_ros_node:
       dump:
         # Expose the /dump_state_history service, which writes the
         # fixed-lag state history to disk on request. Disabled by default.
-        enabled: false
+        enabled: true
 
         # Default output path. A service request may override it per call.
-        output_path: state_history.csv
+        output_path: /tmp/ins_ros/state_history.csv

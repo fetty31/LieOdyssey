@@ -48,8 +48,8 @@ struct StampedBaro {
   double stamp{-1.0};
   bool valid_covariance{false};
   iESEKF::Scalar pressure{101325.0};
-  Eigen::Matrix<iESEKF::Scalar, 1, 1> R{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity()};
-  Eigen::Matrix<iESEKF::Scalar, 1, 1> R_inv{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity()};
+  Eigen::Matrix<iESEKF::Scalar, 1, 1> R{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity() * 2.0};
+  Eigen::Matrix<iESEKF::Scalar, 1, 1> R_inv{Eigen::Matrix<iESEKF::Scalar, 1, 1>::Identity() * 0.5};
 };
 
 struct StampedYaw {

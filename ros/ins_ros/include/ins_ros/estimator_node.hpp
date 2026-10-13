@@ -109,12 +109,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         bool propagateTo(double t);
 
-        void processMeasurement(const measurements::StampedGps& gps);
-        void processMeasurement(const measurements::StampedOdom& odom);
-        void processMeasurement(const measurements::StampedWheel& wheel);
-        void processMeasurement(const measurements::StampedMag& mag);
-        void processMeasurement(const measurements::StampedBaro& baro);
-        void processMeasurement(const measurements::StampedYaw& yaw);
+        bool processMeasurement(const measurements::StampedGps& gps);
+        bool processMeasurement(const measurements::StampedOdom& odom);
+        bool processMeasurement(const measurements::StampedWheel& wheel);
+        bool processMeasurement(const measurements::StampedMag& mag);
+        bool processMeasurement(const measurements::StampedBaro& baro);
+        bool processMeasurement(const measurements::StampedYaw& yaw);
 
         bool handleOOSM(const measurements::QueuedMeasurement& oosm);
 
@@ -238,7 +238,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // GNSS Mahalanobis/NIS gating
         bool gnss_gating_enabled_{true};
-        utils::gate::ChiSquareGate gnss_gate_;
+        utils::gating::ChiSquareGate gnss_gate_;
 
         struct GnssGatingStats
         {

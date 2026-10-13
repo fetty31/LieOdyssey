@@ -22,10 +22,16 @@ inline void publish_gps_fix(const Eigen::Vector3d& position,
                             const std::string& frame_id,
                             const rclcpp::Time& now)
 {
+    static constexpr std::size_t MAX_ACCUM_POINTS = 100000;
+
     geometry_msgs::msg::Point p;
     p.x = position.x();
     p.y = position.y();
     p.z = position.z();
+
+    if(gps_points_accumulated.size() > MAX_ACCUM_POINTS) // limit vector capacity
+        gps_points_accumulated.clear();
+
     gps_points_accumulated.push_back(p);
 
     visualization_msgs::msg::Marker marker;
