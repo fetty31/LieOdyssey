@@ -17,20 +17,20 @@ public:
     using NoiseMatrix = Eigen::Matrix<Scalar, 12, 12>; 
 
     // Simple Invariant Dynamics: constant velocity in the Lie Algebra
-    static typename Filter::Tangent simpleDynamics(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
+    static typename Filter::Tangent simpleDynamics(const Group& /*X*/, const IMUmeas<Scalar>& /*imu*/) {
         typename Filter::VecTangent t = Filter::VecTangent::Zero();
         t(0) = Scalar(1.0); // Constant angular velocity or velocity along first axis
         return t; 
     }
 
     // RI-EKF Jacobian f_dx (The 'A' matrix of error dynamics)
-    static typename Filter::Jacobian simpleJacX(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
+    static typename Filter::Jacobian simpleJacX(const Group& /*X*/, const IMUmeas<Scalar>& /*imu*/) {
         // In RI-EKF, A is often zero or dependent on inputs, but never on R or p
         return Filter::Jacobian::Zero();
     }
 
     // RI-EKF Noise Mapping f_dw
-    static typename Filter::MappingMatrix simpleJacW(const Filter& /*f*/, const IMUmeas<Scalar>& /*imu*/) {
+    static typename Filter::MappingMatrix simpleJacW(const Group& /*X*/, const IMUmeas<Scalar>& /*imu*/) {
         typename Filter::MappingMatrix W = Filter::MappingMatrix::Zero();
         W.template block<DoF, DoF>(0,0).setIdentity(); // Map first 12 noises to DoF
         return W;
@@ -101,15 +101,13 @@ TYPED_TEST(InvariantEKFTestFixture, RightInvariantUpdateStep) {
     y(2) = 1.0; 
 
     // Innovation for RI-EKF: r = \hat{X} * y_obs - b_fixed
-    auto h_fun = [](const typename TestFixture::Filter& /*f*/, 
-                    const typename TestFixture::Group& X, 
+    auto h_fun = [](const typename TestFixture::Group& X, 
                     const Measurement& obs) -> Measurement {
         // Simple observation: identity map for testing
         return Measurement::Zero(); 
     };
 
-    auto H_fun = [](const typename TestFixture::Filter& /*f*/, 
-                    const typename TestFixture::Group& /*X*/) -> HMat {
+    auto H_fun = [](const typename TestFixture::Group& /*X*/) -> HMat {
         HMat H = HMat::Zero();
         H.template block<3,3>(0,0).setIdentity(); // Observe first 3 states
         return H;
@@ -137,8 +135,8 @@ TYPED_TEST(InvariantEKFTestFixture, ConsistencyUnderLargeRotation) {
     using Measurement = Eigen::Matrix<double, 3, 1>;
     using HMat = Eigen::Matrix<double, 3, TestFixture::DoF>;
     
-    auto h_fun = [](const auto&, const auto&, const auto& y) { return y; };
-    auto H_fun = [](const auto&, const auto&) { 
+    auto h_fun = [](const auto&, const auto& y) { return y; };
+    auto H_fun = [](const auto&) { 
         HMat H = HMat::Zero(); 
         H.template block<3,3>(0,0).setIdentity(); 
         return H; 

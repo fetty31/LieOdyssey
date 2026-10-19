@@ -24,6 +24,8 @@ public:
 
     using Trajectory = std::vector<Pose>;
 
+    static constexpr std::size_t MAX_CAPACITY = 10000;
+
     struct SynchronizedTrajectories
     {
         Trajectory source;
@@ -35,24 +37,28 @@ public:
     void addSourcePose(Eigen::Vector3d position, double time)
     {
         if(aligned_) reset();
+        if(source_.size() > MAX_CAPACITY) reset();
         source_.push_back({time, position});
     }
 
     void addSourcePose(const Pose& pose)
     {
         if(aligned_) reset();
+        if(source_.size() > MAX_CAPACITY) reset();
         source_.push_back(pose);
     }
 
     void addTargetPose(Eigen::Vector3d position, double time)
     {
         if(aligned_) reset();
+        if(target_.size() > MAX_CAPACITY) reset();
         target_.push_back({time, position});
     }
 
     void addTargetPose(const Pose& pose)
     {
         if(aligned_) reset();
+        if(target_.size() > MAX_CAPACITY) reset();
         target_.push_back(pose);
     }
 

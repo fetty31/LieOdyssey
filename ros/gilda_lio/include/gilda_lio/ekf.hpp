@@ -37,21 +37,21 @@ std::vector<double> get_pose_covariance(const MatDoF& P);
 std::vector<double> get_velocity_covariance(const MatDoF& P);
 
 // Propagation model (IMU dynamics)
-typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
+typename Filter::Tangent f(const Group& X, const IMUmeas& imu);
 typename Filter::Tangent f_state(const gilda_lio::State& state);
 
 // Jacobians of the dynamics
-typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
+typename Filter::Jacobian df_dx(const Group& X, const IMUmeas& imu);
 
-typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw(const Group& /*X*/, const IMUmeas& /*imu*/);
 
 // Measurement function
-void H_fun(const Filter& /*kf*/, const Group& X_now, Measurement& z, HMat& H);
+void H_fun(const Group& X_now, Measurement& z, HMat& H);
 
 // Fill Measurement Jacobian H row with point-to-plane residual derivative 
 void fill_H_point_to_plane(const Group& group, const V3& normal, const V3& point, int i, HMat& H);
 
 // Degeneracy handler
-void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);
+void degeneracy_callback(const Group& /*X*/, Tangent& dx, const MatDoF& HRH);
 
 } // namespace gilda_lio::iESEKF 

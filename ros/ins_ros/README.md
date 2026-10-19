@@ -8,6 +8,7 @@ A full Inertial Navigation System (INS) estimator for ROS 2, built on the **Iter
 - **Multi-Sensor Fusion**: Supports IMU, GPS, wheel odometry, 3D odometry (LIO/VIO), magnetometer, and barometer
 - **Lifecycle Node**: Full ROS 2 lifecycle node with configure, activate, deactivate, cleanup, and shutdown transitions
 - **OOSM Handling**: Out-of-sequence measurement processing with fixed-lag smoothing
+- **GNSS Outlier Gating**: Mahalanobis/NIS chi-square gating of GPS fixes with a configurable confidence level
 - **ENU Frame Initialization**: Automatic GPS-based ENU datum setup
 - **Online Calibration**: Automatic IMU orientation and bias initialization from stationary measurements
 - **Continuous GPS Yaw**: Optional continuous yaw refinement from GPS trajectory
@@ -166,6 +167,9 @@ ins_ros_node:
         topic: /input/gps/fix
         trust_covariance: true
         lever_arm: {x: 0.0, y: 0.0, z: 0.0}
+        gating:
+          enabled: true
+          confidence: 0.95
         init:
           orientation:
             distance_threshold: 2.0

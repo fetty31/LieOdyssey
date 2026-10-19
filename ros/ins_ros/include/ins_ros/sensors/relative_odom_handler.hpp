@@ -65,7 +65,6 @@ struct RelativeOdomMeasurement
  */
 
 void H_fun(
-    const iESEKF::Filter& /*kf*/,
     const iESEKF::Group& X_now,
     const RelativeOdomMeasurement& Y,
     iESEKF::Measurement& r,

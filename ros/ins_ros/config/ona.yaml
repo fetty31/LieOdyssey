@@ -33,6 +33,10 @@ ins_ros_node:
         imu_capacity: 2000
         measurement_capacity: 200
         processed_capacity: 1000
+        # Maximum number of state/covariance snapshots retained for
+        # OOSM rewind and for the /dump_state_history service. Raise
+        # this to export a longer/full run (memory grows accordingly).
+        state_capacity: 2000
 
       process_noise:
         # Covariance of the discrete process-noise variables w_k.
@@ -101,6 +105,10 @@ ins_ros_node:
           y: 0.0
           z: 0.5
 
+        gating: # Mahalanobis/NIS outlier rejection of GNSS position updates
+          enabled: false      # reject fixes whose NIS exceeds the chi-square threshold
+          confidence: 0.95   # chi-square confidence level (threshold later derived from DoF)
+
         init:
           orientation: # initial yaw estimation (mandatory for filter initialization in ENU)
             distance_threshold: 2.0
@@ -137,8 +145,8 @@ ins_ros_node:
       wheel_odom:
         enabled: true
 
-        # topic: /ona2/local_odom_combined
-        topic: /fast_limo/state
+        topic: /ona2/local_odom_combined
+        # topic: /fast_limo/state
 
         type: odometry  # accepted msg types: "odometry" (nav_msgs::msg::Odometry) or "twist_stamped" (geometry_msgs::msg::TwistStamped)
 
@@ -147,3 +155,15 @@ ins_ros_node:
             x: 0.01
             y: 0.01
             z: 1.0
+
+    # ============================================================
+    # State history (optional)
+    # ============================================================
+    state_history:
+      dump:
+        # Expose the /dump_state_history service, which writes the
+        # fixed-lag state history to disk on request. Disabled by default.
+        enabled: true
+
+        # Default output path. A service request may override it per call.
+        output_path: /tmp/ins_ros/state_history.csv

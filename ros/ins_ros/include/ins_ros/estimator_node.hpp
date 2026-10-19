@@ -10,6 +10,7 @@
 #include "ins_ros/init/gps_orientation_initializer.hpp"
 
 #include "ins_ros/utils/frame_transform.hpp"
+#include "ins_ros/utils/gating.hpp"
 #include "ins_ros/utils/trajectory_aligner.hpp"
 #include "ins_ros/utils/debug.hpp"
 
@@ -22,6 +23,8 @@
 #include "ins_ros/sensors/relative_odom_handler.hpp"
 #include "ins_ros/sensors/wheel_handler.hpp"
 #include "ins_ros/sensors/yaw_handler.hpp"
+
+#include "ins_ros/srv/dump_state_history.hpp"
 
 // ROS
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
@@ -54,6 +57,9 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 
 #include <Eigen/Geometry>
 
@@ -106,12 +112,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         bool propagateTo(double t);
 
-        void processMeasurement(const measurements::StampedGps& gps);
-        void processMeasurement(const measurements::StampedOdom& odom);
-        void processMeasurement(const measurements::StampedWheel& wheel);
-        void processMeasurement(const measurements::StampedMag& mag);
-        void processMeasurement(const measurements::StampedBaro& baro);
-        void processMeasurement(const measurements::StampedYaw& yaw);
+        bool processMeasurement(const measurements::StampedGps& gps);
+        bool processMeasurement(const measurements::StampedOdom& odom);
+        bool processMeasurement(const measurements::StampedWheel& wheel);
+        bool processMeasurement(const measurements::StampedMag& mag);
+        bool processMeasurement(const measurements::StampedBaro& baro);
+        bool processMeasurement(const measurements::StampedYaw& yaw);
 
         bool handleOOSM(const measurements::QueuedMeasurement& oosm);
 
@@ -125,6 +131,12 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         void refresh_state_from_filter();
 
+        void log_gnss_gating_stats();
+
+        void dump_state_history_callback(
+            const std::shared_ptr<ins_ros::srv::DumpStateHistory::Request> request,
+            std::shared_ptr<ins_ros::srv::DumpStateHistory::Response> response);
+
         bool try_initialize_orientation();
         bool try_align_odom_to_gps(const State& odom_meas);
 
@@ -136,6 +148,7 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         void setup_subscriptions();
         void setup_publishers();
         void setup_timer();
+        void setup_services();
 
         // --- ROS <-> Library conversion helpers ---
         double stampToSec(const rclcpp::Time& header_stamp);
@@ -226,6 +239,27 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         State::V3 gps_lever_arm_{State::V3::Zero()};
         State::V3 gps_noise_variance_{State::V3::Zero()};
 
+        // GNSS Mahalanobis/NIS gating
+        bool gnss_gating_enabled_{true};
+        utils::gating::ChiSquareGate gnss_gate_;
+
+        struct GnssGatingStats
+        {
+            std::size_t received{0};  // fixes evaluated in real time
+            std::size_t accepted{0};  // updates applied
+            std::size_t rejected{0};  // updates skipped (gated or invalid)
+            std::size_t nis_samples{0};
+            double nis_sum{0.0};
+            double nis_max{0.0};
+
+            void reset() { *this = GnssGatingStats{}; }
+        };
+        GnssGatingStats gnss_gating_stats_;
+
+        // True while an OOSM rewind/replay is running: replays re-evaluate
+        // fixes that were already counted and must not inflate statistics.
+        bool oosm_replay_active_{false};
+
         // 3D Odometry
         std::string odom_topic_{""};
         bool trust_odom_pose_covariance_{false};
@@ -272,6 +306,11 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         std::size_t imu_buffer_capacity_{2000};
         std::size_t measurement_capacity_{1000};
         std::size_t processed_capacity_{1000};
+        std::size_t state_capacity_{2000};
+
+        // Optional state-history dump service (disabled by default).
+        bool state_history_dump_enabled_{false};
+        std::string state_history_dump_path_{"state_history.csv"};
 
         // Process noise parameters
         double gyro_noise_variance_;
@@ -290,6 +329,13 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
 
         // Fixed-frequency estimation timer
         rclcpp::TimerBase::SharedPtr estimation_timer_;
+
+        // Services
+        rclcpp::Service<ins_ros::srv::DumpStateHistory>::SharedPtr
+            dump_state_history_srv_;
+        
+            // Separate callback group for non-blocking state dumping
+        rclcpp::CallbackGroup::SharedPtr dump_callback_group_;
 
         // Publishers (lifecycle-aware)
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>> state_pub_;

@@ -41,8 +41,7 @@
 
 namespace ins_ros::iESEKF::wheel {
 
-void H_fun(const iESEKF::Filter& /*kf*/,
-           const iESEKF::Group& X_now,
+void H_fun(const iESEKF::Group& X_now,
            const iESEKF::Measurement& y,
            iESEKF::Measurement& r,
            iESEKF::HMat& H)

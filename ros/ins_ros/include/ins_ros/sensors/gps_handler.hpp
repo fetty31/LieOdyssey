@@ -7,13 +7,16 @@ namespace ins_ros::iESEKF::gps {
 
 struct GPSMeasurement
 {
+    // GNSS fixes are 3D position measurements: measurement dimension (and
+    // therefore the degrees of freedom of the chi-square gate).
+    static constexpr int Dimension = 3;
+
     State::V3 position_enu = State::V3::Zero(); // GPS position in ENU frame
     State::V3 lever_arm = State::V3::Zero(); // GPS position relative to body, expressed in body frame
 };
 
 // Measurement function
-void H_fun(const iESEKF::Filter& /*kf*/, 
-            const iESEKF::Group& X_now, 
+void H_fun(const iESEKF::Group& X_now, 
             const GPSMeasurement& y, 
             iESEKF::Measurement& r, 
             iESEKF::HMat& H)

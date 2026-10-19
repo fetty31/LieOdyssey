@@ -310,6 +310,15 @@ public:
    */
   void eraseStateHistoryAfter(double t);
 
+  /**
+   * @brief Return a copy of the full state/covariance history.
+   *
+   * The copy is taken while holding the handler mutex so the caller
+   * can release it before doing any (slow) I/O with the returned data.
+   * The returned snapshots are ordered chronologically (oldest first).
+   */
+  std::vector<StateSnapshot> stateHistory() const;
+
   // ---------------------------------------------------------------------------
   // History management
   // ---------------------------------------------------------------------------
@@ -327,6 +336,14 @@ public:
   * Implemented using std::visit over the Measurement variant.
   */
   static double getStamp(
+      const QueuedMeasurement& measurement);
+
+  /**
+  * @brief Check if the measurement has valid covariance (R)
+  *
+  * Implemented using std::visit over the Measurement variant.
+  */
+  static bool isCovarianceValid(
       const QueuedMeasurement& measurement);
 
 private:

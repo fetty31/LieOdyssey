@@ -2,6 +2,7 @@
 #define __LIEODYSSEY_IESEKF_FILTER_HPP__
 
 #include <Eigen/Dense>
+#include <mutex>
 #include "lie_odyssey/core/groups.hpp"
 #include "lie_odyssey/core/imu_data.hpp"
 
@@ -24,10 +25,10 @@ public:
     using MappingMatrix = Eigen::Matrix<Scalar,DoF,12>;
 
     // User-defined dynamics
-    using TangentFunction = std::function<Tangent(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
-    using JacobianXFun  = std::function<Jacobian(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
-    using JacobianWFun  = std::function<MappingMatrix(const iESEKF<Group>&, const IMUmeas<Scalar>&)>;
-    using DegeneracyCallback = std::function<void(const iESEKF<Group>&, Tangent&, const MatDoF&)>;
+    using TangentFunction = std::function<Tangent(const Group&, const IMUmeas<Scalar>&)>;
+    using JacobianXFun  = std::function<Jacobian(const Group&, const IMUmeas<Scalar>&)>;
+    using JacobianWFun  = std::function<MappingMatrix(const Group&, const IMUmeas<Scalar>&)>;
+    using DegeneracyCallback = std::function<void(const Group&, Tangent&, const MatDoF&)>;
 
     iESEKF(
            const MatDoF& P = MatDoF::Identity()*Scalar(1e-3),
@@ -42,32 +43,36 @@ public:
     {
         // Provide safe defaults (identity dynamics)
         if (!f_) {
-            f_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return VecTangent::Zero(); }; // cast
+            f_ = [](const Group&, const IMUmeas<Scalar>&) { return VecTangent::Zero(); }; // cast
         }
         if (!f_dx_) {
-            f_dx_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return Jacobian::Identity(); };
+            f_dx_ = [](const Group&, const IMUmeas<Scalar>&) { return Jacobian::Identity(); };
         }
         if (!f_dw_) {
-            f_dw_ = [](const iESEKF<Group>&, const IMUmeas<Scalar>&) { return MappingMatrix::Zero(); };
+            f_dw_ = [](const Group&, const IMUmeas<Scalar>&) { return MappingMatrix::Zero(); };
         }
 
         // Safe callback, do not handle degeneracy
         if (!degeneracy_callback_) {
-            degeneracy_callback_ = [](const iESEKF<Group>&, Tangent&, const MatDoF&) { return; };
+            degeneracy_callback_ = [](const Group&, Tangent&, const MatDoF&) { return; };
         }
     }
 
     // -------------------- Prediction --------------------
     virtual void predict(const IMUmeas<Scalar>& imu) 
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        const auto X_k = X_;
+
         // Propagate state using user dynamics
         Jacobian J_dX;   // ∂(dX ⊕ exp(xi)) / ∂dX  == Adj(exp(xi))^-1
         Jacobian J_xi;   // ∂(dX ⊕ exp(xi)) / ∂xi  == Jr
-        X_.plus(f_(*this, imu) * Scalar( imu.dt ), J_dX, J_xi);
+        X_.plus(f_(X_k, imu) * Scalar( imu.dt ), J_dX, J_xi);
 
         // Update covariance
-        Jacobian Fx = J_dX + J_xi * f_dx_(*this, imu) * Scalar( imu.dt );   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
-        MappingMatrix Fw = J_xi * f_dw_(*this, imu) * Scalar( imu.dt );     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
+        Jacobian Fx = J_dX + J_xi * f_dx_(X_k, imu) * Scalar( imu.dt );   // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (26)
+        MappingMatrix Fw = J_xi * f_dw_(X_k, imu) * Scalar( imu.dt );     // He-2021, [https://arxiv.org/abs/2102.03804] Eq. (27)
 
         P_ = Fx * P_ * Fx.transpose() + Fw * Q_ * Fw.transpose(); 
     }
@@ -84,9 +89,10 @@ public:
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
-                std::function<Residual(const iESEKF<Group>&, const Group&, const Measurement& y)> h_fun,
-                std::function<HMat(const iESEKF<Group>&, const Group&)> H_fun)
+                std::function<Residual(const Group&, const Measurement& y)> h_fun,
+                std::function<HMat(const Group&)> H_fun)
     {
+        std::lock_guard<std::mutex> lock(mutex_);
 
         Group X_now = X_;     // predicted state (reference frame)
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
@@ -102,10 +108,10 @@ public:
             Tangent dx = X_now.minus(X_, J);  // Xu-2021, [https://arxiv.org/abs/2107.06829] Eq. (10-11)
 
             // Linearize measurement
-            HMat H = H_fun(*this, X_now);     // (Eigen::Dynamic x DoF) = (N measurements x DoF)
+            HMat H = H_fun(X_now);     // (Eigen::Dynamic x DoF) = (N measurements x DoF)
 
             // Residual at this point
-            Residual r = h_fun(*this, X_now, y);   // y - h(X ⊕ dx)
+            Residual r = h_fun(X_now, y);   // y - h(X ⊕ dx)
 
             // Update covariance
             Jacobian J_inv = J.inverse();
@@ -124,7 +130,7 @@ public:
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 
             // Degeneracy handling 
-            degeneracy_callback_(*this, dx, HRH);
+            degeneracy_callback_(X_now, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -159,8 +165,10 @@ public:
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
-                std::function<void(const iESEKF<Group>&, const Group&, const Measurement&, Residual&, HMat&)> H_fun)
+                std::function<void(const Group&, const Measurement&, Residual&, HMat&)> H_fun)
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+
         Group X_now = X_;
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
         MatDoF P_now;         // transformed covariance (P^κ)
@@ -177,8 +185,8 @@ public:
             // Get residual and linearized measurement model
             Residual r;
             HMat H;
-            H_fun(*this, X_now, y, r, H);    // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
-                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(X_now, y, r, H);  // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                    // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             // Update covariance
             Jacobian J_inv = J.inverse();
@@ -197,7 +205,7 @@ public:
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 
             // Degeneracy handling 
-            degeneracy_callback_(*this, dx, HRH);
+            degeneracy_callback_(X_now, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -230,8 +238,9 @@ public:
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
                 const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R_inv,
-                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const Group&, Measurement&, HMat&)> H_fun)
     {
+        std::lock_guard<std::mutex> lock(mutex_);
 
         Group X_now = X_;   // predicted state (reference frame)
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
@@ -249,8 +258,8 @@ public:
             // Get residual and linearized measurement model
             Measurement r;
             HMat H;
-            H_fun(*this, X_now, r, H);       // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
-                                             // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(X_now, r, H);     // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                    // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             // Update covariance
             Jacobian J_inv = J.inverse();
@@ -269,7 +278,7 @@ public:
             dx = K*r + (KH - MatDoF::Identity()) * J_inv * dx; 
 
             // Degeneracy handling 
-            degeneracy_callback_(*this, dx, HRH);
+            degeneracy_callback_(X_now, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -298,10 +307,11 @@ public:
     // H_fun: measurement function -> fills residual z and measurement jacobian H
     template <typename Measurement, typename HMat>
     void update(Scalar R,
-                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const Group&, Measurement&, HMat&)> H_fun)
     {
-
         using MatDyn = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+
+        std::lock_guard<std::mutex> lock(mutex_);
 
         Group X_now = X_;     // predicted state (reference frame)
         MatDoF P_pred = P_;   // fixed predicted covariance (P̂_k)
@@ -319,8 +329,8 @@ public:
             // // Get residual and linearized measurement model
             Measurement r;
             HMat H;
-            H_fun(*this, X_now, r, H);  // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
-                                        // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(X_now, r, H);     // H == (Eigen::Dynamic x DoF) = (N measurements x DoF)
+                                    // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             // Update covariance
             Jacobian J_inv = J.inverse();
@@ -339,7 +349,7 @@ public:
             dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
 
             // Degeneracy handling 
-            degeneracy_callback_(*this, dx, HRH);
+            degeneracy_callback_(X_now, dx, HRH);
 
             // Update state
             X_now.plus(dx);
@@ -371,10 +381,12 @@ public:
     template <typename Measurement, typename HMat>
     void update(Scalar R,
                 const Eigen::Matrix<Scalar, Eigen::Dynamic, DoF>& S,
-                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const Group&, Measurement&, HMat&)> H_fun)
     {
         using MatDyn = Eigen::Matrix<Scalar,Eigen::Dynamic,Eigen::Dynamic>;
         using HFull  = Eigen::Matrix<Scalar,Eigen::Dynamic,DoF>;
+
+        std::lock_guard<std::mutex> lock(mutex_);
 
         Group X_now = X_;  // predicted state (reference frame)
 
@@ -395,8 +407,8 @@ public:
             Measurement r;
             HMat H_sub; 
 
-            H_fun(*this, X_now, r, H_sub);  // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
-                                            // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(X_now, r, H_sub);     // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
+                                        // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             Jacobian J_inv = J.inverse();
             P_now = J_inv * P_pred * J_inv.transpose();
@@ -431,7 +443,7 @@ public:
             dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
 
             degeneracy_callback_(
-                *this,
+                X_now,
                 dx,
                 H_full.transpose() * H_full / R
             );
@@ -462,10 +474,12 @@ public:
     void update(const Eigen::Matrix<Scalar,
                                     Eigen::Dynamic, Eigen::Dynamic>& R,
                 const Eigen::Matrix<Scalar, Eigen::Dynamic, DoF>& S,
-                std::function<void(const iESEKF<Group>&, const Group&, Measurement&, HMat&)> H_fun)
+                std::function<void(const Group&, Measurement&, HMat&)> H_fun)
     {
         using MatDyn = Eigen::Matrix<Scalar,Eigen::Dynamic,Eigen::Dynamic>;
         using HFull  = Eigen::Matrix<Scalar,Eigen::Dynamic,DoF>;
+
+        std::lock_guard<std::mutex> lock(mutex_);
 
         Group X_now = X_;  // predicted state (reference frame)
 
@@ -488,8 +502,8 @@ public:
             Measurement r;
             HMat H_sub; 
 
-            H_fun(*this, X_now, r, H_sub);  // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
-                                            // r == (Eigen::Dynamic x 1) = (N measurements x 1)
+            H_fun(X_now, r, H_sub);     // H_sub == (Eigen::Dynamic x SubDoF) = (N measurements x SubDoF)
+                                        // r == (Eigen::Dynamic x 1) = (N measurements x 1)
 
             Jacobian J_inv = J.inverse();
             P_now = J_inv * P_pred * J_inv.transpose();
@@ -525,7 +539,7 @@ public:
             dx = K * r + (KH - MatDoF::Identity()) * J_inv * dx;
 
             degeneracy_callback_(
-                *this,
+                X_now,
                 dx,
                 H_full.transpose() * R_inv * H_full
             );
@@ -550,39 +564,81 @@ public:
 
     void reset() 
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+
         X_.setIdentity();
         P_ = MatDoF::Identity() * Scalar(1e-3);
     }
 
     // Access filter covariance
-    MatDoF getCovariance() const { return P_; }
+    MatDoF getCovariance() const 
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return P_; 
+    }
 
     // Access process noise
-    NoiseMatrix getProcessNoise() const { return Q_; }
+    NoiseMatrix getProcessNoise() const 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        return Q_; 
+    }
 
     // Access state
-    Group getState() const { return X_; }
+    Group getState() const 
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return X_; 
+    }
 
     // Get max iters
-    int getMaxIters() { return max_iters_; }
+    int getMaxIters() 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        return max_iters_; 
+    }
 
     // Get tolerance
-    Scalar getTolerance() { return tol_; }
+    Scalar getTolerance() 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        return tol_; 
+    }
 
     // Set filter covariance
-    void setCovariance(const MatDoF& P) { P_ = P; }
+    void setCovariance(const MatDoF& P) 
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        P_ = P; 
+    }
 
     // Set propagation noise
-    void setProcessNoise(const NoiseMatrix& Q) { Q_ = Q; }
+    void setProcessNoise(const NoiseMatrix& Q) 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        Q_ = Q; 
+    }
 
     // Set state
-    void setState(const Group& X) { X_ = X; }
+    void setState(const Group& X) 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        X_ = X; 
+    }
 
     // Set max iters
-    void setMaxIters(int it) { max_iters_ = it; }
+    void setMaxIters(int it) 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        max_iters_ = it; 
+    }
 
     // Set tolerance
-    void setTolerance(Scalar tol) { tol_ = tol; }
+    void setTolerance(Scalar tol) 
+    {
+        std::lock_guard<std::mutex> lock(mutex_); 
+        tol_ = tol; 
+    }
 
 protected:
 
@@ -607,6 +663,8 @@ protected:
     JacobianWFun f_dw_;     // Jacobian w.r.t. noise
     DegeneracyCallback degeneracy_callback_;   // Degeneracy handling callback (optional)
 
+    // Protect against parallel use
+    mutable std::mutex mutex_;
 };
 
 } // namespace lie_odyssey

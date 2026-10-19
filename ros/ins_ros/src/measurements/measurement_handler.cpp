@@ -346,7 +346,6 @@ void MeasurementHandler::pushStateSnapshot(
     state_history_.push_back(
         StateSnapshot{stamp, state, cov});
 
-    pruneHistory(stamp);
     enforceCapacity();
 }
 
@@ -382,6 +381,16 @@ void MeasurementHandler::eraseStateHistoryAfter(double t)
     }
 }
 
+std::vector<StateSnapshot>
+MeasurementHandler::stateHistory() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  return std::vector<StateSnapshot>(
+      state_history_.begin(),
+      state_history_.end());
+}
+
 // -----------------------------------------------------------------------------
 // Pruning
 // -----------------------------------------------------------------------------
@@ -402,11 +411,11 @@ void MeasurementHandler::pruneOlderThan(double t_min)
     imu_history_.pop_front();
   }
 
-  while (!state_history_.empty() &&
-         state_history_.front().stamp < t_min)
-  {
-    state_history_.pop_front();
-  }
+  // NOTE: state_history_ is intentionally NOT time-pruned here. Its
+  // retention is governed solely by state_capacity so the state-history
+  // dump service can export a full run (the user raises
+  // filter.buffer.state_capacity for that). OOSM correctness is kept by
+  // an explicit history-window check in the estimator.
 }
 
 // -----------------------------------------------------------------------------
@@ -451,11 +460,7 @@ void MeasurementHandler::pruneHistory(double t_newest)
     imu_history_.pop_front();
   }
 
-  while (!state_history_.empty() &&
-         state_history_.front().stamp < t_min)
-  {
-    state_history_.pop_front();
-  }
+  // state_history_ is not time-pruned (see pruneOlderThan).
 
   while (!processed_history_.empty() && 
         getStamp(processed_history_.front()) < t_min)
@@ -471,6 +476,15 @@ double MeasurementHandler::getStamp(const QueuedMeasurement& measurement)
         return m.stamp;
       },
       measurement.measurement);
+}
+
+bool MeasurementHandler::isCovarianceValid(const QueuedMeasurement& measurement)
+{
+    return std::visit(
+        [](const auto& m) -> bool {
+            return m.valid_covariance;
+        },
+        measurement.measurement);
 }
 
 }  // namespace ins_ros::measurements

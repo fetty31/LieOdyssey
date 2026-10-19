@@ -40,18 +40,18 @@ void set_velocity_covariance(const std::array<double, 36>& cov, const Group& g, 
 MatDoF get_tangent_to_inertial_jacob(const Group& g);
 
 // Propagation model (IMU dynamics)
-typename Filter::Tangent f(const Filter& kf, const IMUmeas& imu);
-typename Filter::Tangent f_cv(const Filter& kf, const IMUmeas& imu);
+typename Filter::Tangent f(const Group& X, const IMUmeas& imu);
+typename Filter::Tangent f_cv(const Group& X, const IMUmeas& imu);
 typename Filter::Tangent f_state(const ins_ros::State& state);
 
 // Jacobians of the dynamics
-typename Filter::Jacobian df_dx(const Filter& kf, const IMUmeas& imu);
-typename Filter::Jacobian df_dx_cv(const Filter& kf, const IMUmeas& imu);
+typename Filter::Jacobian df_dx(const Group& X, const IMUmeas& imu);
+typename Filter::Jacobian df_dx_cv(const Group& X, const IMUmeas& imu);
 
-typename Filter::MappingMatrix df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/);
-typename Filter::MappingMatrix df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw(const Group& /*X*/, const IMUmeas& /*imu*/);
+typename Filter::MappingMatrix df_dw_cv(const Group& /*X*/, const IMUmeas& /*imu*/);
 
 // Degeneracy handler
-void degeneracy_callback(const Filter& /*kf*/, Tangent& dx, const MatDoF& HRH);
+void degeneracy_callback(const Group& /*X*/, Tangent& dx, const MatDoF& HRH);
 
 } // namespace ins_ros::iESEKF 

@@ -42,9 +42,9 @@ Eigen::Matrix<Scalar, 3, 3> my_skew(const Vec3& v) {
 }
 
 // Dynamics function
-Filter::Tangent dynamics(const Filter& kf, const IMUmeas& imu) {
+Filter::Tangent dynamics(const Group& X, const IMUmeas& imu) {
     Filter::VecTangent t = Filter::VecTangent::Zero();
-    Group X = kf.getState();
+
     auto g = X.impl().subgroup<3>().coeffs();
     auto R = X.impl().subgroup<0>().quat().toRotationMatrix();
     auto b_a = X.impl().subgroup<2>().coeffs();
@@ -56,9 +56,9 @@ Filter::Tangent dynamics(const Filter& kf, const IMUmeas& imu) {
     return t;
 }
 
-Filter::Jacobian jacobian_x(const Filter& kf, const IMUmeas& /*imu*/) {
+Filter::Jacobian jacobian_x(const Group& X, const IMUmeas& /*imu*/) {
     Filter::Jacobian Jx = Filter::Jacobian::Zero();
-    Group X = kf.getState();
+    
     auto g = X.impl().subgroup<3>().coeffs();
     auto R = X.impl().subgroup<0>().quat().toRotationMatrix();
 
@@ -69,7 +69,7 @@ Filter::Jacobian jacobian_x(const Filter& kf, const IMUmeas& /*imu*/) {
     return Jx;
 }
 
-Filter::MappingMatrix jacobian_w(const Filter& /*kf*/, const IMUmeas& /*imu*/) {
+Filter::MappingMatrix jacobian_w(const Group& /*X*/, const IMUmeas& /*imu*/) {
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
     Jw.block<3, 3>(3, 3)  = -Eigen::Matrix<Scalar, 3, 3>::Identity();
     Jw.block<3, 3>(6, 0)  = -Eigen::Matrix<Scalar, 3, 3>::Identity();

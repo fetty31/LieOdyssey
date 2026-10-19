@@ -1,6 +1,14 @@
 #include "ins_ros/estimator_node.hpp"
 
+#include <fstream>
+#include <iomanip>
+
 namespace ins_ros {
+
+namespace {
+// GNSS gating statistics are summarized every N evaluated fixes.
+constexpr std::size_t kGnssGatingStatsLogInterval = 100;
+} // namespace
 
 INSEstimator::INSEstimator(const std::string& node_name)
     : LifecycleNode(node_name)
@@ -57,6 +65,29 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     declare_parameters();
     load_parameters();
 
+    // GNSS gating statistics
+    gnss_gating_stats_.reset();
+    oosm_replay_active_ = false;
+
+    if (!gps_topic_.empty())
+    {
+        if (gnss_gating_enabled_)
+        {
+
+            RCLCPP_INFO(get_logger(),
+                "GNSS gating: enabled, confidence = %.3f, "
+                "chi2 threshold (dof = %d) = %.3f",
+                gnss_gate_.confidence,
+                iESEKF::gps::GPSMeasurement::Dimension,
+                gnss_gate_.threshold);
+        }
+        else
+        {
+            RCLCPP_WARN(get_logger(),
+                "GNSS gating: disabled, every GNSS fix is used for the update.");
+        }
+    }
+
     // Orientation initializers
     imu_orientation_initializer_ = std::make_unique<init::IMUOrientationInitializer>(imu_orientation_params_);
     gps_orientation_initializer_ = std::make_unique<init::GPSOrientationInitializer>(gps_orientation_params_);
@@ -74,7 +105,7 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     handler_opts.imu_capacity = imu_buffer_capacity_;
     handler_opts.measurement_capacity = measurement_capacity_;
     handler_opts.processed_capacity = processed_capacity_;
-    handler_opts.state_capacity = imu_buffer_capacity_;
+    handler_opts.state_capacity = state_capacity_;
     handler_opts.history_window_s = history_window_s_;
     meas_handler_.setOptions(handler_opts);
     meas_handler_.clear();
@@ -83,6 +114,8 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
     trajectory_aligner_.clear();
 
     setup_publishers();
+
+    setup_services();
 
     // Reset filter
     filter_.reset();
@@ -152,6 +185,11 @@ INSEstimator::CallbackReturn INSEstimator::on_cleanup(const rclcpp_lifecycle::St
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
+
+    log_gnss_gating_stats();
+    gnss_gating_stats_.reset();
+    oosm_replay_active_ = false;
 
     filter_.reset();
     meas_handler_.clear();
@@ -180,6 +218,7 @@ INSEstimator::CallbackReturn INSEstimator::on_shutdown(const rclcpp_lifecycle::S
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
 
     return CallbackReturn::SUCCESS;
 }
@@ -200,6 +239,7 @@ INSEstimator::CallbackReturn INSEstimator::on_error(const rclcpp_lifecycle::Stat
     state_pub_.reset();
     pose_pub_.reset();
     tf_broadcaster_.reset();
+    dump_state_history_srv_.reset();
 
     meas_handler_.clear();
     trajectory_aligner_.clear();
@@ -239,6 +279,11 @@ void INSEstimator::declare_parameters()
     declare_parameter<int>("filter.buffer.imu_capacity", 2000);
     declare_parameter<int>("filter.buffer.measurement_capacity", 200);
     declare_parameter<int>("filter.buffer.processed_capacity", 1000);
+    declare_parameter<int>("filter.buffer.state_capacity", 2000);
+
+    // Optional state-history dump service
+    declare_parameter<bool>("state_history.dump.enabled", false);
+    declare_parameter<std::string>("state_history.dump.output_path", "/tmp/ins_ros/state_history.csv");
 
     // Synchronization / latency handling
     declare_parameter<double>("sync.gps.tolerance", 0.005);
@@ -285,6 +330,10 @@ void INSEstimator::declare_parameters()
     declare_parameter<double>("sensors.gps.lever_arm.x", 0.0);
     declare_parameter<double>("sensors.gps.lever_arm.y", 0.0);
     declare_parameter<double>("sensors.gps.lever_arm.z", 0.0);
+
+        // GNSS gating: Mahalanobis/NIS outlier rejection of GPS fixes
+    declare_parameter<bool>("sensors.gps.gating.enabled", true);
+    declare_parameter<double>("sensors.gps.gating.confidence", 0.95);
 
         // GPS yaw calculation
     declare_parameter<double>("sensors.gps.init.orientation.distance_threshold", 2.0);
@@ -362,6 +411,24 @@ void INSEstimator::load_parameters()
     measurement_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.measurement_capacity").as_int());
     processed_capacity_ = static_cast<std::size_t>(get_parameter("filter.buffer.processed_capacity").as_int());
 
+    const int state_capacity_param = get_parameter("filter.buffer.state_capacity").as_int();
+    state_capacity_ = (state_capacity_param > 0)
+        ? static_cast<std::size_t>(state_capacity_param)
+        : imu_buffer_capacity_;
+    if (state_capacity_param <= 0)
+    {
+        RCLCPP_WARN(get_logger(),
+            "filter.buffer.state_capacity = %d is invalid, "
+            "falling back to imu_capacity = %zu.",
+            state_capacity_param,
+            imu_buffer_capacity_);
+    }
+
+    state_history_dump_enabled_ =
+        get_parameter("state_history.dump.enabled").as_bool();
+    state_history_dump_path_ =
+        get_parameter("state_history.dump.output_path").as_string();
+
     sync_tolerance_gps_ = get_parameter("sync.gps.tolerance").as_double();
     sync_tolerance_odom_ = get_parameter("sync.odom.tolerance").as_double();
     sync_tolerance_wheel_ = get_parameter("sync.wheel_odom.tolerance").as_double();
@@ -408,6 +475,7 @@ void INSEstimator::load_parameters()
     if (!gps_enabled)
     {
         RCLCPP_WARN(get_logger(), "GPS is disabled. The estimator will run without GPS.");
+        gnss_gating_enabled_ = false;
     }else{
         gps_topic_ = get_parameter("sensors.gps.topic").as_string();
         trust_gps_covariance_ = get_parameter("sensors.gps.use_message_covariance").as_bool();
@@ -419,6 +487,21 @@ void INSEstimator::load_parameters()
         double lever_arm_y = get_parameter("sensors.gps.lever_arm.y").as_double();
         double lever_arm_z = get_parameter("sensors.gps.lever_arm.z").as_double();
         gps_lever_arm_ = State::V3(lever_arm_x, lever_arm_y, lever_arm_z);
+
+        gnss_gating_enabled_ = get_parameter("sensors.gps.gating.enabled").as_bool();
+        double gnss_gating_confidence = get_parameter("sensors.gps.gating.confidence").as_double();
+
+        if( (gnss_gating_confidence <= 0.0) || 
+            (gnss_gating_confidence >= 1.0) ||
+            (!std::isfinite(gnss_gating_confidence)) )
+        {
+            RCLCPP_ERROR(get_logger(),
+                "Invalid sensors.gps.gating.confidence = %.4f. "
+                "The confidence level must be in (0, 1).",
+                gnss_gating_confidence);
+            throw std::runtime_error("Invalid GNSS gating confidence");
+        }
+        gnss_gate_.configure(iESEKF::gps::GPSMeasurement::Dimension, gnss_gating_confidence);
 
         gps_orientation_params_.distance_threshold 
             = get_parameter("sensors.gps.init.orientation.distance_threshold").as_double();
@@ -641,6 +724,151 @@ void INSEstimator::setup_timer()
     RCLCPP_DEBUG(get_logger(), "Estimation timer created at %.2f Hz", rate);
 }
 
+void INSEstimator::setup_services()
+{
+    if (!state_history_dump_enabled_)
+    {
+        RCLCPP_INFO(get_logger(),
+            "State-history dump service is disabled "
+            "(set state_history.dump.enabled=true to enable it).");
+        return;
+    }
+
+    // Isolate the dump service from the estimation callbacks.
+    dump_callback_group_ = create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
+
+    dump_state_history_srv_ =
+        create_service<ins_ros::srv::DumpStateHistory>(
+            "~/dump_state_history",
+            std::bind(
+                &INSEstimator::dump_state_history_callback,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2),
+            rmw_qos_profile_services_default,
+            dump_callback_group_);
+
+    RCLCPP_INFO(get_logger(),
+        "State-history dump service '~/dump_state_history' enabled "
+        "(default output path: '%s').",
+        state_history_dump_path_.c_str());
+}
+
+void INSEstimator::dump_state_history_callback(
+    const std::shared_ptr<ins_ros::srv::DumpStateHistory::Request> request,
+    std::shared_ptr<ins_ros::srv::DumpStateHistory::Response> response)
+{
+    // Copy the history under the handler mutex, then release it before any
+    // disk I/O so the estimation loop is never blocked by file writes.
+    const std::vector<measurements::StateSnapshot> history =
+        meas_handler_.stateHistory();
+
+    const std::string path =
+        request->output_path.empty() ? state_history_dump_path_
+                                     : request->output_path;
+
+    response->success = false;
+    response->num_states = 0;
+    response->file_path = path;
+
+    if (history.empty())
+    {
+        response->message =
+            "State history is empty. Nothing written to '" + path + "'.";
+        RCLCPP_WARN(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    // Create missing parent directories.
+    std::error_code ec;
+    const auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty())
+        std::filesystem::create_directories(parent, ec);
+
+    // Create the file or truncate it if it already exists.
+    std::ofstream file(path, std::ios::out | std::ios::trunc);
+    if (!file.is_open())
+    {
+        response->message = "Failed to open '" + path + "' for writing.";
+        RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    file << std::setprecision(17);
+
+    // One row per state. The 19x19 covariance (P) is expressed in the
+    // inertial/world frame (same convention used when publishing) and is
+    // written as a single field of 361 semicolon-separated row-major values.
+    // Tangent ordering:
+    //   0-2 position, 3-5 velocity, 6-8 orientation, 9 time,
+    //   10-12 gyro bias, 13-15 accel bias, 16-18 gravity.
+    file << "timestamp,"
+            "px,py,pz,"
+            "vx,vy,vz,"
+            "qx,qy,qz,qw,"
+            "bax,bay,baz,"
+            "bgx,bgy,bgz,"
+            "gx,gy,gz,"
+            "cov\n";
+
+    std::size_t written = 0;
+    for (const auto& snapshot : history)
+    {
+        ins_ros::State state;
+        iESEKF::group_to_state(snapshot.group, state);
+
+        const iESEKF::MatDoF T =
+            iESEKF::get_tangent_to_inertial_jacob(snapshot.group);
+        const iESEKF::MatDoF P_inertial =
+            T * snapshot.covariance * T.transpose();
+
+        file << snapshot.stamp << ','
+             << state.p.x() << ',' << state.p.y() << ',' << state.p.z() << ','
+             << state.v.x() << ',' << state.v.y() << ',' << state.v.z() << ','
+             << state.q.x() << ',' << state.q.y() << ',' << state.q.z() << ','
+             << state.q.w() << ','
+             << state.bias.a.x() << ',' << state.bias.a.y() << ','
+             << state.bias.a.z() << ','
+             << state.bias.w.x() << ',' << state.bias.w.y() << ','
+             << state.bias.w.z() << ','
+             << state.g.x() << ',' << state.g.y() << ',' << state.g.z();
+
+        const auto rows = P_inertial.rows();
+        const auto cols = P_inertial.cols();
+        for (Eigen::Index i = 0; i < rows; ++i)
+        {
+            for (Eigen::Index j = 0; j < cols; ++j)
+            {
+                if (i != 0 || j != 0)
+                    file << ';';
+                file << P_inertial(i, j);
+            }
+        }
+
+        file << '\n';
+        ++written;
+    }
+
+    file.flush();
+    const bool ok = file.good();
+    file.close();
+
+    if (!ok)
+    {
+        response->message = "Failed to write '" + path + "'.";
+        RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    response->success = true;
+    response->num_states = static_cast<uint32_t>(written);
+    response->message = "Wrote " + std::to_string(written) +
+                        " states to '" + path + "'.";
+
+    RCLCPP_INFO(get_logger(), "%s", response->message.c_str());
+}
+
 void INSEstimator::setState() 
 {
     iESEKF::Group group;
@@ -722,6 +950,9 @@ void INSEstimator::imu_callback(const sensor_msgs::msg::Imu& msg)
 void INSEstimator::gps_callback(
     const sensor_msgs::msg::NavSatFix& msg)
 {
+    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
+    using Mat2 = Eigen::Matrix<iESEKF::Scalar, 2, 2>;
+
     if (msg.status.status <
         sensor_msgs::msg::NavSatStatus::STATUS_FIX)
     {
@@ -797,9 +1028,11 @@ void INSEstimator::gps_callback(
             measurements::StampedYaw yaw_meas;
             yaw_meas.stamp = stamp;
             yaw_meas.yaw = gps_orientation_continuous_->heading();
-            yaw_meas.R.setIdentity();
-            yaw_meas.R *= 0.01;
-            yaw_meas.R_inv = yaw_meas.R.inverse();
+            Mat2 R = 0.01 * Mat2::Identity();
+            Mat2 R_inv = 1.0/0.01 * Mat2::Identity();
+            yaw_meas.valid_covariance = measurements::setCovariance(yaw_meas.R,
+                                                                    yaw_meas.R_inv,
+                                                                    R, R_inv);
             meas_handler_.push(yaw_meas);
             gps_orientation_continuous_->reset();
 
@@ -816,14 +1049,15 @@ void INSEstimator::gps_callback(
     meas.meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
     meas.meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
 
-    using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
-    Mat3 R_gps;
+    Mat3 R_gps = Mat3::Zero();
+    Mat3 R_gps_inv = Mat3::Zero();
     if ((msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {
         iESEKF::set_position_covariance(msg.position_covariance, 
                                         filter_.getState(),
                                         R_gps);
+        R_gps_inv = R_gps.inverse();
     }
     else
     {
@@ -831,10 +1065,14 @@ void INSEstimator::gps_callback(
         R_gps(0, 0) = gps_noise_variance_.x();
         R_gps(1, 1) = gps_noise_variance_.y();
         R_gps(2, 2) = gps_noise_variance_.z();
+        R_gps_inv(0, 0) = 1.0/R_gps(0, 0);
+        R_gps_inv(1, 1) = 1.0/R_gps(1, 1);
+        R_gps_inv(2, 2) = 1.0/R_gps(2, 2);
     }
-    meas.R = R_gps;
-    meas.R_inv = R_gps.inverse();
 
+    meas.valid_covariance = measurements::setCovariance(meas.R,
+                                                        meas.R_inv,
+                                                        R_gps, R_gps_inv);
     // Push GPS measurement to the handler
     meas_handler_.push(meas);
 
@@ -849,6 +1087,8 @@ void INSEstimator::gps_callback(
 
 void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 {
+    using Mat10 = Eigen::Matrix<iESEKF::Scalar, 10, 10>;
+
     // Initialize LIO/VIO-body -> EKF-body extrinsics
     if (!lio_to_base_.initialized())
     {
@@ -898,7 +1138,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     iESEKF::Group group_meas;
     iESEKF::state_to_group(odom_meas, group_meas);
 
-    Eigen::MatrixXd R_odom = Eigen::MatrixXd::Identity(10, 10);
+    Mat10 R_odom = Mat10::Identity();
     R_odom(9,9) = 0.1; // time sensitivity
     if(trust_odom_pose_covariance_)
     {
@@ -927,12 +1167,14 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     {
         R_odom.block<3, 3>(3, 3) = odom_velocity_noise_.asDiagonal();
     }
+    Mat10 R_odom_inv = R_odom.inverse();
 
     measurements::StampedOdom stamped;
     stamped.stamp = odom_meas.time;
     stamped.group = group_meas;
-    stamped.R = R_odom;
-    stamped.R_inv = R_odom.inverse();
+    stamped.valid_covariance = measurements::setCovariance(stamped.R,
+                                                            stamped.R_inv,
+                                                            R_odom, R_odom_inv);
     meas_handler_.push(stamped);
 
     nav_msgs::msg::Odometry debug_msg;
@@ -979,6 +1221,7 @@ void INSEstimator::wheel_odom_to_buffer(
 
     using Mat3 = Eigen::Matrix<iESEKF::Scalar, 3, 3>;
     Mat3 R_w = Mat3::Zero();
+    Mat3 R_w_inv = Mat3::Zero();
 
     // To-Do: Use covariance from message if available and trusted.
     if (trust_wheel_odom_covariance_)
@@ -987,20 +1230,26 @@ void INSEstimator::wheel_odom_to_buffer(
         R_w(0, 0) = wheel_odom_noise_.x();
         R_w(1, 1) = wheel_odom_noise_.y();
         R_w(2, 2) = wheel_odom_noise_.z();
+        R_w_inv(0, 0) = 1.0/wheel_odom_noise_.x();
+        R_w_inv(1, 1) = 1.0/wheel_odom_noise_.y();
+        R_w_inv(2, 2) = 1.0/wheel_odom_noise_.z();
     }
     else
     {
         R_w(0, 0) = wheel_odom_noise_.x();
         R_w(1, 1) = wheel_odom_noise_.y();
         R_w(2, 2) = wheel_odom_noise_.z();
+        R_w_inv(0, 0) = 1.0/wheel_odom_noise_.x();
+        R_w_inv(1, 1) = 1.0/wheel_odom_noise_.y();
+        R_w_inv(2, 2) = 1.0/wheel_odom_noise_.z();
     }
 
     measurements::StampedWheel stamped;
     stamped.stamp = stampToSec(stamp);
     stamped.meas = meas;
-    stamped.R = R_w;
-    stamped.R_inv = R_w.inverse();
-
+    stamped.valid_covariance = measurements::setCovariance(stamped.R,
+                                                            stamped.R_inv,
+                                                            R_w, R_w_inv);
     meas_handler_.push(stamped);
 }
 
@@ -1015,6 +1264,7 @@ void INSEstimator::mag_callback(const sensor_msgs::msg::MagneticField& msg)
     stamped.stamp = stampToSec(msg.header.stamp);
     stamped.meas = iESEKF::Measurement(mag_vector);
     // R defaults from stamped type; keep fixed variance for now.
+    stamped.valid_covariance = true;
     meas_handler_.push(stamped);
 }
 
@@ -1023,9 +1273,8 @@ void INSEstimator::baro_callback(const sensor_msgs::msg::FluidPressure& msg)
     measurements::StampedBaro stamped;
     stamped.stamp = stampToSec(msg.header.stamp);
     stamped.pressure = static_cast<iESEKF::Scalar>(msg.fluid_pressure);
-    stamped.R = Eigen::MatrixXd::Identity(1,1);
-    stamped.R(0, 0) = 2.0;
-    stamped.R_inv = stamped.R.inverse();
+    // R defaults from stamped type; keep fixed variance for now.
+    stamped.valid_covariance = true;
     meas_handler_.push(stamped);
 }
 
@@ -1082,6 +1331,10 @@ void INSEstimator::estimation_timer_callback()
         auto measurement = meas_handler_.pop();
         if (!measurement)
             break;
+        
+        auto is_valid = measurements::MeasurementHandler::isCovarianceValid(*measurement);
+        if (!is_valid)
+            continue;
 
         const double t = measurements::MeasurementHandler::getStamp(*measurement);
 
@@ -1107,27 +1360,30 @@ void INSEstimator::estimation_timer_callback()
                     get_logger(),
                     "OOSM processing failed for measurement at %.7f",
                     t);
-            }else{
-                //
-                // handleOOSM() succeeded, so the delayed measurement is marked as processed
-                meas_handler_.markProcessed(*measurement);
-
             }
-
             continue;
         }
 
         // Normal chronological processing
-        std::visit(
+        const bool success = std::visit(
             [this](const auto& m)
             {
-                processMeasurement(m);
+                return processMeasurement(m);
             },
-            measurement->measurement
-        );
+            measurement->measurement);
 
-        // Store it for potential future OOSM replay.
-        meas_handler_.markProcessed(*measurement);
+        if (success)
+        {
+            // Store it for potential future OOSM replay.
+            meas_handler_.markProcessed(*measurement);
+        }
+        else
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to process measurement at %.7f",
+                t);
+        }
     }
 
     // Publish current belief.
@@ -1249,17 +1505,12 @@ bool INSEstimator::propagateTo(double t)
     return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
+bool INSEstimator::processMeasurement(const measurements::StampedGps& gps)
 {
-    RCLCPP_DEBUG(get_logger(), "Updating with GPS: [%.3f, %.3f, %.3f]",
-                                gps.meas.position_enu.x(),
-                                gps.meas.position_enu.y(),
-                                gps.meas.position_enu.z());
-
     if (gps.stamp > (filter_time_ + sync_tolerance_gps_))
     {
         if (!propagateTo(gps.stamp))
-            return;
+            return false;
     }
 
     process_gps(gps);
@@ -1270,16 +1521,18 @@ void INSEstimator::processMeasurement(const measurements::StampedGps& gps)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+    
+    return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
+bool INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
 {
     RCLCPP_DEBUG(get_logger(), "Updating with FULL Odometry");
 
     if (odom.stamp > (filter_time_ + sync_tolerance_odom_))
     {
         if (!propagateTo(odom.stamp))
-            return;
+            return false;
     }
 
     process_odom(odom);
@@ -1290,9 +1543,11 @@ void INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+    
+    return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
+bool INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
 {
     RCLCPP_DEBUG(get_logger(), "Updating with Wheel Odom: [%.3f, %.3f, %.3f]", 
                     wheel.meas.x(), 
@@ -1303,7 +1558,7 @@ void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
     if (wheel.stamp > (filter_time_ + sync_tolerance_wheel_))
     {
         if (!propagateTo(wheel.stamp))
-            return;
+            return false;
     }
 
     process_wheel(wheel);
@@ -1314,9 +1569,11 @@ void INSEstimator::processMeasurement(const measurements::StampedWheel& wheel)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+    
+    return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
+bool INSEstimator::processMeasurement(const measurements::StampedMag& mag)
 {
     RCLCPP_DEBUG(get_logger(), "Updating with Mag: [%.3f, %.3f, %.3f]", 
                                 mag.meas.x(),
@@ -1326,7 +1583,7 @@ void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
     if (mag.stamp > (filter_time_ + sync_tolerance_mag_))
     {
         if (!propagateTo(mag.stamp))
-            return;
+            return false;
     }
 
     process_mag(mag);
@@ -1337,16 +1594,18 @@ void INSEstimator::processMeasurement(const measurements::StampedMag& mag)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+
+    return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
+bool INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
 {
     RCLCPP_DEBUG(get_logger(), "Updating with Baro: %.3f", baro.pressure);
 
     if (baro.stamp > (filter_time_ + sync_tolerance_baro_))
     {
         if (!propagateTo(baro.stamp))
-            return;
+            return false;
     }
 
     process_baro(baro);
@@ -1357,16 +1616,18 @@ void INSEstimator::processMeasurement(const measurements::StampedBaro& baro)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+    
+    return true;
 }
 
-void INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
+bool INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
 {
     RCLCPP_DEBUG(get_logger(), "Updating with Yaw: %.3f", yaw.yaw);
 
     if (yaw.stamp > (filter_time_ + sync_tolerance_yaw_))
     {
         if (!propagateTo(yaw.stamp))
-            return;
+            return false;
     }
 
     process_yaw(yaw);
@@ -1377,6 +1638,8 @@ void INSEstimator::processMeasurement(const measurements::StampedYaw& yaw)
         filter_time_,
         filter_.getState(),
         filter_.getCovariance());
+    
+    return true;
 }
 
 bool INSEstimator::handleOOSM(
@@ -1424,6 +1687,22 @@ bool INSEstimator::handleOOSM(
 
     const double t_rewind = snapshot->stamp;
 
+    // The state snapshot is retained by capacity (for dumping), so it may
+    // be older than the IMU history kept for repropagation. Guard against
+    // replaying a snapshot whose IMU samples have already been pruned.
+    if (t_current - t_rewind > history_window_s_)
+    {
+        RCLCPP_WARN(
+            get_logger(),
+            "State snapshot at %.6f is %.3f s old, exceeding history "
+            "window %.3f s. Dropping measurement.",
+            t_rewind,
+            t_current - t_rewind,
+            history_window_s_);
+
+        return false;
+    }
+
     RCLCPP_DEBUG(
         get_logger(),
         "Rewinding from %.6f to %.6f",
@@ -1458,12 +1737,21 @@ bool INSEstimator::handleOOSM(
         t_current,
         replay.size());
 
-    for (const auto& m : replay)
+    for (std::size_t i = 0; i < replay.size(); ++i)
     {
-        RCLCPP_WARN(
-            get_logger(),
-            "  replay: %.6f",
-            measurements::MeasurementHandler::getStamp(m));
+        const auto& queued = replay[i];
+
+        std::visit(
+            [this, i, &queued](const auto& m)
+            {
+                RCLCPP_WARN(
+                    get_logger(),
+                    "Replay[%zu]: type=%s, stamp=%.9f",
+                    i,
+                    typeid(m).name(),
+                    measurements::MeasurementHandler::getStamp(queued));
+            },
+            queued.measurement);
     }
 
     // Restore filter state/covariance.
@@ -1479,15 +1767,22 @@ bool INSEstimator::handleOOSM(
     meas_handler_.eraseProcessedAfter(t_rewind);
 
     // Replay everything chronologically.
+    oosm_replay_active_ = true;
+
     for (const auto& queued : replay)
     {
-        std::visit(
-            [this](const auto& measurement)
+        const bool success = std::visit(
+            [this](const auto& m)
             {
-                processMeasurement(measurement);
+                return processMeasurement(m);
             },
             queued.measurement);
+
+        if (success)
+            meas_handler_.markProcessed(queued);
     }
+
+    oosm_replay_active_ = false;
 
     // Make sure we ended at the same time as before the rewind.
     if (filter_time_ < t_current)
@@ -1527,10 +1822,149 @@ bool INSEstimator::handleOOSM(
 
 void INSEstimator::process_gps(const measurements::StampedGps& gps)
 {
+    RCLCPP_DEBUG(get_logger(), "Updating with GPS: [%.3f, %.3f, %.3f]",
+                                gps.meas.position_enu.x(),
+                                gps.meas.position_enu.y(),
+                                gps.meas.position_enu.z());
+
+    // Linearize the GNSS measurement model at the current estimate:
+    //   r = z_gps - (p + R l),   H = dr/dx
+    iESEKF::Measurement residual;
+    iESEKF::HMat H;
+    iESEKF::gps::H_fun(filter_.getState(), gps.meas, residual, H);
+
+    // Innovation covariance and normalized innovation squared:
+    //   S   = H P H^T + R
+    //   NIS = r^T S^{-1} r   (through an LDLT solve of S x = r)
+    const iESEKF::MatDoF P = filter_.getCovariance();
+    const utils::gating::NisResult nis =
+        utils::gating::compute_nis(residual, H, P, gps.R);
+
+    // Statistics only cover fixes evaluated in real time: an OOSM replay
+    // re-evaluates fixes that have already been counted.
+    auto record = [this](bool accepted, bool has_nis, double nis_value)
+    {
+        if (oosm_replay_active_)
+            return;
+
+        auto& stats = gnss_gating_stats_;
+
+        ++stats.received;
+
+        if (accepted)
+            ++stats.accepted;
+        else
+            ++stats.rejected;
+
+        if (has_nis)
+        {
+            stats.nis_sum += nis_value;
+            ++stats.nis_samples;
+            stats.nis_max = std::max(stats.nis_max, nis_value);
+        }
+
+        if (stats.received % kGnssGatingStatsLogInterval == 0)
+            log_gnss_gating_stats();
+    };
+
+    // A numerically invalid innovation covariance must never reach the update.
+    if (!nis.valid())
+    {
+        record(false, false, 0.0);
+
+        RCLCPP_ERROR(get_logger(),
+            "GNSS update rejected: %s "
+            "(innovation norm = %.3f m, t = %.3f)",
+            utils::gating::to_string(nis.status),
+            nis.innovation_norm,
+            gps.stamp);
+
+        return;
+    }
+
+    RCLCPP_DEBUG(get_logger(),
+        "GNSS innovation: NIS = %.4f (dof = %d), |r| = %.4f m, "
+        "innovation covariance S = %s",
+        nis.nis,
+        nis.dimension,
+        nis.innovation_norm,
+        utils::gating::to_string(nis.innovation_covariance).c_str());
+
+    if (gnss_gating_enabled_)
+    {
+        // Mahalanobis/NIS gate: reject the fix when NIS > chi2(d, confidence).
+        const utils::gating::GateDecision decision =
+            utils::gating::evaluate(nis, gnss_gate_);
+
+        record(decision.accepted, true, nis.nis);
+
+        if (!decision.accepted)
+        {
+            RCLCPP_WARN(get_logger(),
+                "GNSS update rejected: NIS = %.3f > %.3f "
+                "(chi2 dof = %d, confidence = %.3f), "
+                "innovation norm = %.3f m",
+                decision.nis,
+                decision.threshold,
+                decision.dimension,
+                gnss_gate_.confidence,
+                nis.innovation_norm);
+
+            return;
+        }
+
+        RCLCPP_INFO(get_logger(),
+            "GNSS update accepted: NIS = %.3f <= %.3f "
+            "(chi2 dof = %d, confidence = %.3f), "
+            "innovation norm = %.3f m",
+            decision.nis,
+            decision.threshold,
+            decision.dimension,
+            gnss_gate_.confidence,
+            nis.innovation_norm);
+    }
+    else
+    {
+        record(true, true, nis.nis);
+
+        RCLCPP_DEBUG(get_logger(),
+            "GNSS update (gating disabled): NIS = %.4f (dof = %d), "
+            "innovation norm = %.4f m",
+            nis.nis,
+            nis.dimension,
+            nis.innovation_norm);
+    }
+
     filter_.update<
         iESEKF::gps::GPSMeasurement,
         iESEKF::Measurement,
         iESEKF::HMat>(gps.meas, gps.R, gps.R_inv, ins_ros::iESEKF::gps::H_fun);
+}
+
+void INSEstimator::log_gnss_gating_stats()
+{
+    const auto& stats = gnss_gating_stats_;
+
+    if (stats.received == 0)
+        return;
+
+    const double rejection_rate =
+        100.0 * static_cast<double>(stats.rejected) /
+        static_cast<double>(stats.received);
+
+    const double mean_nis = (stats.nis_samples > 0)
+        ? stats.nis_sum / static_cast<double>(stats.nis_samples)
+        : 0.0;
+
+    RCLCPP_INFO(get_logger(),
+        "\n\n\nGNSS gating statistics: received = %zu, accepted = %zu, "
+        "rejected = %zu (%.1f %%), mean NIS = %.3f, max NIS = %.3f \n\n\n",
+        stats.received,
+        stats.accepted,
+        stats.rejected,
+        rejection_rate,
+        mean_nis,
+        stats.nis_max);
 }
 
 void INSEstimator::process_odom(const measurements::StampedOdom& odom)
@@ -2157,8 +2591,8 @@ int main(int argc, char * argv[])
 
     auto node = std::make_shared<ins_ros::INSEstimator>();
 
-    // rclcpp::executors::MultiThreadedExecutor executor;
-    rclcpp::executors::SingleThreadedExecutor executor;
+    rclcpp::executors::MultiThreadedExecutor executor;
+    // rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node->get_node_base_interface());
     executor.spin();
 
