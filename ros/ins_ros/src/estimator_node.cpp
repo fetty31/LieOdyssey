@@ -1815,7 +1815,7 @@ void INSEstimator::process_gps(const measurements::StampedGps& gps)
     //   r = z_gps - (p + R l),   H = dr/dx
     iESEKF::Measurement residual;
     iESEKF::HMat H;
-    iESEKF::gps::H_fun(filter_, filter_.getState(), gps.meas, residual, H);
+    iESEKF::gps::H_fun(filter_.getState(), gps.meas, residual, H);
 
     // Innovation covariance and normalized innovation squared:
     //   S   = H P H^T + R
@@ -1941,8 +1941,8 @@ void INSEstimator::log_gnss_gating_stats()
         : 0.0;
 
     RCLCPP_INFO(get_logger(),
-        "GNSS gating statistics: received = %zu, accepted = %zu, "
-        "rejected = %zu (%.1f %%), mean NIS = %.3f, max NIS = %.3f",
+        "\n\n\nGNSS gating statistics: received = %zu, accepted = %zu, "
+        "rejected = %zu (%.1f %%), mean NIS = %.3f, max NIS = %.3f \n\n\n",
         stats.received,
         stats.accepted,
         stats.rejected,
@@ -2575,8 +2575,8 @@ int main(int argc, char * argv[])
 
     auto node = std::make_shared<ins_ros::INSEstimator>();
 
-    // rclcpp::executors::MultiThreadedExecutor executor;
-    rclcpp::executors::SingleThreadedExecutor executor;
+    rclcpp::executors::MultiThreadedExecutor executor;
+    // rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node->get_node_base_interface());
     executor.spin();
 

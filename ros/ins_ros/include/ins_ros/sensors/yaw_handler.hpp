@@ -14,7 +14,6 @@ namespace ins_ros::iESEKF::yaw {
  * at +/- pi.
  */
 void H_fun(
-    const iESEKF::Filter& /*kf*/,
     const iESEKF::Group& X_now,
     const iESEKF::Scalar& y,
     iESEKF::Measurement& r,

@@ -30,8 +30,8 @@ ins_ros_node:
       rate: 100.0
       history_window: 500.0
       buffer:
-        imu_capacity: 2000
-        measurement_capacity: 200
+        imu_capacity: 10000
+        measurement_capacity: 1000
         processed_capacity: 2000
         # Maximum number of state/covariance snapshots retained for
         # OOSM rewind and for the /dump_state_history service. Raise
@@ -116,8 +116,8 @@ ins_ros_node:
           z: 0.93
 
         gating: # Mahalanobis/NIS outlier rejection of GNSS position updates
-          enabled: false      # reject fixes whose NIS exceeds the chi-square threshold
-          confidence: 0.95   # chi-square confidence level (threshold derived from the dof)
+          enabled: true      # reject fixes whose NIS exceeds the chi-square threshold
+          confidence: 0.95   # chi-square confidence level (threshold later derived from DoF)
 
         init:
           orientation: # initial yaw estimation (mandatory for filter initialization in ENU)

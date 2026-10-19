@@ -5,8 +5,7 @@
 namespace ins_ros::iESEKF::odom {
 
 // Measurement function
-void H_fun(const iESEKF::Filter& /*kf*/, 
-            const iESEKF::Group& X_now, 
+void H_fun(const iESEKF::Group& X_now, 
             const iESEKF::Group& Y, 
             iESEKF::Measurement& r, 
             iESEKF::HMat& H)

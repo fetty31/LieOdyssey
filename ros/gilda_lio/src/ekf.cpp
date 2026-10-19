@@ -69,7 +69,7 @@ std::vector<double> gilda_lio::iESEKF::get_velocity_covariance(const MatDoF& P)
     return cov;
 }
 
-typename Filter::Tangent gilda_lio::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
+typename Filter::Tangent gilda_lio::iESEKF::f(const Group& X, const IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -80,7 +80,6 @@ typename Filter::Tangent gilda_lio::iESEKF::f(const Filter& kf, const IMUmeas& i
 	// xi = [ rho(3); nu(3); theta(3); s(1) ] 
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
-	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity vector estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
 
@@ -123,7 +122,7 @@ typename Filter::Tangent gilda_lio::iESEKF::f_state(const gilda_lio::State& stat
     return t; // cast to Tangent
 }
 
-typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Filter& kf, const IMUmeas& /*imu*/) 
+typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Group& X, const IMUmeas& /*imu*/) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -132,7 +131,6 @@ typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Filter& kf, const IMUme
 
     Filter::Jacobian Jx = Filter::Jacobian::Zero();
 
-	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
 
@@ -147,7 +145,7 @@ typename Filter::Jacobian gilda_lio::iESEKF::df_dx(const Filter& kf, const IMUme
     return Jx;
 }
 
-typename Filter::MappingMatrix gilda_lio::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+typename Filter::MappingMatrix gilda_lio::iESEKF::df_dw(const Group& /*X*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
@@ -160,7 +158,7 @@ typename Filter::MappingMatrix gilda_lio::iESEKF::df_dw(const Filter& /*kf*/, co
     return Jw;
 }
 
-void gilda_lio::iESEKF::H_fun(const Filter& /*kf*/, const Group& X_now, Measurement& z, HMat& H)
+void gilda_lio::iESEKF::H_fun(const Group& X_now, Measurement& z, HMat& H)
 {
     gilda_lio::OdometryCore& core = gilda_lio::OdometryCore::getInstance();
 
@@ -184,7 +182,7 @@ void gilda_lio::iESEKF::fill_H_point_to_plane(const Group& group,
 	H.block<1, manif::SGal3<Scalar>::DoF>(i, 0) = (normal.transpose() * J_dX).eval();
 }
 
-void gilda_lio::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
+void gilda_lio::iESEKF::degeneracy_callback(const Group& /*X*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
 {
 	/* 
 		To-Do: handle degeneracy in SGal3 group (first subgroup of our Bundle state)

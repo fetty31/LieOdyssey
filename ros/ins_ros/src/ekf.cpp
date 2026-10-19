@@ -9,6 +9,7 @@ void ins_ros::iESEKF::group_to_state(const Group& g, ins_ros::State& state)
 	// position, orientation, velocity
 	state.p = X.subgroup<0>().translation();
 	state.q = X.subgroup<0>().quat();
+	state.q.normalize();
 	state.v = X.subgroup<0>().linearVelocity();
 
 	// time (in case of SGal3 time is part of the group)
@@ -159,7 +160,7 @@ void ins_ros::iESEKF::set_velocity_covariance(
     P = (R.transpose() * P_vel_ros * R).template cast<Scalar>();
 }
 
-typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu) 
+typename Filter::Tangent ins_ros::iESEKF::f(const Group& X, const IMUmeas& imu) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -170,7 +171,6 @@ typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu
 	// xi = [ rho(3); nu(3); theta(3); s(1) ] 
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
-	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity vector estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
 	auto b_a = X.impl().subgroup<2>().coeffs(); 				// accel bias estimate
@@ -190,7 +190,7 @@ typename Filter::Tangent ins_ros::iESEKF::f(const Filter& kf, const IMUmeas& imu
     return t; // cast to Tangent
 }
 
-typename Filter::Tangent ins_ros::iESEKF::f_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/)
+typename Filter::Tangent ins_ros::iESEKF::f_cv(const Group& /*X*/, const IMUmeas& /*imu*/)
 {
     typename Filter::VecTangent t = Filter::VecTangent::Zero();
 
@@ -221,7 +221,7 @@ typename Filter::Tangent ins_ros::iESEKF::f_state(const ins_ros::State& state)
     return t; // cast to Tangent
 }
 
-typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas& /*imu*/) 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Group& X, const IMUmeas& /*imu*/) 
 {
 	// IMU kinematic integration (body-centric):
 	// R ⊞ (w - bw - nw)*dt
@@ -230,7 +230,6 @@ typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas
 
     Filter::Jacobian Jx = Filter::Jacobian::Zero();
 
-	Group X = kf.getState(); 
 	auto g = X.impl().subgroup<3>().coeffs(); 					// gravity estimate
 	auto R = X.impl().subgroup<0>().quat().toRotationMatrix();	// orientation estimate
 
@@ -245,7 +244,7 @@ typename Filter::Jacobian ins_ros::iESEKF::df_dx(const Filter& kf, const IMUmeas
     return Jx;
 }
 
-typename Filter::Jacobian ins_ros::iESEKF::df_dx_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+typename Filter::Jacobian ins_ros::iESEKF::df_dx_cv(const Group& /*X*/, const IMUmeas& /*imu*/) 
 {
 	// Constant velocity model (no IMU input):
 
@@ -254,7 +253,7 @@ typename Filter::Jacobian ins_ros::iESEKF::df_dx_cv(const Filter& /*kf*/, const 
     return Jx;
 }
 
-typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Group& /*X*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
@@ -267,7 +266,7 @@ typename Filter::MappingMatrix ins_ros::iESEKF::df_dw(const Filter& /*kf*/, cons
     return Jw;
 }
 
-typename Filter::MappingMatrix ins_ros::iESEKF::df_dw_cv(const Filter& /*kf*/, const IMUmeas& /*imu*/) 
+typename Filter::MappingMatrix ins_ros::iESEKF::df_dw_cv(const Group& /*X*/, const IMUmeas& /*imu*/) 
 {
     // w = (n_w, n_a, n_{b_w}, n_{b_a})
     Filter::MappingMatrix Jw = Filter::MappingMatrix::Zero();
@@ -278,7 +277,7 @@ typename Filter::MappingMatrix ins_ros::iESEKF::df_dw_cv(const Filter& /*kf*/, c
     return Jw;
 }
 
-void ins_ros::iESEKF::degeneracy_callback(const Filter& /*kf*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
+void ins_ros::iESEKF::degeneracy_callback(const Group& /*X*/, Tangent& /*dx*/, const MatDoF& /*HRH*/)
 {
 	/* 
 		To-Do: handle degeneracy in SGal3 group (first subgroup of our Bundle state)
