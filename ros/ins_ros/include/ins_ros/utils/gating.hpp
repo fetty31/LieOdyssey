@@ -172,7 +172,7 @@ inline NisResult compute_nis(const ResidualType& residual,
 }
 
 /**
- * @brief Chi-square gate: accept the measurement iff NIS <= chi2(d, confidence).
+ * @brief Chi-square gate: accept the measurement if NIS <= chi2(d, confidence).
  *
  * The threshold is computed from the measurement dimension d and the
  * configurable confidence level, it is never hard-coded.
@@ -184,6 +184,12 @@ inline GateDecision evaluate(const NisResult& nis,
                              const ChiSquareGate& gate)
 {
     GateDecision decision;
+    if(nis.dimension != gate.dimension)
+    {
+        decision.accepted = false;
+        return decision;
+    }
+
     decision.dimension = nis.dimension;
     decision.nis = nis.nis;
     decision.threshold = gate.threshold;

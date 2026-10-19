@@ -57,6 +57,9 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 
 #include <Eigen/Geometry>
 
@@ -330,6 +333,9 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         // Services
         rclcpp::Service<ins_ros::srv::DumpStateHistory>::SharedPtr
             dump_state_history_srv_;
+        
+            // Separate callback group for non-blocking state dumping
+        rclcpp::CallbackGroup::SharedPtr dump_callback_group_;
 
         // Publishers (lifecycle-aware)
         std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Odometry>> state_pub_;

@@ -53,15 +53,15 @@ MatDoF ins_ros::iESEKF::get_tangent_to_inertial_jacob(const Group& g)
 	auto R = X.subgroup<0>().quat().toRotationMatrix();	
 	auto v = X.subgroup<0>().linearVelocity();
 
-	/* tangent-to-inertial jacobian
+	/* tangent-to-inertial jacobian on SGal3 group
 	T = [R 0 0 v
 		 0 R 0 0
 		 0 0 R 0
 		 0 0 0 1]
 	(in this case T := bundleDoF x bundleDoF, 
-		so rows from 10-end are filled with zeros)
+		so elements from 10-end are left untransformed)
 	*/
-	MatDoF T = MatDoF::Zero();
+	MatDoF T = MatDoF::Identity();
 	T.block<3,3>(0,0) = R;
 	T.block<3,3>(3,3) = R;
 	T.block<3,3>(6,6) = R;

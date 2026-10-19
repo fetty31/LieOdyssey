@@ -491,7 +491,9 @@ void INSEstimator::load_parameters()
         gnss_gating_enabled_ = get_parameter("sensors.gps.gating.enabled").as_bool();
         double gnss_gating_confidence = get_parameter("sensors.gps.gating.confidence").as_double();
 
-        if (gnss_gating_confidence <= 0.0 || gnss_gating_confidence >= 1.0)
+        if( (gnss_gating_confidence <= 0.0) || 
+            (gnss_gating_confidence >= 1.0) ||
+            (!std::isfinite(gnss_gating_confidence)) )
         {
             RCLCPP_ERROR(get_logger(),
                 "Invalid sensors.gps.gating.confidence = %.4f. "
@@ -732,6 +734,10 @@ void INSEstimator::setup_services()
         return;
     }
 
+    // Isolate the dump service from the estimation callbacks.
+    dump_callback_group_ = create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
+
     dump_state_history_srv_ =
         create_service<ins_ros::srv::DumpStateHistory>(
             "~/dump_state_history",
@@ -739,7 +745,9 @@ void INSEstimator::setup_services()
                 &INSEstimator::dump_state_history_callback,
                 this,
                 std::placeholders::_1,
-                std::placeholders::_2));
+                std::placeholders::_2),
+            rmw_qos_profile_services_default,
+            dump_callback_group_);
 
     RCLCPP_INFO(get_logger(),
         "State-history dump service '~/dump_state_history' enabled "
@@ -772,6 +780,13 @@ void INSEstimator::dump_state_history_callback(
         return;
     }
 
+    // Create missing parent directories.
+    std::error_code ec;
+    const auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty())
+        std::filesystem::create_directories(parent, ec);
+
+    // Create the file or truncate it if it already exists.
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     if (!file.is_open())
     {
@@ -1034,7 +1049,8 @@ void INSEstimator::gps_callback(
     meas.meas.position_enu = p_gps_enu.cast<iESEKF::Scalar>();
     meas.meas.lever_arm = gps_lever_arm_.cast<iESEKF::Scalar>();
 
-    Mat3 R_gps, R_gps_inv;
+    Mat3 R_gps = Mat3::Zero();
+    Mat3 R_gps_inv = Mat3::Zero();
     if ((msg.position_covariance_type !=
         sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) && trust_gps_covariance_)
     {

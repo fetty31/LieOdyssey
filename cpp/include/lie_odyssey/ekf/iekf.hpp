@@ -2,7 +2,7 @@
 #define __LIEODYSSEY_RIEKF_FILTER_HPP__
 
 #include <Eigen/Dense>
-#include <memory>
+#include <mutex>
 #include "lie_odyssey/core/groups.hpp"
 #include "lie_odyssey/core/imu_data.hpp"
 
