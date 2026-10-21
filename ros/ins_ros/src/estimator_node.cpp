@@ -1107,7 +1107,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
     from_ros_to_ins(msg, odom_meas);
     odom_meas.v = odom_meas.q.toRotationMatrix() * odom_meas.v; // body -> inertial
 
-    if ((!gps_topic_.empty()))
+    if ((!gps_topic_.empty())) // GPS is active -> find alignment from LIO/VIO to ENU frame
     {
         State lio_base = lio_to_base_.transform(odom_meas);
         const Eigen::Vector3d p_lio_base = lio_base.p.cast<double>();
@@ -1535,7 +1535,14 @@ bool INSEstimator::processMeasurement(const measurements::StampedOdom& odom)
             return false;
     }
 
-    process_odom(odom);
+    // if (!gps_topic_.empty())
+    // {
+    //     process_relative_odom(odom);
+
+    // }else
+    // {
+        process_odom(odom);
+    // }
 
     refresh_state_from_filter();
 

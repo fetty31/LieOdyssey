@@ -94,11 +94,11 @@ void H_fun(
         const auto c = X.coeffs();
 
         std::cout << "\n[" << name << "]\n";
-        std::cout << "  coeffs: " << c.transpose() << "\n";
-        std::cout << "  t      : " << c(10) << "\n";
-        std::cout << "  pos    : " << c.template segment<3>(0).transpose() << "\n";
-        std::cout << "  rot    : " << c.template segment<4>(3).transpose() << "\n";
-        std::cout << "  vel    : " << c.template segment<3>(7).transpose() << "\n";
+        std::cout << std::setprecision(15) << "  coeffs: " << c.transpose() << "\n";
+        std::cout << std::setprecision(15) << "  t      : " << c(10) << "\n";
+        std::cout << std::setprecision(15) << "  pos    : " << c.template segment<3>(0).transpose() << "\n";
+        std::cout << std::setprecision(15) << "  rot    : " << c.template segment<4>(3).transpose() << "\n";
+        std::cout << std::setprecision(15) << "  vel    : " << c.template segment<3>(7).transpose() << "\n";
     };
 
     print_sgal3("Yi", Yi);
