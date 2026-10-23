@@ -4,3 +4,4 @@ cpp/build/*
 .opencode*
 LOGS.md
 TODO*.md
+*__pycache__*

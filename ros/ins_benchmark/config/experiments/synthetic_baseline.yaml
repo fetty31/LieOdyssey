@@ -1,0 +1,14 @@
+dataset:
+  name: synthetic
+  sequence: demo
+
+estimator:
+  name: ins_ros
+  config: config/estimators/ins_ros.yaml
+
+playback:
+  clock: true
+  real_time_factor: 0.0
+
+output:
+  directory: results/synthetic/demo

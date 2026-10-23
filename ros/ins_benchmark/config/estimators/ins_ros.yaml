@@ -1,0 +1,14 @@
+estimator:
+  name: ins_ros
+  node_name: ins_ros_benchmark_node
+  config_path: ../ros/ins_ros/config/ins_ros.yaml
+  lifecycle:
+    reuse_node: false
+    startup_timeout_s: 30.0
+
+playback:
+  clock: true
+  real_time_factor: 0.0
+
+output:
+  directory: results

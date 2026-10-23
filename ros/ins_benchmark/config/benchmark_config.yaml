@@ -1,0 +1,12 @@
+dataset:
+  name: synthetic
+  sequence: demo
+
+estimator:
+  node_name: ins_ros_node
+
+playback:
+  use_sim_time: true
+
+output:
+  directory: results

@@ -1,0 +1,11 @@
+dataset:
+  name: synthetic
+  sequence: demo
+
+estimator:
+  name: ins_ros
+  node_name: ins_ros_node
+  topic_prefix: /input
+
+output:
+  directory: results
