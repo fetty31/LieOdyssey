@@ -60,7 +60,7 @@ A minimalist LiDAR-Inertial Odometry (LIO) implementation for ROS 2, featuring E
 1. **Clone the repository** into your ROS 2 workspace:
    ```bash
    cd ~/colcon_ws/src
-   # LieOdyssey should already be cloned
+   # LieOdyssey standalone C++ library should already be compiled
    ```
 
 2. **Install dependencies**:

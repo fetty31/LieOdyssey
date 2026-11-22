@@ -36,14 +36,23 @@ A full Inertial Navigation System (INS) estimator for ROS 2, built on the **Iter
 
 ### From Source
 
-1. **Clone the repository** into your ROS 2 workspace:
+1. **Install GeographicLib dependency**:
+
+    ```bash
+    tar xfpz GeographicLib-2.7.tar.gz
+    cd GeographicLib-2.7
+    mkdir BUILD
+    cd BUILD
+    cmake ..
+    make
+    sudo make install   
+    ```
+    _Follow the oficial instructions [here](https://geographiclib.sourceforge.io/C++/doc/install.html)_
+
+2. **Install ROS dependencies**:
     ```bash
     cd ~/colcon_ws/src
-    # LieOdyssey should already be cloned
-    ```
-
-2. **Install dependencies**:
-    ```bash
+    # LieOdyssey standalone c++ library should already be compiled
     rosdep install --from-paths src --ignore-src -r -y
     ```
 

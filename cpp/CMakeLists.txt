@@ -57,35 +57,76 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 
+
+# -------------------------------------------------------------------
 # Add Lie++ dependency
+# -------------------------------------------------------------------
+
 if(USE_LIEPLUSPLUS)
-  message(STATUS "Adding library LiePlusPlus")
-  target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_LIEPLUSPLUS)
-  # target_include_directories(${PROJECT_NAME} INTERFACE ${LIEPLUSPLUS_INCLUDE_DIR})
-  target_include_directories(${PROJECT_NAME} INTERFACE
-    $<BUILD_INTERFACE:${LiePlusPlus_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/LiePlusPlus>  # optional
-  )
-  # Export LiePlusPlus headers together with this project
-  install(DIRECTORY ${LiePlusPlus_SOURCE_DIR}/include/
-          DESTINATION include/LiePlusPlus)
-  # target_include_directories(${PROJECT_NAME} INTERFACE ${LiePlusPlus_SOURCE_DIR}/include)
-  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:LiePlusPlus::LiePlusPlus>)
+
+    message(STATUS "Adding library LiePlusPlus")
+
+    target_compile_definitions(${PROJECT_NAME} INTERFACE
+        LIE_BACKEND_LIEPLUSPLUS
+    )
+
+    # Build-tree dependency
+    target_link_libraries(${PROJECT_NAME} INTERFACE
+        $<BUILD_INTERFACE:LiePlusPlus::LiePlusPlus>
+    )
+
+    # Install-tree include directory
+    target_include_directories(${PROJECT_NAME} INTERFACE
+        $<INSTALL_INTERFACE:include/LiePlusPlus>
+    )
+
+    # Install fetched Lie++ headers
+    if(NOT USE_SYSTEM_LIEPLUSPLUS)
+        install(
+            DIRECTORY ${LiePlusPlus_SOURCE_DIR}/include/
+            DESTINATION include/LiePlusPlus
+        )
+    endif()
+
 endif()
 
-# Add manif dependency
+
+# -------------------------------------------------------------------
+# Add Manif dependency
+# -------------------------------------------------------------------
+
 if(USE_MANIF)
-  message(STATUS "Adding library Manif")
-  target_compile_definitions(${PROJECT_NAME} INTERFACE LIE_BACKEND_MANIF)
-  # target_include_directories(${PROJECT_NAME} INTERFACE ${MANIF_INCLUDE_DIR})
-  target_include_directories(${PROJECT_NAME} INTERFACE
-    $<BUILD_INTERFACE:${manif_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/manif>  # optional
-  )
-  # Export LiePlusPlus headers together with this project
-  install(DIRECTORY ${manif_SOURCE_DIR}/include/
-          DESTINATION include/manif)
-  # target_link_libraries(${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:manif::manif>)
+
+    message(STATUS "Adding library Manif")
+
+    target_compile_definitions(${PROJECT_NAME} INTERFACE
+        LIE_BACKEND_MANIF
+    )
+
+    # Build-tree dependency
+    target_link_libraries(${PROJECT_NAME} INTERFACE
+        $<BUILD_INTERFACE:manif::manif>
+    )
+
+    # Install-tree include directory
+    target_include_directories(${PROJECT_NAME} INTERFACE
+        $<INSTALL_INTERFACE:include>
+    )
+
+    # Install fetched Manif headers and bundled dependencies
+    if(NOT USE_SYSTEM_MANIF)
+
+        install(
+            DIRECTORY ${manif_SOURCE_DIR}/include/
+            DESTINATION include
+        )
+
+        install(
+            DIRECTORY ${manif_SOURCE_DIR}/external/tl/tl/
+            DESTINATION include/tl
+        )
+
+    endif()
 endif()
 
 # (optional) Build tests

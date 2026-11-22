@@ -61,7 +61,7 @@ A high-performance Gaussian-based LiDAR-Inertial Odometry (LIO) system featuring
 1. **Clone the repository** into your ROS 2 workspace:
    ```bash
    cd ~/colcon_ws/src
-   # LieOdyssey should already be cloned
+   # LieOdyssey standalone C++ library should already be compiled
    ```
 
 2. **Install dependencies**:
