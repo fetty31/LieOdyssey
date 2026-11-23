@@ -191,13 +191,14 @@ class INSEstimator : public rclcpp_lifecycle::LifecycleNode
         utils::TrajectoryAligner trajectory_aligner_;
         bool trajectory_aligner_enabled_{false};
         double trajectory_aligner_min_distance_{15.0};
+        double trajectory_aligner_max_interp_gap_{1.0};
 
         // Filter time base: ROS sensor stamp (seconds) of last processed IMU.
         double filter_time_{-1.0};
         double filter_init_time_{-1.0};
         bool filter_time_initialized_{false};
 
-        // State (mirrors filter after each timer tick; read by callbacks for bias/debug).
+        // State (mirrors filter state after each timer tick; read by callbacks for bias/debug).
         ins_ros::State state_;
 
         // TF

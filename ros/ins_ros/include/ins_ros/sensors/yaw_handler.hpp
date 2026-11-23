@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "ins_ros/ekf.hpp"
@@ -7,11 +8,10 @@ namespace ins_ros::iESEKF::yaw {
 /**
  * GPS heading measurement represented as a 2D unit vector:
  *
- *      y = [cos(yaw_gps)]
- *          [sin(yaw_gps)]
+ *      z = [cos(yaw_gps), sin(yaw_gps)]
  *
- * This avoids the discontinuity of a scalar wrapped yaw residual
- * at +/- pi.
+ * The predicted heading is obtained by projecting the
+ * body forward axis onto the horizontal plane and normalizing.
  */
 void H_fun(
     const iESEKF::Group& X_now,
@@ -24,57 +24,55 @@ void H_fun(
     const auto R =
         X_now.impl().subgroup<0>().quat().toRotationMatrix();
 
-    // -------------------------------------------------------------------------
-    // Measurement model
-    //
-    // Predicted heading direction in the world frame:
-    //
-    //      forward = R e_x
-    //
-    // Only the horizontal components are measured.
-    // -------------------------------------------------------------------------
-    const auto forward = R.col(0);
+    // Predicted forward direction in world frame.
+    const State::V3 ex(1.0, 0.0, 0.0);
+    const State::V3 forward = R * ex;
 
-    iESEKF::Measurement h =
-        iESEKF::Measurement::Zero(2);
+    // Horizontal projection.
+    Eigen::Matrix<iESEKF::Scalar, 2, 3> P;
+    P << 1, 0, 0,
+         0, 1, 0;
 
-    h(0) = forward.x();
-    h(1) = forward.y();
-    // h.normalize();
+    const Eigen::Matrix<iESEKF::Scalar, 2, 1> p =
+        P * forward;
 
-    // Measured heading direction.
-    iESEKF::Measurement z =
-        iESEKF::Measurement::Zero(2);
-    z(0) = std::cos(y);
-    z(1) = std::sin(y);
+    const auto norm = p.norm();
 
-    // Residual:
-    //      r = z - h(X)
+    // Avoid undefined heading when forward axis is
+    // approximately vertical.
+    if (norm < 1e-6) {
+        r.setZero();
+        H.setZero();
+        return;
+    }
+
+    // Normalized predicted heading.
+    const Eigen::Matrix<iESEKF::Scalar, 2, 1> h =
+        p / norm;
+
+    // GPS heading measurement.
+    Eigen::Matrix<iESEKF::Scalar, 2, 1> z;
+    z << std::cos(y), std::sin(y);
+
+    // Residual.
     r = z - h;
 
-    // -------------------------------------------------------------------------
-    // Jacobian
-    //
-    // Right perturbation:
-    //
-    //      R+ = R Exp(dtheta)
-    //
-    // Therefore:
-    //
-    //      d(Re_x)/dtheta = -R [e_x]x
-    //
-    //      (H = dh/dtheta)
-    //
-    // -------------------------------------------------------------------------
+    // Derivative of forward direction.
+    const Eigen::Matrix<iESEKF::Scalar, 3, 3> J_forward =
+        -R * manif::skew(ex);
 
-    // Jacobian
+    // Derivative of normalized horizontal projection.
+    const Eigen::Matrix<iESEKF::Scalar, 2, 2> J_norm =
+        (Eigen::Matrix<iESEKF::Scalar, 2, 2>::Identity()
+         - h * h.transpose()) / norm;
+
+    const Eigen::Matrix<iESEKF::Scalar, 2, 3> J_heading =
+        J_norm * P * J_forward;
+
+    // Measurement Jacobian.
     H = iESEKF::HMat::Zero(2, DoF);
 
-    State::V3 ex(1.0, 0.0, 0.0);
-    Eigen::Matrix<iESEKF::Scalar, 3, 3> J_forward = -R * manif::skew(ex);
-
-    H.block<2, 3>(0, 6) =
-        J_forward.block<2, 3>(0, 0);
+    H.block<2, 3>(0, 6) = J_heading;
 }
 
 } // namespace ins_ros::iESEKF::yaw

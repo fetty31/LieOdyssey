@@ -16,7 +16,7 @@ ins_ros_node:
     # Timing: stamp incoming measurements at receive time instead of trusting
     # msg headers (enable when sensor clocks are not synced with the PC clock)
     timing:
-      use_receive_stamp: true
+      use_receive_stamp: false
 
     # ============================================================
     # Filter
@@ -74,6 +74,7 @@ ins_ros_node:
     trajectory_aligner:
       enabled: true
       min_distance: 35.0
+      max_interpolation_gap: 1.0
 
     # ============================================================
     # Sensors

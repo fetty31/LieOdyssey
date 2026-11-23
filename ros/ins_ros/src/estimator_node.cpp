@@ -112,6 +112,7 @@ INSEstimator::CallbackReturn INSEstimator::on_configure(const rclcpp_lifecycle::
 
     // Trajectory aligner
     trajectory_aligner_.clear();
+    trajectory_aligner_.setMinimumDistance(trajectory_aligner_min_distance_);
 
     setup_publishers();
 
@@ -297,6 +298,7 @@ void INSEstimator::declare_parameters()
     // Trajectory aligner
     declare_parameter<bool>("trajectory_aligner.enabled", true);
     declare_parameter<double>("trajectory_aligner.min_distance", 15.0);
+    declare_parameter<double>("trajectory_aligner.max_interpolation_gap", 1.0);
 
     // IMU
     declare_parameter<bool>("sensors.imu.enabled", true);
@@ -592,6 +594,7 @@ void INSEstimator::load_parameters()
     // Trajectory aligner
     trajectory_aligner_enabled_ = get_parameter("trajectory_aligner.enabled").as_bool();
     trajectory_aligner_min_distance_ = get_parameter("trajectory_aligner.min_distance").as_double();
+    trajectory_aligner_max_interp_gap_ = get_parameter("trajectory_aligner.max_interpolation_gap").as_double();
 
     if((!gps_topic_.empty()) && (!odom_topic_.empty()))
     {
@@ -601,7 +604,8 @@ void INSEstimator::load_parameters()
             "\n     Alignment will be performed w.r.t first odometry measurement, which may not be accurate."
             "\n     Consider enabling trajectory aligner for better results.");
         }else{
-            RCLCPP_INFO(get_logger(), "Trajectory aligner enabled with minimum distance %.2f m.", trajectory_aligner_min_distance_);
+            RCLCPP_INFO(get_logger(), "Trajectory aligner enabled with minimum distance %.2f m"
+            " and maximum interpolation gap %.2f s", trajectory_aligner_min_distance_, trajectory_aligner_max_interp_gap_);
         }
     }
 
@@ -1018,7 +1022,7 @@ void INSEstimator::gps_callback(
     if(!trajectory_aligner_.isAligned() && trajectory_aligner_enabled_)
     {
         auto p_body_enu = p_gps_enu - (state_.q.toRotationMatrix() * gps_lever_arm_).cast<double>(); // GPS antenna -> body frame
-        trajectory_aligner_.addTargetPose(p_body_enu, stamp);
+        trajectory_aligner_.addTargetPose(stamp, p_body_enu);
     }
 
     // Continuous heading refinement -> pushed as yaw measurement
@@ -1028,8 +1032,8 @@ void INSEstimator::gps_callback(
             measurements::StampedYaw yaw_meas;
             yaw_meas.stamp = stamp;
             yaw_meas.yaw = gps_orientation_continuous_->heading();
-            Mat2 R = 0.01 * Mat2::Identity();
-            Mat2 R_inv = 1.0/0.01 * Mat2::Identity();
+            Mat2 R = 0.00000001 * Mat2::Identity();
+            Mat2 R_inv = 1.0/0.000001 * Mat2::Identity();
             yaw_meas.valid_covariance = measurements::setCovariance(yaw_meas.R,
                                                                     yaw_meas.R_inv,
                                                                     R, R_inv);
@@ -1114,7 +1118,7 @@ void INSEstimator::odom_callback(const nav_msgs::msg::Odometry& msg)
 
         if((!trajectory_aligner_.isAligned()) && trajectory_aligner_enabled_)
         {
-            trajectory_aligner_.addSourcePose(p_lio_base, odom_meas.time);
+            trajectory_aligner_.addSourcePose(odom_meas.time, p_lio_base);
         }
 
         if(!lio_to_enu_.initialized())
@@ -2082,7 +2086,8 @@ bool INSEstimator::try_align_odom_to_gps(const State& odom_meas)
 
     if(trajectory_aligner_enabled_)
     {
-        if (!trajectory_aligner_.align(trajectory_aligner_min_distance_, T_enu_lio))
+        utils::TrajectoryAligner::AlignmentResult result;
+        if (!trajectory_aligner_.align(trajectory_aligner_max_interp_gap_, result))
         {
             RCLCPP_WARN_THROTTLE(
                 get_logger(),
@@ -2091,7 +2096,9 @@ bool INSEstimator::try_align_odom_to_gps(const State& odom_meas)
                 "Failed to align ODOMETRY (LIO/VIO) trajectory to ENU frame. ");
             return false;
         }
-    }else // if trajectory aligner is disabled, use the current odometry measurement to align the frames
+        T_enu_lio = result.transform;
+    }
+    else // if trajectory aligner is disabled, use the current odometry measurement to align the frames
     {
         auto T_enu_base = initial_enu_base_.isometry();
         auto T_base_lio = lio_to_base_.isometry();
@@ -2135,7 +2142,8 @@ bool INSEstimator::try_align_odom_to_gps(const State& odom_meas)
                                                debug_target_traj_pub_,
                                                debug_source_traj_aligned_pub_,
                                                world_frame_,
-                                               this->now());
+                                               this->now(),
+                                               trajectory_aligner_max_interp_gap_);
 
     return true;
 }

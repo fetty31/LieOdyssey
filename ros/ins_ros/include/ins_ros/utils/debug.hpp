@@ -146,14 +146,16 @@ inline void publish_yaw(double yaw,
 }
 
 inline void publish_aligned_trajectories(const Eigen::Isometry3d& T,
-                                         const TrajectoryAligner& trajectory_aligner,
-                                         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr source_pub,
-                                         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr target_pub,
-                                         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr source_aligned_pub,
-                                         const std::string& frame_id,
-                                         const rclcpp::Time& now)
-{   
-    auto sync_trajs = trajectory_aligner.synchronize();
+                                        const TrajectoryAligner& trajectory_aligner,
+                                        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr source_pub,
+                                        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr target_pub,
+                                        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr source_aligned_pub,
+                                        const std::string& frame_id,
+                                        const rclcpp::Time& now,
+                                        double max_interpolation_gap = 1.0)
+{
+    const auto sync_trajs =
+        trajectory_aligner.synchronizeTrajectories(max_interpolation_gap);
 
     nav_msgs::msg::Path path_source;
     path_source.header.frame_id = frame_id;
@@ -163,39 +165,52 @@ inline void publish_aligned_trajectories(const Eigen::Isometry3d& T,
     path_aligned.header.frame_id = frame_id;
     path_aligned.header.stamp = now;
 
-    for(auto& pose : sync_trajs.source)
-    {
-        geometry_msgs::msg::PoseStamped ps;
-        ps.header.frame_id = frame_id;
-        ps.header.stamp = now;
-        ps.pose.position.x = pose.position.x();
-        ps.pose.position.y = pose.position.y();
-        ps.pose.position.z = pose.position.z();
-        ps.pose.orientation.w = 1.0;
-        path_source.poses.push_back(ps);
-
-        auto pose_aligned = T * pose.position;
-        ps.pose.position.x = pose_aligned.x();
-        ps.pose.position.y = pose_aligned.y();
-        ps.pose.position.z = pose_aligned.z();
-        path_aligned.poses.push_back(ps);
-    }
-
     nav_msgs::msg::Path path_target;
-    path_target.header.frame_id = frame_id ;
+    path_target.header.frame_id = frame_id;
     path_target.header.stamp = now;
 
-    for(auto& pose : sync_trajs.target)
+    for (std::size_t i = 0; i < sync_trajs.size(); ++i)
     {
-        geometry_msgs::msg::PoseStamped ps;
-        ps.header.frame_id = frame_id;
-        ps.header.stamp = now;
-        ps.pose.position.x = pose.position.x();
-        ps.pose.position.y = pose.position.y();
-        ps.pose.position.z = pose.position.z();
-        ps.pose.orientation.w = 1.0;
+        const auto& source_pose = sync_trajs.source[i];
+        const auto& target_pose = sync_trajs.target[i];
 
-        path_target.poses.push_back(ps);
+        // Source trajectory
+        geometry_msgs::msg::PoseStamped ps_source;
+        ps_source.header.frame_id = frame_id;
+        ps_source.header.stamp = now;
+
+        ps_source.pose.position.x = source_pose.position.x();
+        ps_source.pose.position.y = source_pose.position.y();
+        ps_source.pose.position.z = source_pose.position.z();
+        ps_source.pose.orientation.w = 1.0;
+
+        path_source.poses.push_back(ps_source);
+
+        // Aligned source trajectory
+        const Eigen::Vector3d aligned_position =
+            T * source_pose.position;
+
+        geometry_msgs::msg::PoseStamped ps_aligned;
+        ps_aligned.header = ps_source.header;
+
+        ps_aligned.pose.position.x = aligned_position.x();
+        ps_aligned.pose.position.y = aligned_position.y();
+        ps_aligned.pose.position.z = aligned_position.z();
+        ps_aligned.pose.orientation.w = 1.0;
+
+        path_aligned.poses.push_back(ps_aligned);
+
+        // Target trajectory
+        geometry_msgs::msg::PoseStamped ps_target;
+        ps_target.header.frame_id = frame_id;
+        ps_target.header.stamp = now;
+
+        ps_target.pose.position.x = target_pose.position.x();
+        ps_target.pose.position.y = target_pose.position.y();
+        ps_target.pose.position.z = target_pose.position.z();
+        ps_target.pose.orientation.w = 1.0;
+
+        path_target.poses.push_back(ps_target);
     }
 
     source_pub->publish(path_source);
